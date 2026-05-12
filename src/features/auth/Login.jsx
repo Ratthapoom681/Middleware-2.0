@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ShieldAlert, LogIn } from 'lucide-react';
-import { setAuthToken, setCurrentUser } from '../../services/api';
+import { API_BASE, removeAuthToken, removeCurrentUser, setAuthToken, setCurrentUser } from '../../services/api';
 
 const Login = ({ onLoginSuccess }) => {
   const [username, setUsername] = useState('');
@@ -12,9 +12,11 @@ const Login = ({ onLoginSuccess }) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+    removeAuthToken();
+    removeCurrentUser();
 
     try {
-      const response = await fetch('http://localhost:3001/api/login', {
+      const response = await fetch(`${API_BASE}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })

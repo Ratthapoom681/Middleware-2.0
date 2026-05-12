@@ -1,6 +1,7 @@
 const normalizeApiBase = (value) => String(value || '/api').replace(/\/+$/, '');
 
 export const API_BASE = normalizeApiBase(import.meta.env.VITE_API_BASE);
+export const AUTH_EXPIRED_EVENT = 'defectdojo_auth_expired';
 
 export const getAuthToken = () => localStorage.getItem('defectdojo_token');
 export const setAuthToken = (token) => localStorage.setItem('defectdojo_token', token);
@@ -15,6 +16,15 @@ export const getCurrentUser = () => {
 };
 export const setCurrentUser = (user) => localStorage.setItem('defectdojo_user', JSON.stringify(user));
 export const removeCurrentUser = () => localStorage.removeItem('defectdojo_user');
+
+export const redirectToLogin = () => {
+    removeAuthToken();
+    removeCurrentUser();
+    if (window.location.hash) {
+        window.location.hash = '';
+    }
+    window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+};
 
 export const apiFetch = async (endpoint, options = {}) => {
     const token = getAuthToken();
@@ -33,9 +43,7 @@ export const apiFetch = async (endpoint, options = {}) => {
     });
 
     if (response.status === 401) {
-        removeAuthToken();
-        removeCurrentUser();
-        window.location.reload();
+        redirectToLogin();
     }
 
     return response;
@@ -67,6 +75,10 @@ export const openDashboardSyncStream = async ({ signal, onEvent }) => {
     const token = getAuthToken();
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const response = await fetch(`${API_BASE}/sync/events`, { headers, signal });
+
+    if (response.status === 401) {
+        redirectToLogin();
+    }
 
     if (!response.ok || !response.body) {
         throw new Error(`Dashboard sync stream failed (${response.status})`);

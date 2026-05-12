@@ -11,7 +11,7 @@ import {
   LogOut,
   X
 } from 'lucide-react';
-import { apiFetch, getCurrentUser, openDashboardSyncStream, removeAuthToken, removeCurrentUser } from '../services/api';
+import { AUTH_EXPIRED_EVENT, apiFetch, getCurrentUser, openDashboardSyncStream, removeAuthToken, removeCurrentUser } from '../services/api';
 import Login from '../features/auth/Login';
 import SettingsView from '../features/settings/Settings';
 
@@ -1581,6 +1581,18 @@ function App() {
     const handleHashChange = () => setCurrentHash(window.location.hash);
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      setUser(null);
+      setConfig(createDefaultConfig());
+      setRedmineSyncStatus(DEFAULT_REDMINE_SYNC_STATUS);
+      setDashboardSync({ connected: false, reason: 'signed-out', updatedAt: null });
+    };
+
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
   }, []);
 
   useEffect(() => {
