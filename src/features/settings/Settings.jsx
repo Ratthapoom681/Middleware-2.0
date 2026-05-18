@@ -1,9 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
-import { Download, Database, Shield, Trash2, Save } from 'lucide-react';
+import { Database, Shield, Trash2, Save } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 
-const PULL_SEVERITY_OPTIONS = ['Critical', 'High', 'Medium', 'Low', 'Info'];
 const DEFAULT_REDMINE_STATUS_POLL_SECONDS = 60;
+const REDMINE_PRIORITY_FIELDS = [
+  { severity: 'Critical', field: 'redminePriorityCriticalId', label: 'Priority ID: Critical' },
+  { severity: 'High', field: 'redminePriorityHighId', label: 'Priority ID: High' },
+  { severity: 'Medium', field: 'redminePriorityMediumId', label: 'Priority ID: Medium' },
+  { severity: 'Low', field: 'redminePriorityLowId', label: 'Priority ID: Low' },
+  { severity: 'Info', field: 'redminePriorityInfoId', label: 'Priority ID: Info' },
+];
 
 const normalizeRedmineStatusPollInterval = (value) => {
   const parsed = Number.parseInt(value, 10);
@@ -19,8 +25,6 @@ const normalizeIntervalDraftValue = (value) => String(value || '').replace(/\D+/
 const Settings = ({ 
   config, 
   onSaveConfig, 
-  pulling, 
-  onPull, 
   onClearData, 
   configBackups, 
   selectedConfigBackup, 
@@ -106,14 +110,6 @@ const Settings = ({
     }
   };
 
-  const updateTempPullFilter = (field, value) => {
-    setConfigSaveMessage('');
-    setTempConfig(prev => ({
-      ...prev,
-      pullFilters: { ...prev.pullFilters, [field]: value }
-    }));
-  };
-
   const updateRedmineStatusPollInterval = (value) => {
     setConfigSaveMessage('');
     setTempConfig(prev => ({
@@ -127,16 +123,6 @@ const Settings = ({
       ...prev,
       redmineStatusPollIntervalSeconds: normalizeRedmineStatusPollInterval(prev.redmineStatusPollIntervalSeconds),
     }));
-  };
-
-  const toggleTempSeverity = (sev) => {
-    setTempConfig(prev => {
-      const current = prev.pullFilters.severity || [];
-      const updated = current.includes(sev)
-        ? current.filter(s => s !== sev)
-        : [...current, sev];
-      return { ...prev, pullFilters: { ...prev.pullFilters, severity: updated } };
-    });
   };
 
   const handleSaveConfig = async () => {
@@ -197,10 +183,6 @@ const Settings = ({
           <section className="config-section config-section-spaced">
             <h2 className="section-title">Data Actions</h2>
             <div className="action-row">
-              <button type="button" className="btn-primary" onClick={() => onPull()} disabled={pulling}>
-                <Download size={16} />
-                {pulling ? 'Pulling...' : 'Pull from DefectDojo'}
-              </button>
               <button type="button" className="btn-danger" onClick={onClearData}>
                 <Database size={16} />
                 Clear All Data
@@ -294,91 +276,157 @@ const Settings = ({
               </div>
             </section>
 
-            <section className="config-section">
+            <section className="config-section redmine-config-section">
               <h2 className="section-title">Redmine</h2>
-              <div className="form-group">
-                <label htmlFor="redmine-url">Redmine URL</label>
-                <input
-                  id="redmine-url"
-                  type="text"
-                  value={tempConfig.redmineUrl}
-                  onChange={(e) => setTempConfig({ ...tempConfig, redmineUrl: e.target.value })}
-                  placeholder="https://redmine.example.com"
-                />
-              </div>
-              <div className="form-group">
-                <label htmlFor="redmine-api-key">API Key</label>
-                <input
-                  id="redmine-api-key"
-                  type="password"
-                  value={tempConfig.redmineApiKey}
-                  onChange={(e) => setTempConfig({ ...tempConfig, redmineApiKey: e.target.value })}
-                  placeholder="Redmine API Key"
-                />
-              </div>
-              <div className="form-group">
-                <label htmlFor="redmine-project-id">Project Identifier Override</label>
-                <input
-                  id="redmine-project-id"
-                  type="text"
-                  value={tempConfig.redmineProjectId}
-                  onChange={(e) => setTempConfig({ ...tempConfig, redmineProjectId: e.target.value })}
-                  placeholder="leave empty for auto-routing"
-                />
-              </div>
-              <div className="form-group">
-                <label htmlFor="redmine-sync-interval">Status Sync Interval (seconds)</label>
-                <input
-                  id="redmine-sync-interval"
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={tempConfig.redmineStatusPollIntervalSeconds}
-                  onChange={(e) => updateRedmineStatusPollInterval(e.target.value)}
-                  onBlur={normalizeRedmineStatusPollIntervalDraft}
-                  placeholder="60"
-                />
-                <p className="field-hint">Use 0 to disable. Minimum enabled interval is 60 seconds. The saved value stays visible here.</p>
-              </div>
-            </section>
+              <div className="redmine-settings-grid">
+                <div className="settings-subsection">
+                  <h3>Connection</h3>
+                  <div className="form-group">
+                    <label htmlFor="redmine-url">Redmine URL</label>
+                    <input
+                      id="redmine-url"
+                      type="text"
+                      value={tempConfig.redmineUrl}
+                      onChange={(e) => setTempConfig({ ...tempConfig, redmineUrl: e.target.value })}
+                      placeholder="https://redmine.example.com"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="redmine-api-key">API Key</label>
+                    <input
+                      id="redmine-api-key"
+                      type="password"
+                      value={tempConfig.redmineApiKey}
+                      onChange={(e) => setTempConfig({ ...tempConfig, redmineApiKey: e.target.value })}
+                      placeholder="Redmine API Key"
+                    />
+                  </div>
+                </div>
 
-            <section className="config-section">
-              <h2 className="section-title">Pull Filters</h2>
-              <div className="form-group">
-                <label>Severity</label>
-                <div className="severity-picker">
-                  <button
-                    type="button"
-                    className={`severity-choice severity-clear ${tempConfig.pullFilters.severity.length === 0 ? 'selected' : ''}`}
-                    onClick={() => updateTempPullFilter('severity', [])}
-                  >
-                    All
-                  </button>
-                  {PULL_SEVERITY_OPTIONS.map(severity => (
-                    <label
-                      key={severity}
-                      className={`severity-choice ${tempConfig.pullFilters.severity.includes(severity) ? 'selected' : ''}`}
-                    >
+                <div className="settings-subsection">
+                  <h3>Routing</h3>
+                  <div className="form-group">
+                    <label htmlFor="redmine-project-id">Project Identifier Override</label>
+                    <input
+                      id="redmine-project-id"
+                      type="text"
+                      value={tempConfig.redmineProjectId}
+                      onChange={(e) => setTempConfig({ ...tempConfig, redmineProjectId: e.target.value })}
+                      placeholder="leave empty for auto-routing"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="redmine-tracker-id">Tracker ID</label>
+                    <input
+                      id="redmine-tracker-id"
+                      type="text"
+                      value={tempConfig.redmineTrackerId || ''}
+                      onChange={(e) => setTempConfig({ ...tempConfig, redmineTrackerId: e.target.value })}
+                      placeholder="optional"
+                    />
+                  </div>
+                </div>
+
+                <div className="settings-subsection">
+                  <h3>Priorities</h3>
+                  <div className="form-group">
+                    <label htmlFor="redmine-priority-default">Default Priority ID</label>
+                    <input
+                      id="redmine-priority-default"
+                      type="text"
+                      value={tempConfig.redminePriorityId || ''}
+                      onChange={(e) => setTempConfig({ ...tempConfig, redminePriorityId: e.target.value })}
+                      placeholder="used only when severity is missing"
+                    />
+                    <p className="field-hint">Set the per-severity IDs below so High, Medium, Low, and Info do not inherit a Critical default.</p>
+                  </div>
+                  {REDMINE_PRIORITY_FIELDS.map(({ severity, field, label }) => (
+                    <div className="form-group" key={field}>
+                      <label htmlFor={`redmine-priority-${severity.toLowerCase()}`}>{label}</label>
                       <input
-                        type="checkbox"
-                        checked={tempConfig.pullFilters.severity.includes(severity)}
-                        onChange={() => toggleTempSeverity(severity)}
+                        id={`redmine-priority-${severity.toLowerCase()}`}
+                        type="text"
+                        value={tempConfig[field] || ''}
+                        onChange={(e) => setTempConfig({ ...tempConfig, [field]: e.target.value })}
+                        placeholder={`Redmine priority ID for ${severity}`}
                       />
-                      <span className={`severity-dot ${severity.toLowerCase()}`} />
-                      {severity}
-                    </label>
+                    </div>
                   ))}
                 </div>
-              </div>
-              <div className="form-group">
-                <label htmlFor="pull-product-ids">Product IDs</label>
-                <input 
-                  id="pull-product-ids"
-                  type="text" 
-                  value={tempConfig.pullFilters.test__engagement__product} 
-                  onChange={(e) => updateTempPullFilter('test__engagement__product', e.target.value)}
-                  placeholder="e.g. 5, 12, 23 (leave empty for all)"
-                />
+
+                <div className="settings-subsection">
+                  <h3>Status Sync</h3>
+                  <div className="form-group">
+                    <label htmlFor="redmine-sync-interval">Status Sync Interval (seconds)</label>
+                    <input
+                      id="redmine-sync-interval"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={tempConfig.redmineStatusPollIntervalSeconds}
+                      onChange={(e) => updateRedmineStatusPollInterval(e.target.value)}
+                      onBlur={normalizeRedmineStatusPollIntervalDraft}
+                      placeholder="60"
+                    />
+                    <p className="field-hint">Use 0 to disable. Minimum enabled interval is 60 seconds. The saved value stays visible here.</p>
+                  </div>
+                </div>
+
+                <div className="settings-subsection redmine-status-subsection">
+                  <h3>Status IDs</h3>
+                  <div className="redmine-status-grid">
+                    <div className="form-group">
+                      <label htmlFor="redmine-status-new">New</label>
+                      <input
+                        id="redmine-status-new"
+                        type="text"
+                        value={tempConfig.redmineStatusNewId || ''}
+                        onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusNewId: e.target.value })}
+                        placeholder="name lookup fallback"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="redmine-status-feedback">Feedback</label>
+                      <input
+                        id="redmine-status-feedback"
+                        type="text"
+                        value={tempConfig.redmineStatusFeedbackId || ''}
+                        onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusFeedbackId: e.target.value })}
+                        placeholder="preferred for auto-reopen"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="redmine-status-progress">In Progress</label>
+                      <input
+                        id="redmine-status-progress"
+                        type="text"
+                        value={tempConfig.redmineStatusInProgressId || ''}
+                        onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusInProgressId: e.target.value })}
+                        placeholder="fallback for auto-reopen"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="redmine-status-resolve">Resolve</label>
+                      <input
+                        id="redmine-status-resolve"
+                        type="text"
+                        value={tempConfig.redmineStatusResolveId || ''}
+                        onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusResolveId: e.target.value })}
+                        placeholder="Resolve/Resolved fallback"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="redmine-status-closed">Closed</label>
+                      <input
+                        id="redmine-status-closed"
+                        type="text"
+                        value={tempConfig.redmineStatusClosedId || ''}
+                        onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusClosedId: e.target.value })}
+                        placeholder="required for manual close"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
           </div>

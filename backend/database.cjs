@@ -1,11 +1,21 @@
+const fs = require('fs');
+const path = require('path');
 const { Pool } = require('pg');
 
 const TABLES = {
+    schemaMigrations: 'defectdojo_viewer_schema_migrations',
     users: 'defectdojo_viewer_users',
     config: 'defectdojo_viewer_config',
     configBackups: 'defectdojo_viewer_config_backups',
     redmineSync: 'defectdojo_viewer_redmine_sync',
-    findings: 'defectdojo_viewer_findings'
+    findings: 'defectdojo_viewer_findings',
+    products: 'defectdojo_viewer_products',
+    engagements: 'defectdojo_viewer_engagements',
+    redmineTickets: 'defectdojo_viewer_redmine_tickets',
+    syncHistory: 'defectdojo_viewer_sync_history',
+    mitigationRechecks: 'defectdojo_viewer_mitigation_rechecks',
+    mitigationReviews: 'defectdojo_viewer_mitigation_reviews',
+    adminActions: 'defectdojo_viewer_admin_actions'
 };
 
 const configured = Boolean(process.env.DATABASE_URL || process.env.PGHOST || process.env.PGDATABASE);
@@ -41,7 +51,185 @@ const normalizeArray = (value) => (
     Array.isArray(value) ? value : []
 );
 
+const toIsoString = (value) => (
+    value instanceof Date ? value.toISOString() : value
+);
+
+const normalizeText = (value) => String(value || '').trim();
+
+const normalizeTextArray = (value) => (
+    Array.from(new Set(normalizeArray(value).map(item => normalizeText(item)).filter(Boolean)))
+);
+
+const normalizeStatus = (value) => (
+    normalizeText(value).toLowerCase().replace(/[_-]+/g, ' ')
+);
+
+const normalizeObject = (value) => (
+    value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+);
+
+const getFindingProductName = (finding = {}) => (
+    finding.productName
+    || finding.product_name
+    || finding.defectDojoProjectName
+    || finding.defectdojoProjectName
+    || finding.defectdojo_route?.projectName
+    || ''
+);
+
+const getFindingProductId = (finding = {}) => (
+    finding.productId
+    || finding.product_id
+    || finding.defectDojoProjectId
+    || finding.defectdojo_route?.projectId
+    || finding.test__engagement__product
+    || ''
+);
+
+const getFindingEngagementName = (finding = {}) => (
+    finding.engagementName
+    || finding.engagement_name
+    || finding.defectDojoEngagementName
+    || finding.defectdojo_route?.engagementName
+    || ''
+);
+
+const getFindingEngagementId = (finding = {}) => (
+    finding.engagementId
+    || finding.engagement_id
+    || finding.defectDojoEngagementId
+    || finding.defectdojo_route?.engagementId
+    || finding.test__engagement
+    || ''
+);
+
+const buildEntityKey = (prefix, id, name) => {
+    const entityId = normalizeText(id);
+    if (entityId) return `${prefix}:id:${entityId}`;
+    const entityName = normalizeText(name);
+    return entityName ? `${prefix}:name:${entityName.toLowerCase()}` : `${prefix}:unknown`;
+};
+
+const buildEntityLookupKeys = (prefix, value) => {
+    const text = normalizeText(value);
+    if (!text) return [];
+    return [
+        text,
+        `${prefix}:id:${text}`,
+        `${prefix}:name:${text.toLowerCase()}`
+    ];
+};
+
+const isFindingMitigated = (finding = {}) => (
+    finding.mitigated === true
+    || finding.is_mitigated === true
+    || normalizeText(finding.mitigated).toLowerCase() === 'true'
+    || normalizeText(finding.is_mitigated).toLowerCase() === 'true'
+    || Boolean(finding.mitigated_at || finding.mitigation_confirmed || finding.mitigation_confirmed_at)
+);
+
+const isFindingActive = (finding = {}) => {
+    if (finding.active === false || normalizeText(finding.active).toLowerCase() === 'false') return false;
+    return !isFindingMitigated(finding);
+};
+
+const normalizeTimestamp = (value) => {
+    const text = normalizeText(value);
+    if (!text) return null;
+    const date = new Date(text);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+const normalizeFindingRecord = (finding = {}) => {
+    const data = finding.data || finding;
+    const findingId = finding.findingId || data.id;
+    const productId = normalizeText(finding.productId || getFindingProductId(data));
+    const productName = normalizeText(finding.productName || getFindingProductName(data));
+    const engagementId = normalizeText(finding.engagementId || getFindingEngagementId(data));
+    const engagementName = normalizeText(finding.engagementName || getFindingEngagementName(data));
+    const productKey = finding.productKey || buildEntityKey('product', productId, productName);
+    const engagementKey = finding.engagementKey || buildEntityKey('engagement', engagementId, engagementName);
+    const cveIds = Array.from(new Set([
+        ...normalizeArray(finding.cveIds),
+        ...normalizeArray(data.cve_ids),
+        ...normalizeArray(data.cves),
+        ...normalizeArray(data.vulnerability_ids),
+        data.cve,
+        data.CVE
+    ].map(value => {
+        if (value && typeof value === 'object') return normalizeText(value.vulnerability_id || value.name || value.id);
+        return normalizeText(value);
+    }).filter(value => value && !['none', 'n/a'].includes(value.toLowerCase()))));
+    const mitigated = finding.mitigated === undefined ? isFindingMitigated(data) : Boolean(finding.mitigated);
+    const active = finding.active === undefined ? isFindingActive(data) : Boolean(finding.active);
+
+    return {
+        findingKey: finding.findingKey || (findingId !== undefined && findingId !== null ? `id:${findingId}` : ''),
+        findingId: findingId === undefined || findingId === null ? null : String(findingId),
+        defectdojoFindingId: findingId === undefined || findingId === null ? null : String(findingId),
+        productKey,
+        engagementKey,
+        productId,
+        productName,
+        engagementId,
+        engagementName,
+        title: normalizeText(finding.title || data.title || data.name || 'Untitled finding'),
+        severity: normalizeText(finding.severity || data.severity || 'Info') || 'Info',
+        active,
+        mitigated,
+        mitigationConfirmedAt: normalizeTimestamp(finding.mitigationConfirmedAt || data.mitigation_confirmed || data.mitigation_confirmed_at || data.mitigated_at),
+        cveIds,
+        endpoints: normalizeArray(finding.endpoints || data.endpoints),
+        sortIndex: Number.isInteger(finding.sortIndex) ? finding.sortIndex : 0,
+        data
+    };
+};
+
 const isEnabled = () => Boolean(pool);
+
+const splitSqlStatements = (sql) => (
+    sql
+        .split(/;\s*(?:\r?\n|$)/)
+        .map(statement => statement.trim())
+        .filter(Boolean)
+);
+
+const runMigrations = async () => {
+    const migrationsDir = path.join(__dirname, 'migrations');
+    if (!fs.existsSync(migrationsDir)) return;
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${TABLES.schemaMigrations} (
+            id text PRIMARY KEY,
+            applied_at timestamptz NOT NULL DEFAULT now()
+        )
+    `);
+
+    const files = fs.readdirSync(migrationsDir)
+        .filter(file => file.toLowerCase().endsWith('.sql'))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+    for (const file of files) {
+        const migrationId = file.replace(/\.sql$/i, '');
+        const { rows } = await pool.query(
+            `SELECT id FROM ${TABLES.schemaMigrations} WHERE id = $1`,
+            [migrationId]
+        );
+        if (rows.length > 0) continue;
+
+        const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+        await withTransaction(async (client) => {
+            for (const statement of splitSqlStatements(sql)) {
+                await client.query(statement);
+            }
+            await client.query(
+                `INSERT INTO ${TABLES.schemaMigrations} (id) VALUES ($1)`,
+                [migrationId]
+            );
+        });
+    }
+};
 
 const init = async () => {
     if (!configured) return false;
@@ -107,6 +295,8 @@ const init = async () => {
     await pool.query(`CREATE INDEX IF NOT EXISTS ${TABLES.findings}_product_name_idx ON ${TABLES.findings} (product_name)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS ${TABLES.findings}_project_name_idx ON ${TABLES.findings} (defectdojo_project_name)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS ${TABLES.findings}_data_idx ON ${TABLES.findings} USING gin (data jsonb_path_ops)`);
+
+    await runMigrations();
 
     return true;
 };
@@ -267,12 +457,13 @@ const loadRedmineSyncRecords = async () => {
 };
 
 const saveRedmineSyncRecords = async (records = []) => {
-    const normalizedRecords = records.filter(record => record?.syncKey);
+    const normalizedRecords = records
+        .filter(record => record?.syncKey)
+        .sort((left, right) => String(left.syncKey).localeCompare(String(right.syncKey), undefined, { numeric: true }));
+    const currentSyncKeys = normalizedRecords.map(record => String(record.syncKey));
+
     await withTransaction(async (client) => {
-        await client.query(
-            `DELETE FROM ${TABLES.redmineSync} WHERE NOT (sync_key = ANY($1::text[]))`,
-            [normalizedRecords.map(record => record.syncKey)]
-        );
+        await client.query(`LOCK TABLE ${TABLES.redmineSync} IN SHARE ROW EXCLUSIVE MODE`);
 
         for (const record of normalizedRecords) {
             await client.query(`
@@ -293,6 +484,15 @@ const saveRedmineSyncRecords = async (records = []) => {
                 record.status || null
             ]);
         }
+
+        if (currentSyncKeys.length > 0) {
+            await client.query(
+                `DELETE FROM ${TABLES.redmineSync} WHERE NOT (sync_key = ANY($1::text[]))`,
+                [currentSyncKeys]
+            );
+        } else {
+            await client.query(`DELETE FROM ${TABLES.redmineSync}`);
+        }
     });
 };
 
@@ -302,59 +502,1865 @@ const normalizeProductFilters = (products = []) => (
         .filter(Boolean)
 );
 
-const loadFindings = async ({ allowedProducts, requireAllowedProducts = false } = {}) => {
-    const productFilters = normalizeProductFilters(allowedProducts);
-    if (requireAllowedProducts && productFilters.length === 0) return [];
+const buildFindingWhere = ({
+    allowedProducts,
+    requireAllowedProducts = false,
+    productId,
+    engagementId
+} = {}, startIndex = 1, alias = '') => {
+    const prefix = alias ? `${alias}.` : '';
+    const clauses = [];
+    const params = [];
+    let index = startIndex;
 
-    const whereClause = productFilters.length > 0
-        ? `WHERE COALESCE(defectdojo_project_name, product_name, data->>'defectDojoProjectName', data->>'product_name') = ANY($1::text[])`
-        : '';
-    const params = productFilters.length > 0 ? [productFilters] : [];
+    const productFilters = normalizeProductFilters(allowedProducts);
+    if (requireAllowedProducts && productFilters.length === 0) {
+        clauses.push('false');
+    } else if (productFilters.length > 0) {
+        clauses.push(`COALESCE(${prefix}defectdojo_product_name, ${prefix}defectdojo_project_name, ${prefix}product_name, ${prefix}data->>'defectDojoProjectName', ${prefix}data->>'product_name') = ANY($${index}::text[])`);
+        params.push(productFilters);
+        index += 1;
+    }
+
+    const scopedProductId = normalizeText(productId);
+    if (scopedProductId) {
+        clauses.push(`(
+            ${prefix}defectdojo_product_id = $${index}
+            OR ${prefix}product_key = ANY($${index + 1}::text[])
+            OR lower(COALESCE(${prefix}defectdojo_product_name, ${prefix}defectdojo_project_name, ${prefix}product_name, ${prefix}data->>'defectDojoProjectName', ${prefix}data->>'product_name', '')) = lower($${index})
+        )`);
+        params.push(scopedProductId, buildEntityLookupKeys('product', scopedProductId));
+        index += 2;
+    }
+
+    const scopedEngagementId = normalizeText(engagementId);
+    if (scopedEngagementId) {
+        clauses.push(`(
+            ${prefix}defectdojo_engagement_id = $${index}
+            OR ${prefix}engagement_key = ANY($${index + 1}::text[])
+            OR lower(COALESCE(${prefix}defectdojo_engagement_name, ${prefix}data->>'defectDojoEngagementName', ${prefix}data->>'engagement_name', '')) = lower($${index})
+        )`);
+        params.push(scopedEngagementId, buildEntityLookupKeys('engagement', scopedEngagementId));
+        index += 2;
+    }
+
+    return {
+        where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '',
+        params,
+        nextIndex: index
+    };
+};
+
+const buildTicketWhere = ({ productId, engagementId } = {}, startIndex = 1, alias = '') => {
+    const prefix = alias ? `${alias}.` : '';
+    const clauses = [];
+    const params = [];
+    let index = startIndex;
+
+    const scopedProductId = normalizeText(productId);
+    if (scopedProductId) {
+        clauses.push(`(${prefix}product_id = $${index} OR ${prefix}product_key = ANY($${index + 1}::text[]) OR lower(COALESCE(${prefix}product_name, '')) = lower($${index}))`);
+        params.push(scopedProductId, buildEntityLookupKeys('product', scopedProductId));
+        index += 2;
+    }
+
+    const scopedEngagementId = normalizeText(engagementId);
+    if (scopedEngagementId) {
+        clauses.push(`(${prefix}engagement_id = $${index} OR ${prefix}engagement_key = ANY($${index + 1}::text[]) OR lower(COALESCE(${prefix}engagement_name, '')) = lower($${index}))`);
+        params.push(scopedEngagementId, buildEntityLookupKeys('engagement', scopedEngagementId));
+        index += 2;
+    }
+
+    return {
+        where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '',
+        params,
+        nextIndex: index
+    };
+};
+
+const hydrateFindingRow = (row = {}) => ({
+    ...parseJsonValue(row.data, {}),
+    id: parseJsonValue(row.data, {})?.id ?? row.defectdojo_finding_id ?? row.finding_id,
+    findingKey: row.finding_key,
+    product_id: row.defectdojo_product_id || parseJsonValue(row.data, {})?.product_id,
+    product_name: row.defectdojo_product_name || row.product_name || parseJsonValue(row.data, {})?.product_name,
+    engagement_id: row.defectdojo_engagement_id || parseJsonValue(row.data, {})?.engagement_id,
+    engagement_name: row.defectdojo_engagement_name || parseJsonValue(row.data, {})?.engagement_name,
+    severity: row.severity || parseJsonValue(row.data, {})?.severity,
+    active: row.active,
+    is_mitigated: row.mitigated,
+    mitigated: row.mitigated,
+    mitigation_confirmed_at: toIsoString(row.mitigation_confirmed_at),
+    cve_ids: normalizeArray(row.cve_ids),
+    endpoints: normalizeArray(parseJsonValue(row.endpoints, [])),
+    last_seen_sync_id: row.last_seen_sync_id,
+    last_seen_at: toIsoString(row.last_seen_at),
+    defectdojo_route: {
+        ...(parseJsonValue(row.data, {})?.defectdojo_route || {}),
+        projectId: row.defectdojo_product_id || parseJsonValue(row.data, {})?.defectdojo_route?.projectId || '',
+        projectName: row.defectdojo_product_name || row.product_name || parseJsonValue(row.data, {})?.defectdojo_route?.projectName || '',
+        engagementId: row.defectdojo_engagement_id || parseJsonValue(row.data, {})?.defectdojo_route?.engagementId || '',
+        engagementName: row.defectdojo_engagement_name || parseJsonValue(row.data, {})?.defectdojo_route?.engagementName || ''
+    }
+});
+
+const loadFindings = async (filters = {}) => {
+    const { where, params } = buildFindingWhere(filters);
 
     const { rows } = await pool.query(`
-        SELECT data
+        SELECT *
         FROM ${TABLES.findings}
-        ${whereClause}
+        ${where}
         ORDER BY sort_index ASC, finding_key ASC
     `, params);
 
-    return rows.map(row => parseJsonValue(row.data, {}));
+    return rows.map(hydrateFindingRow);
 };
 
-const replaceFindings = async (findings = []) => {
-    await withTransaction(async (client) => {
-        await client.query(`TRUNCATE ${TABLES.findings}`);
+const upsertProductAndEngagement = async (client, finding) => {
+    await client.query(`
+        INSERT INTO ${TABLES.products} (
+            product_key,
+            defectdojo_product_id,
+            product_name,
+            raw
+        )
+        VALUES ($1, $2, $3, $4::jsonb)
+        ON CONFLICT (product_key)
+        DO UPDATE SET
+            defectdojo_product_id = EXCLUDED.defectdojo_product_id,
+            product_name = EXCLUDED.product_name,
+            raw = EXCLUDED.raw,
+            updated_at = now()
+    `, [
+        finding.productKey,
+        finding.productId || null,
+        finding.productName || '',
+        JSON.stringify({
+            id: finding.productId,
+            name: finding.productName
+        })
+    ]);
 
-        for (const finding of findings) {
-            await client.query(`
+    await client.query(`
+        INSERT INTO ${TABLES.engagements} (
+            engagement_key,
+            defectdojo_engagement_id,
+            engagement_name,
+            product_key,
+            raw
+        )
+        VALUES ($1, $2, $3, $4, $5::jsonb)
+        ON CONFLICT (engagement_key)
+        DO UPDATE SET
+            defectdojo_engagement_id = EXCLUDED.defectdojo_engagement_id,
+            engagement_name = EXCLUDED.engagement_name,
+            product_key = EXCLUDED.product_key,
+            raw = EXCLUDED.raw,
+            updated_at = now()
+    `, [
+        finding.engagementKey,
+        finding.engagementId || null,
+        finding.engagementName || '',
+        finding.productKey,
+        JSON.stringify({
+            id: finding.engagementId,
+            name: finding.engagementName,
+            productKey: finding.productKey
+        })
+    ]);
+};
+
+const upsertFindingsForSync = async (findings = [], syncHistoryId = null) => {
+    let inserted = 0;
+    let updated = 0;
+
+    await withTransaction(async (client) => {
+        for (const sourceFinding of findings) {
+            const finding = normalizeFindingRecord(sourceFinding);
+            if (!finding.findingKey) continue;
+
+            await upsertProductAndEngagement(client, finding);
+
+            const values = [
+                finding.findingKey,
+                finding.findingId,
+                finding.productName || null,
+                finding.productName || null,
+                finding.defectdojoFindingId,
+                finding.productKey,
+                finding.engagementKey,
+                finding.productId || null,
+                finding.productName || null,
+                finding.engagementId || null,
+                finding.engagementName || null,
+                finding.title,
+                finding.severity,
+                finding.active,
+                finding.mitigated,
+                finding.mitigationConfirmedAt,
+                finding.cveIds,
+                JSON.stringify(finding.endpoints),
+                syncHistoryId,
+                finding.sortIndex,
+                JSON.stringify(finding.data)
+            ];
+            const conflictTarget = finding.defectdojoFindingId
+                ? `(defectdojo_finding_id) WHERE defectdojo_finding_id IS NOT NULL AND defectdojo_finding_id <> ''`
+                : `(finding_key)`;
+            const { rows } = await client.query(`
                 INSERT INTO ${TABLES.findings} (
                     finding_key,
                     finding_id,
                     product_name,
                     defectdojo_project_name,
+                    defectdojo_finding_id,
+                    product_key,
+                    engagement_key,
+                    defectdojo_product_id,
+                    defectdojo_product_name,
+                    defectdojo_engagement_id,
+                    defectdojo_engagement_name,
+                    title,
+                    severity,
+                    active,
+                    mitigated,
+                    mitigation_confirmed_at,
+                    cve_ids,
+                    endpoints,
+                    first_seen_sync_id,
+                    last_seen_sync_id,
                     sort_index,
-                    data
+                    data,
+                    last_seen_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-            `, [
-                finding.findingKey,
-                finding.findingId,
-                finding.productName,
-                finding.defectDojoProjectName,
-                finding.sortIndex,
-                JSON.stringify(finding.data)
-            ]);
+                VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                    $11, $12, $13, $14, $15, $16::timestamptz, $17::text[],
+                    $18::jsonb, $19, $19, $20, $21::jsonb, now()
+                )
+                ON CONFLICT ${conflictTarget}
+                DO UPDATE SET
+                    finding_id = EXCLUDED.finding_id,
+                    product_name = EXCLUDED.product_name,
+                    defectdojo_project_name = EXCLUDED.defectdojo_project_name,
+                    defectdojo_finding_id = EXCLUDED.defectdojo_finding_id,
+                    product_key = EXCLUDED.product_key,
+                    engagement_key = EXCLUDED.engagement_key,
+                    defectdojo_product_id = EXCLUDED.defectdojo_product_id,
+                    defectdojo_product_name = EXCLUDED.defectdojo_product_name,
+                    defectdojo_engagement_id = EXCLUDED.defectdojo_engagement_id,
+                    defectdojo_engagement_name = EXCLUDED.defectdojo_engagement_name,
+                    title = EXCLUDED.title,
+                    severity = EXCLUDED.severity,
+                    active = EXCLUDED.active,
+                    mitigated = EXCLUDED.mitigated,
+                    mitigation_confirmed_at = EXCLUDED.mitigation_confirmed_at,
+                    cve_ids = EXCLUDED.cve_ids,
+                    endpoints = EXCLUDED.endpoints,
+                    first_seen_sync_id = COALESCE(${TABLES.findings}.first_seen_sync_id, EXCLUDED.first_seen_sync_id),
+                    last_seen_sync_id = EXCLUDED.last_seen_sync_id,
+                    sort_index = EXCLUDED.sort_index,
+                    data = EXCLUDED.data,
+                    last_seen_at = now(),
+                    updated_at = now()
+                RETURNING (xmax = 0) AS inserted
+            `, values);
+
+            if (rows[0]?.inserted) inserted += 1;
+            else updated += 1;
         }
     });
+
+    return {
+        inserted,
+        updated,
+        total: inserted + updated
+    };
+};
+
+const markUnseenActiveFindingsInactiveForSync = async ({
+    syncHistoryId = null,
+    productId = '',
+    engagementId = '',
+    severities = []
+} = {}) => {
+    const syncId = Number.parseInt(syncHistoryId, 10);
+    if (!Number.isInteger(syncId) || syncId <= 0) return { updated: 0 };
+
+    const clauses = [
+        `active = true`,
+        `mitigated = false`,
+        `last_seen_sync_id IS DISTINCT FROM $1`
+    ];
+    const params = [syncId];
+    let index = 2;
+
+    const scopedProductId = normalizeText(productId);
+    if (scopedProductId) {
+        clauses.push(`(defectdojo_product_id = $${index} OR product_key = $${index + 1})`);
+        params.push(scopedProductId, `product:id:${scopedProductId}`);
+        index += 2;
+    }
+
+    const scopedEngagementId = normalizeText(engagementId);
+    if (scopedEngagementId) {
+        clauses.push(`(defectdojo_engagement_id = $${index} OR engagement_key = $${index + 1})`);
+        params.push(scopedEngagementId, `engagement:id:${scopedEngagementId}`);
+        index += 2;
+    }
+
+    const severityFilters = normalizeTextArray(severities);
+    if (severityFilters.length > 0) {
+        clauses.push(`severity = ANY($${index}::text[])`);
+        params.push(severityFilters);
+    }
+
+    const { rowCount } = await pool.query(`
+        UPDATE ${TABLES.findings}
+        SET
+            active = false,
+            updated_at = now()
+        WHERE ${clauses.join(' AND ')}
+    `, params);
+
+    return { updated: rowCount || 0 };
+};
+
+const replaceFindings = async (findings = []) => {
+    await withTransaction(async (client) => {
+        await client.query(`TRUNCATE ${TABLES.findings}`);
+    });
+    return upsertFindingsForSync(findings, null);
 };
 
 const clearFindings = async () => {
     await pool.query(`TRUNCATE ${TABLES.findings}`);
 };
 
+const clearAllData = async () => {
+    await withTransaction(async (client) => {
+        await client.query(`
+            TRUNCATE
+                ${TABLES.adminActions},
+                ${TABLES.mitigationReviews},
+                ${TABLES.mitigationRechecks},
+                ${TABLES.redmineTickets},
+                ${TABLES.syncHistory},
+                ${TABLES.redmineSync},
+                ${TABLES.findings},
+                ${TABLES.engagements},
+                ${TABLES.products}
+            RESTART IDENTITY
+        `);
+    });
+};
+
 const countFindings = async () => {
     const { rows } = await pool.query(`SELECT count(*)::int AS count FROM ${TABLES.findings}`);
     return rows[0]?.count || 0;
+};
+
+const createSyncHistory = async ({
+    syncType,
+    productId = '',
+    productName = '',
+    engagementId = '',
+    engagementName = '',
+    filters = {},
+    severityBreakdown = {},
+    triggeredBy = '',
+    triggeredRole = ''
+} = {}) => {
+    const productKey = productId || productName ? buildEntityKey('product', productId, productName) : null;
+    const engagementKey = engagementId || engagementName ? buildEntityKey('engagement', engagementId, engagementName) : null;
+    const { rows } = await pool.query(`
+        INSERT INTO ${TABLES.syncHistory} (
+            product_key,
+            product_id,
+            product_name,
+            engagement_key,
+            engagement_id,
+            engagement_name,
+            sync_type,
+            requested_filters,
+            severity_breakdown,
+            triggered_by,
+            triggered_role
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11)
+        RETURNING *
+    `, [
+        productKey,
+        productId || null,
+        productName || null,
+        engagementKey,
+        engagementId || null,
+        engagementName || null,
+        syncType || 'Sync',
+        JSON.stringify(filters || {}),
+        JSON.stringify(normalizeObject(severityBreakdown)),
+        triggeredBy || '',
+        triggeredRole || ''
+    ]);
+
+    return formatSyncHistoryRow(rows[0]);
+};
+
+const finishSyncHistory = async (id, updates = {}) => {
+    const { rows } = await pool.query(`
+        UPDATE ${TABLES.syncHistory}
+        SET
+            finished_at = COALESCE($2::timestamptz, now()),
+            status = COALESCE($3, status),
+            findings_pulled = COALESCE($4::int, findings_pulled),
+            tickets_pulled = COALESCE($5::int, tickets_pulled),
+            findings_updated = COALESCE($6::int, findings_updated),
+            tickets_updated = COALESCE($7::int, tickets_updated),
+            findings_mitigated = COALESCE($8::int, findings_mitigated),
+            findings_still_active = COALESCE($9::int, findings_still_active),
+            warnings = COALESCE($10::jsonb, warnings),
+            errors = COALESCE($11::jsonb, errors),
+            severity_breakdown = COALESCE($12::jsonb, severity_breakdown)
+        WHERE id = $1
+        RETURNING *
+    `, [
+        id,
+        updates.finishedAt || null,
+        updates.status || null,
+        updates.findingsPulled,
+        updates.ticketsPulled,
+        updates.findingsUpdated,
+        updates.ticketsUpdated,
+        updates.findingsMitigated,
+        updates.findingsStillActive,
+        updates.warnings === undefined ? null : JSON.stringify(normalizeArray(updates.warnings)),
+        updates.errors === undefined ? null : JSON.stringify(normalizeArray(updates.errors)),
+        updates.severityBreakdown === undefined ? null : JSON.stringify(normalizeObject(updates.severityBreakdown))
+    ]);
+
+    return formatSyncHistoryRow(rows[0]);
+};
+
+const markSyncHistorySplitParent = async (id) => {
+    const { rows } = await pool.query(`
+        UPDATE ${TABLES.syncHistory}
+        SET requested_filters = COALESCE(requested_filters, '{}'::jsonb) || '{"syncHistorySplitParent": true}'::jsonb
+        WHERE id = $1
+        RETURNING *
+    `, [id]);
+
+    return rows[0] ? formatSyncHistoryRow(rows[0]) : null;
+};
+
+const formatSyncHistoryRow = (row = {}) => ({
+    id: row.id,
+    productKey: row.product_key,
+    productId: row.product_id,
+    productName: row.product_name,
+    engagementKey: row.engagement_key,
+    engagementId: row.engagement_id,
+    engagementName: row.engagement_name,
+    syncType: row.sync_type,
+    startedAt: toIsoString(row.started_at),
+    finishedAt: toIsoString(row.finished_at),
+    status: row.status,
+    findingsPulled: row.findings_pulled,
+    ticketsPulled: row.tickets_pulled,
+    findingsUpdated: row.findings_updated,
+    ticketsUpdated: row.tickets_updated,
+    findingsMitigated: row.findings_mitigated,
+    findingsStillActive: row.findings_still_active,
+    severityBreakdown: parseJsonValue(row.severity_breakdown, {}),
+    warnings: parseJsonValue(row.warnings, []),
+    errors: parseJsonValue(row.errors, []),
+    requestedFilters: parseJsonValue(row.requested_filters, {}),
+    triggeredBy: row.triggered_by,
+    triggeredRole: row.triggered_role,
+    createdAt: toIsoString(row.created_at)
+});
+
+const listSyncHistory = async ({
+    productId = '',
+    engagementId = '',
+    syncType = '',
+    status = '',
+    limit = 50,
+    offset = 0
+} = {}) => {
+    const clauses = [];
+    const params = [];
+    let index = 1;
+
+    if (normalizeText(productId)) {
+        clauses.push(`product_id = $${index}`);
+        params.push(normalizeText(productId));
+        index += 1;
+    }
+    if (normalizeText(engagementId)) {
+        clauses.push(`engagement_id = $${index}`);
+        params.push(normalizeText(engagementId));
+        index += 1;
+    }
+    if (normalizeText(syncType)) {
+        clauses.push(`sync_type = $${index}`);
+        params.push(normalizeText(syncType));
+        index += 1;
+    }
+    if (normalizeText(status)) {
+        clauses.push(`status = $${index}`);
+        params.push(normalizeText(status));
+        index += 1;
+    }
+    clauses.push(`COALESCE(requested_filters->>'syncHistorySplitParent', 'false') <> 'true'`);
+
+    const safeLimit = Math.max(1, Math.min(Number.parseInt(limit, 10) || 50, 200));
+    const safeOffset = Math.max(0, Number.parseInt(offset, 10) || 0);
+    params.push(safeLimit, safeOffset);
+
+    const { rows } = await pool.query(`
+        SELECT *
+        FROM ${TABLES.syncHistory}
+        ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY started_at DESC, id DESC
+        LIMIT $${index} OFFSET $${index + 1}
+    `, params);
+
+    return rows.map(formatSyncHistoryRow);
+};
+
+const getSyncHistory = async (id) => {
+    const { rows } = await pool.query(
+        `SELECT * FROM ${TABLES.syncHistory} WHERE id = $1`,
+        [id]
+    );
+    return rows[0] ? formatSyncHistoryRow(rows[0]) : null;
+};
+
+const getDashboardSummary = async ({ productId = '', engagementId = '' } = {}) => {
+    const findingWhere = buildFindingWhere({ productId, engagementId });
+    const ticketWhere = buildTicketWhere({ productId, engagementId });
+
+    const [findingStats, ticketStats, productRows, engagementRows] = await Promise.all([
+        pool.query(`
+            SELECT
+                count(*) FILTER (WHERE active = true AND mitigated = false)::int AS active_findings,
+                count(*) FILTER (WHERE mitigated = true)::int AS mitigated_findings
+            FROM ${TABLES.findings}
+            ${findingWhere.where}
+        `, findingWhere.params),
+        pool.query(`
+            SELECT
+                count(*) FILTER (WHERE normalized_status = 'new')::int AS ticket_new,
+                count(*) FILTER (WHERE normalized_status = 'in progress')::int AS ticket_in_progress,
+                count(*) FILTER (WHERE normalized_status = 'feedback')::int AS ticket_feedback,
+                count(*) FILTER (WHERE normalized_status IN ('resolve', 'resolved'))::int AS ticket_resolve,
+                count(*) FILTER (WHERE is_closed = true OR normalized_status = 'closed')::int AS ticket_closed
+            FROM ${TABLES.redmineTickets}
+            ${ticketWhere.where}
+        `, ticketWhere.params),
+        pool.query(`
+            WITH product_options AS (
+                SELECT product_key, defectdojo_product_id AS product_id, product_name
+                FROM ${TABLES.products}
+                UNION
+                SELECT product_key, defectdojo_product_id AS product_id, defectdojo_product_name AS product_name
+                FROM ${TABLES.findings}
+            )
+            SELECT DISTINCT ON (COALESCE(NULLIF(product_key, ''), NULLIF(product_id, ''), product_name))
+                product_key,
+                product_id,
+                product_name
+            FROM product_options
+            WHERE COALESCE(NULLIF(product_id, ''), NULLIF(product_name, '')) IS NOT NULL
+            ORDER BY COALESCE(NULLIF(product_key, ''), NULLIF(product_id, ''), product_name), product_name NULLS LAST, product_id NULLS LAST
+        `),
+        pool.query(`
+            WITH engagement_options AS (
+                SELECT
+                    e.engagement_key,
+                    e.defectdojo_engagement_id AS engagement_id,
+                    e.engagement_name,
+                    e.product_key,
+                    p.defectdojo_product_id AS product_id,
+                    p.product_name
+                FROM ${TABLES.engagements} e
+                LEFT JOIN ${TABLES.products} p ON p.product_key = e.product_key
+                UNION
+                SELECT
+                    engagement_key,
+                    defectdojo_engagement_id AS engagement_id,
+                    defectdojo_engagement_name AS engagement_name,
+                    product_key,
+                    defectdojo_product_id AS product_id,
+                    defectdojo_product_name AS product_name
+                FROM ${TABLES.findings}
+            )
+            SELECT DISTINCT ON (COALESCE(NULLIF(engagement_key, ''), NULLIF(engagement_id, ''), engagement_name))
+                engagement_key,
+                engagement_id,
+                engagement_name,
+                product_key,
+                product_id
+            FROM engagement_options
+            WHERE COALESCE(NULLIF(engagement_id, ''), NULLIF(engagement_name, '')) IS NOT NULL
+                AND (
+                    $1::text = ''
+                    OR product_id = $1
+                    OR product_key = ANY($2::text[])
+                    OR lower(COALESCE(product_name, '')) = lower($1)
+                )
+            ORDER BY COALESCE(NULLIF(engagement_key, ''), NULLIF(engagement_id, ''), engagement_name), engagement_name NULLS LAST, engagement_id NULLS LAST
+        `, [normalizeText(productId), buildEntityLookupKeys('product', productId)])
+    ]);
+
+    return {
+        defectDojo: {
+            activeFindings: findingStats.rows[0]?.active_findings || 0,
+            mitigatedFindings: findingStats.rows[0]?.mitigated_findings || 0
+        },
+        redmine: {
+            ticketNew: ticketStats.rows[0]?.ticket_new || 0,
+            ticketInProgress: ticketStats.rows[0]?.ticket_in_progress || 0,
+            ticketFeedback: ticketStats.rows[0]?.ticket_feedback || 0,
+            ticketResolve: ticketStats.rows[0]?.ticket_resolve || 0,
+            ticketClosed: ticketStats.rows[0]?.ticket_closed || 0
+        },
+        filters: {
+            products: productRows.rows.map(row => ({
+                id: row.product_id || '',
+                key: row.product_key || '',
+                name: row.product_name || row.product_id || 'Unknown product'
+            })),
+            engagements: engagementRows.rows.map(row => ({
+                id: row.engagement_id || '',
+                key: row.engagement_key || '',
+                name: row.engagement_name || row.engagement_id || 'Unknown engagement',
+                productId: row.product_id || '',
+                productKey: row.product_key || ''
+            }))
+        }
+    };
+};
+
+const formatTicketRecord = (record = {}) => {
+    const raw = record.raw || record;
+    const statusName = normalizeText(record.statusName || record.status || raw.status?.name || '');
+    const statusId = normalizeText(record.statusId || raw.status?.id || '');
+    const productId = normalizeText(record.productId || record.route?.projectId || raw.productId || '');
+    const productName = normalizeText(record.productName || record.route?.projectName || raw.productName || '');
+    const engagementId = normalizeText(record.engagementId || record.route?.engagementId || raw.engagementId || '');
+    const engagementName = normalizeText(record.engagementName || record.route?.engagementName || raw.engagementName || '');
+
+    return {
+        ticketKey: normalizeText(record.ticketKey || record.syncKey),
+        syncKey: normalizeText(record.syncKey || record.ticketKey),
+        issueId: record.issueId === undefined || record.issueId === null ? '' : String(record.issueId),
+        productKey: record.productKey || buildEntityKey('product', productId, productName),
+        productId,
+        productName,
+        engagementKey: record.engagementKey || buildEntityKey('engagement', engagementId, engagementName),
+        engagementId,
+        engagementName,
+        cveId: normalizeText(record.cveId || raw.cveId || ''),
+        findingIds: normalizeTextArray(record.findingIds || raw.findingIds),
+        statusId,
+        statusName,
+        normalizedStatus: normalizeStatus(record.normalizedStatus || statusName),
+        isClosed: Boolean(record.isClosed),
+        subject: normalizeText(record.subject || raw.subject || ''),
+        issueUrl: normalizeText(record.issueUrl || raw.issueUrl || ''),
+        raw
+    };
+};
+
+const upsertRedmineTickets = async (records = [], syncHistoryId = null) => {
+    let changed = 0;
+    const normalizedSourceRecords = records
+        .filter(record => record?.ticketKey || record?.syncKey)
+        .sort((left, right) => String(left.ticketKey || left.syncKey).localeCompare(String(right.ticketKey || right.syncKey), undefined, { numeric: true }));
+    const currentTicketKeys = normalizedSourceRecords
+        .map(record => normalizeText(record.ticketKey || record.syncKey))
+        .filter(Boolean);
+
+    await withTransaction(async (client) => {
+        await client.query(`LOCK TABLE ${TABLES.redmineTickets} IN SHARE ROW EXCLUSIVE MODE`);
+
+        for (const sourceRecord of normalizedSourceRecords) {
+            const record = formatTicketRecord(sourceRecord);
+            if (!record.ticketKey) continue;
+
+            const { rows } = await client.query(`
+                INSERT INTO ${TABLES.redmineTickets} (
+                    ticket_key,
+                    sync_key,
+                    issue_id,
+                    product_key,
+                    product_id,
+                    product_name,
+                    engagement_key,
+                    engagement_id,
+                    engagement_name,
+                    cve_id,
+                    finding_ids,
+                    status_id,
+                    status_name,
+                    normalized_status,
+                    is_closed,
+                    subject,
+                    issue_url,
+                    raw,
+                    last_seen_sync_id
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                    $11::text[], $12, $13, $14, $15, $16, $17, $18::jsonb, $19
+                )
+                ON CONFLICT (ticket_key)
+                DO UPDATE SET
+                    sync_key = EXCLUDED.sync_key,
+                    issue_id = EXCLUDED.issue_id,
+                    product_key = EXCLUDED.product_key,
+                    product_id = EXCLUDED.product_id,
+                    product_name = EXCLUDED.product_name,
+                    engagement_key = EXCLUDED.engagement_key,
+                    engagement_id = EXCLUDED.engagement_id,
+                    engagement_name = EXCLUDED.engagement_name,
+                    cve_id = EXCLUDED.cve_id,
+                    finding_ids = EXCLUDED.finding_ids,
+                    status_id = EXCLUDED.status_id,
+                    status_name = EXCLUDED.status_name,
+                    normalized_status = EXCLUDED.normalized_status,
+                    is_closed = EXCLUDED.is_closed,
+                    subject = EXCLUDED.subject,
+                    issue_url = EXCLUDED.issue_url,
+                    raw = EXCLUDED.raw,
+                    last_seen_sync_id = EXCLUDED.last_seen_sync_id,
+                    updated_at = now()
+                RETURNING ticket_key
+            `, [
+                record.ticketKey,
+                record.syncKey || record.ticketKey,
+                record.issueId || null,
+                record.productKey,
+                record.productId || null,
+                record.productName || null,
+                record.engagementKey,
+                record.engagementId || null,
+                record.engagementName || null,
+                record.cveId || null,
+                record.findingIds,
+                record.statusId || null,
+                record.statusName || null,
+                record.normalizedStatus || null,
+                record.isClosed,
+                record.subject || null,
+                record.issueUrl || null,
+                JSON.stringify(record.raw),
+                syncHistoryId
+            ]);
+            if (rows.length > 0) changed += 1;
+        }
+
+        if (currentTicketKeys.length > 0) {
+            await client.query(
+                `DELETE FROM ${TABLES.redmineTickets} WHERE NOT (ticket_key = ANY($1::text[]))`,
+                [currentTicketKeys]
+            );
+        } else {
+            await client.query(`DELETE FROM ${TABLES.redmineTickets}`);
+        }
+    });
+
+    return { updated: changed };
+};
+
+const SEVERITY_RANK = {
+    None: 0,
+    Info: 0,
+    Informational: 0,
+    Low: 1,
+    Medium: 2,
+    High: 3,
+    Critical: 4
+};
+
+const highestSeverity = (current, next) => (
+    (SEVERITY_RANK[next] || 0) > (SEVERITY_RANK[current] || 0) ? next : current
+);
+
+const COMPACT_UPGRADE_TARGET_RE = /upgrade\s+to\s+(.+?)\s+(?:version\s+)?([0-9][0-9a-z.-]*)\s*(?:or\s+later)?\.?/i;
+const COMPACT_TITLE_VERSION_RE = /^(.+?)\s+.*?(?:<|version)\s+([0-9][0-9a-z.-]*)/i;
+const COMPACT_LESS_THAN_VERSION_RE = /<\s*([0-9][0-9a-z.-]*)/i;
+
+const asArray = (value) => {
+    if (Array.isArray(value)) return value;
+    if (value instanceof Set) return Array.from(value);
+    if (value === undefined || value === null || value === '') return [];
+    return [value];
+};
+
+const asFindingIdArray = (value) => {
+    if (typeof value === 'string') return value.split(/[\s,]+/).filter(Boolean);
+    return asArray(value);
+};
+
+const sortStrings = (values = []) => asArray(values)
+    .map(value => normalizeText(value))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+const sortFindingIds = (ids = []) => (
+    sortStrings(asFindingIdArray(ids))
+        .map(id => (/^\d+$/.test(id) ? Number.parseInt(id, 10) : id))
+);
+
+const cleanCompactSoftwareName = (value) => (
+    normalizeText(value)
+        .replace(/[.:;,-]+$/g, '')
+        .trim()
+);
+
+const tokenizeCompactVersion = (value) => (
+    String(value || '0')
+        .split(/[._+-]/)
+        .map(part => {
+            const numeric = Number.parseInt(part, 10);
+            return Number.isNaN(numeric) ? part.toLowerCase() : numeric;
+        })
+);
+
+const compareCompactVersions = (a, b) => {
+    const left = tokenizeCompactVersion(a);
+    const right = tokenizeCompactVersion(b);
+    const maxLength = Math.max(left.length, right.length);
+
+    for (let index = 0; index < maxLength; index += 1) {
+        const leftPart = left[index] ?? 0;
+        const rightPart = right[index] ?? 0;
+        if (typeof leftPart === 'number' && typeof rightPart === 'number') {
+            if (leftPart !== rightPart) return leftPart > rightPart ? 1 : -1;
+            continue;
+        }
+
+        const comparison = String(leftPart).localeCompare(String(rightPart), undefined, { numeric: true });
+        if (comparison !== 0) return comparison;
+    }
+
+    return 0;
+};
+
+const stableCompactHash = (value) => {
+    const text = String(value || '');
+    let h1 = 0xdeadbeef;
+    let h2 = 0x41c6ce57;
+
+    for (let index = 0; index < text.length; index += 1) {
+        const ch = text.charCodeAt(index);
+        h1 = Math.imul(h1 ^ ch, 2654435761);
+        h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+};
+
+const buildCompactSyncKey = ({ groupKey, productIds = [], engagementIds = [] }) => {
+    const source = [
+        `group:${groupKey}`,
+        `products:${sortStrings(productIds).join(',')}`,
+        `engagements:${sortStrings(engagementIds).join(',')}`
+    ].join('|');
+
+    return `dd-compact-${stableCompactHash(source)}`;
+};
+
+const buildLegacyCompactSyncKey = ({ groupKey, findingIds = [], productIds = [], engagementIds = [] }) => {
+    const source = [
+        `group:${groupKey}`,
+        `findings:${sortStrings(asFindingIdArray(findingIds)).join(',')}`,
+        `products:${sortStrings(productIds).join(',')}`,
+        `engagements:${sortStrings(engagementIds).join(',')}`
+    ].join('|');
+
+    return `dd-compact-${stableCompactHash(source)}`;
+};
+
+const getEndpointLabel = (endpoint) => {
+    if (endpoint && typeof endpoint === 'object') {
+        const host = endpoint.host || endpoint.hostname || endpoint.fqdn || endpoint.ip || endpoint.address || '';
+        const protocol = endpoint.protocol ? `${endpoint.protocol}://` : '';
+        const port = endpoint.port ? `:${endpoint.port}` : '';
+        if (host) return `${protocol}${host}${port}`;
+        return endpoint.url || endpoint.uri || endpoint.display_name || endpoint.name || endpoint.id || 'Unknown endpoint';
+    }
+    return normalizeText(endpoint) || 'Unknown endpoint';
+};
+
+const getEndpointHost = (endpoint) => {
+    if (endpoint && typeof endpoint === 'object') {
+        return normalizeText(endpoint.host || endpoint.hostname || endpoint.fqdn || endpoint.ip || endpoint.address || getEndpointLabel(endpoint));
+    }
+    return normalizeText(endpoint) || 'Unknown endpoint';
+};
+
+const loadTicketRowsForScope = async ({ productId = '', engagementId = '' } = {}) => {
+    const ticketWhere = buildTicketWhere({ productId, engagementId });
+    const { rows } = await pool.query(`
+        SELECT *
+        FROM ${TABLES.redmineTickets}
+        ${ticketWhere.where}
+    `, ticketWhere.params);
+    return rows;
+};
+
+const findTicketForGroup = (tickets = [], syncKey = '', findingIds = [], cveId = '', legacySyncKeys = []) => {
+    void cveId;
+    const normalizedFindingIds = normalizeArray(findingIds).map(String);
+    const findingIdSet = new Set(normalizedFindingIds);
+    const syncKeys = new Set([syncKey, ...normalizeArray(legacySyncKeys)].map(normalizeText).filter(Boolean));
+    const exactSyncKeyMatch = tickets.find(ticket => syncKeys.has(ticket.ticket_key) || syncKeys.has(ticket.sync_key));
+    if (exactSyncKeyMatch) return exactSyncKeyMatch;
+
+    return tickets.find(ticket => {
+        const ticketFindingIds = normalizeArray(ticket.finding_ids).map(String).filter(Boolean);
+        return ticketFindingIds.length > 0
+            && normalizedFindingIds.length > 0
+            && ticketFindingIds.every(id => findingIdSet.has(id));
+    }) || null;
+};
+
+const normalizeCompactText = (value) => (
+    normalizeText(value)
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+);
+
+const normalizeCompactFamilyText = (value) => (
+    normalizeCompactText(value)
+        .replace(COMPACT_UPGRADE_TARGET_RE, (_match, software) => `upgrade to ${cleanCompactSoftwareName(software).toLowerCase()} version <version> or later`)
+        .replace(/\bversion\s+[0-9][0-9a-z.-]*/gi, 'version <version>')
+);
+
+const getCompactMitigationText = (finding = {}) => normalizeText(finding.mitigation || finding.solution || finding.remediation || '');
+
+const getStrictCompactFamilyKey = (finding = {}) => ([
+    'strict',
+    normalizeCompactFamilyText(finding.title || finding.name || 'Untitled finding'),
+    normalizeCompactFamilyText(getCompactMitigationText(finding)),
+    normalizeCompactFamilyText(finding.description || ''),
+    normalizeCompactFamilyText(finding.impact || '')
+].join('|'));
+
+const getLegacyCompactGroupKey = (finding = {}) => {
+    const target = parseCompactUpgradeTarget(finding);
+    const mitigationText = getCompactMitigationText(finding);
+    if (target) return `upgrade|${normalizeCompactFamilyText(target.software)}`;
+
+    return [
+        'finding',
+        normalizeCompactFamilyText(finding.title || finding.name || 'Untitled finding'),
+        normalizeCompactFamilyText(mitigationText),
+        normalizeCompactFamilyText(finding.description || ''),
+        normalizeCompactFamilyText(finding.impact || '')
+    ].join('|');
+};
+
+const getKnownNoCveCompactFamily = (finding = {}) => {
+    const title = normalizeCompactFamilyText(finding.title || finding.name);
+    const hasSslOrTls = /\b(?:ssl|tls)\b/i.test(title);
+    const hasCertificate = /\bcert(?:ificate)?s?\b/i.test(title);
+    const hasTrustSignal = /cannot be trusted|not trusted|untrusted|self[-\s]?signed|invalid chain|certificate chain|expired|hostname|common[-\s]?name|name mismatch|unknown ca|unrecognized ca/i.test(title);
+    const isProtocolOrCipher = /\b(?:protocol|cipher|sslv2|sslv3|tlsv1|sweet32|beast|poodle)\b/i.test(title);
+
+    if (hasSslOrTls && hasCertificate && hasTrustSignal && !isProtocolOrCipher) {
+        return {
+            key: 'ssl-certificate-trust',
+            title: 'SSL Certificate Trust Issues'
+        };
+    }
+
+    return null;
+};
+
+const parseCompactUpgradeText = (value) => {
+    const match = normalizeText(value).match(COMPACT_UPGRADE_TARGET_RE);
+    if (!match) return null;
+
+    return {
+        software: cleanCompactSoftwareName(match[1]),
+        version: match[2].replace(/\.$/, '')
+    };
+};
+
+const parseCompactUpgradeTarget = (finding = {}) => {
+    const sources = [getCompactMitigationText(finding), finding.title, finding.name].filter(Boolean);
+    for (const source of sources) {
+        const target = parseCompactUpgradeText(source);
+        if (target) return target;
+    }
+
+    const titleMatch = normalizeText(finding.title || finding.name).match(COMPACT_TITLE_VERSION_RE);
+    if (!titleMatch) return null;
+
+    return {
+        software: cleanCompactSoftwareName(titleMatch[1]),
+        version: titleMatch[2].replace(/\.$/, '')
+    };
+};
+
+const extractCompactTitleVersion = (title) => {
+    const text = normalizeText(title);
+    const lessThanMatch = text.match(COMPACT_LESS_THAN_VERSION_RE);
+    if (lessThanMatch) return lessThanMatch[1].replace(/\.$/, '');
+
+    const target = parseCompactUpgradeText(text);
+    if (target) return target.version;
+
+    const versionMatch = text.match(/\bversion\s+([0-9][0-9a-z.-]*)/i);
+    return versionMatch ? versionMatch[1].replace(/\.$/, '') : null;
+};
+
+const chooseCompactDisplayTitle = (titles, fallbackTitle) => {
+    const cleanedTitles = sortStrings(titles);
+    if (cleanedTitles.length === 0) return normalizeText(fallbackTitle || 'Untitled finding');
+
+    return cleanedTitles.reduce((best, candidate) => {
+        const bestVersion = extractCompactTitleVersion(best);
+        const candidateVersion = extractCompactTitleVersion(candidate);
+        if (candidateVersion && (!bestVersion || compareCompactVersions(candidateVersion, bestVersion) > 0)) return candidate;
+        if (!candidateVersion && !bestVersion && candidate.length > best.length) return candidate;
+        return best;
+    }, cleanedTitles[0]);
+};
+
+const getCompactSoftwareFamilyTitle = (softwareFamily = '', titles = []) => {
+    const software = normalizeText(softwareFamily);
+    if (!software) return '';
+    const hasMultipleVulnerabilities = sortStrings(titles)
+        .some(title => /multiple vulnerabilities/i.test(title));
+    return `${software} ${hasMultipleVulnerabilities ? 'Multiple Vulnerabilities' : 'Vulnerabilities'}`;
+};
+
+const SOURCE_EVIDENCE_RE = /\b(?:URL|URI)\s*:\s*https?:\/\/\S+(?:\s+\([^)]*\))?(?:\s+(?:Installed|Detected|Current|Fixed|Affected) version\s*:\s*\S+)*|\bVersion source\s*:\s*\S+(?:\s+(?!(?:Installed|Detected|Current|Fixed|Affected) version\s*:)\S+)*(?:\s+(?:Installed|Detected|Current|Fixed|Affected) version\s*:\s*\S+)*/gi;
+
+const cleanTextSourceBody = (text = '') => (
+    normalizeText(text)
+        .replace(SOURCE_EVIDENCE_RE, '')
+        .replace(/\busing the following request\s*:\s*https?:\/\/\S+/i, 'using a request to the affected endpoint')
+        .replace(/\s*This produced the following truncated output[\s\S]*$/i, '\n\nEvidence output omitted. See DefectDojo finding for raw truncated output.')
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+);
+
+const extractTextSourceEvidenceLines = (text = '') => {
+    const evidence = new Set();
+    normalizeText(text).replace(SOURCE_EVIDENCE_RE, match => {
+        const cleaned = normalizeText(match).replace(/\s+/g, ' ');
+        if (cleaned) evidence.add(cleaned);
+        return match;
+    });
+    return Array.from(evidence);
+};
+
+const normalizeTextSourceKey = (text = '') => (
+    [
+        cleanTextSourceBody(text),
+        extractTextSourceEvidenceLines(text)
+            .map(line => line
+                .replace(/\bURL\s*:\s*https?:\/\/\S+/gi, 'URL: <endpoint>')
+                .replace(/\bhttps?:\/\/[^\s)]+/gi, '<url>')
+                .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, '<host>')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .toLowerCase())
+            .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+            .join('|')
+    ]
+        .filter(Boolean)
+        .join('|evidence|')
+        .toLowerCase()
+);
+
+const getCompactionDetailKey = (finding = {}) => ([
+    'detail',
+    normalizeTextSourceKey(finding.description || ''),
+    normalizeTextSourceKey(finding.impact || '')
+].join('|'));
+
+const addTextSource = (sourceMap, text, findingId) => {
+    const cleanedText = normalizeText(text);
+    if (!cleanedText) return;
+    const bodyText = cleanTextSourceBody(cleanedText);
+    const evidenceLines = extractTextSourceEvidenceLines(cleanedText);
+    const sourceKey = normalizeTextSourceKey(cleanedText);
+    if (!sourceMap.has(sourceKey)) {
+        sourceMap.set(sourceKey, {
+            text: bodyText,
+            findingIds: new Set(),
+            evidenceLines: new Set()
+        });
+    }
+    evidenceLines.forEach(line => sourceMap.get(sourceKey).evidenceLines.add(line));
+    const cleanedFindingId = normalizeText(findingId);
+    if (cleanedFindingId) sourceMap.get(sourceKey).findingIds.add(cleanedFindingId);
+};
+
+const sortTextSources = (sourceMap) => (
+    Array.from(sourceMap.values())
+        .map(source => ({
+            text: source.text,
+            findingIds: sortFindingIds(source.findingIds),
+            evidenceLines: sortStrings(source.evidenceLines || [])
+        }))
+        .filter(source => source.text || source.evidenceLines.length > 0)
+        .sort((a, b) => (a.text || a.evidenceLines.join(' ')).localeCompare(b.text || b.evidenceLines.join(' '), undefined, { numeric: true }))
+);
+
+const sortSourceGroupsByTitleVersion = (groups = []) => (
+    groups.sort((a, b) => {
+        const versionA = extractCompactTitleVersion(a.title);
+        const versionB = extractCompactTitleVersion(b.title);
+        if (versionA && versionB) return compareCompactVersions(versionB, versionA);
+        if (versionA) return -1;
+        if (versionB) return 1;
+        return a.title.localeCompare(b.title, undefined, { numeric: true });
+    })
+);
+
+const finalizeEndpointDetails = (endpointDetailsMap) => (
+    Array.from(endpointDetailsMap.values())
+        .map(detail => ({
+            endpoint: detail.endpoint,
+            label: detail.label,
+            host: detail.host,
+            severity: detail.severity,
+            cves: sortStrings(detail.cves),
+            mitigations: sortStrings(detail.mitigations),
+            findingIds: sortFindingIds(detail.findingIds)
+        }))
+        .sort((a, b) => (
+            a.host.localeCompare(b.host, undefined, { numeric: true })
+            || a.label.localeCompare(b.label, undefined, { numeric: true })
+        ))
+);
+
+const finalizeSourceGroups = (sourceGroupsMap) => (
+    sortSourceGroupsByTitleVersion(Array.from(sourceGroupsMap.values()).map(sourceGroup => {
+        const activeCount = sourceGroup.activeCount || 0;
+        const mitigatedCount = sourceGroup.mitigatedCount || 0;
+        return {
+            title: sourceGroup.title,
+            findingIds: sortFindingIds(sourceGroup.findingIds),
+            severity: sourceGroup.severity || 'Info',
+            cveIds: sortStrings(sourceGroup.cveIds),
+            endpointDetails: finalizeEndpointDetails(sourceGroup.endpointDetailsMap),
+            descriptionSources: sortTextSources(sourceGroup.descriptionsMap),
+            impactSources: sortTextSources(sourceGroup.impactsMap),
+            mitigations: sortStrings(sourceGroup.mitigations),
+            activeCount,
+            mitigatedCount,
+            currentStatus: activeCount > 0 && mitigatedCount > 0
+                ? 'mixed'
+                : activeCount > 0
+                    ? 'active'
+                    : 'mitigated'
+        };
+    }))
+);
+
+const buildFindingFingerprint = (finding = {}) => {
+    const cveIds = normalizeArray(finding.cve_ids).map(normalizeText).filter(Boolean)
+        .filter(value => !['none', 'n/a'].includes(value.toLowerCase()))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const cveSignature = cveIds.join(',');
+    const target = parseCompactUpgradeTarget(finding);
+    const detailKey = getCompactionDetailKey(finding);
+    let familyKey = '';
+    let familyTitle = '';
+    let compactReason = '';
+    let softwareFamily = '';
+    let isSoftwareFamily = false;
+
+    if (target) {
+        familyKey = `upgrade|${normalizeCompactFamilyText(target.software)}`;
+        softwareFamily = target.software;
+        familyTitle = getCompactSoftwareFamilyTitle(target.software, [finding.title || finding.name || '']) || `${target.software} Vulnerabilities`;
+        compactReason = 'upgrade-family';
+        isSoftwareFamily = true;
+    } else {
+        const knownFamily = cveIds.length === 0 ? getKnownNoCveCompactFamily(finding) : null;
+        if (knownFamily) {
+            familyKey = `known|${knownFamily.key}`;
+            familyTitle = knownFamily.title;
+            compactReason = 'known-no-cve-family';
+        } else if (cveIds.length > 0) {
+            familyKey = `cve|${cveSignature}`;
+            compactReason = 'same-cve';
+        } else {
+            familyKey = getStrictCompactFamilyKey(finding);
+            compactReason = 'strict-fingerprint';
+        }
+    }
+
+    return {
+        cveIds,
+        cveSignature,
+        compactFamilyKey: familyKey,
+        compactFamilyTitle: familyTitle,
+        compactReason,
+        softwareFamily,
+        isSoftwareFamily,
+        groupKey: [
+            familyKey,
+            detailKey,
+            'route',
+            normalizeCompactFamilyText(finding.product_id || finding.defectdojo_route?.projectId || finding.product_name || finding.defectdojo_route?.projectName || ''),
+            normalizeCompactFamilyText(finding.engagement_id || finding.defectdojo_route?.engagementId || finding.engagement_name || finding.defectdojo_route?.engagementName || '')
+        ].join('|')
+    };
+};
+
+const buildLegacyFindingGroupKey = (finding = {}) => ([
+    getLegacyCompactGroupKey(finding),
+    'route',
+    normalizeCompactFamilyText(finding.product_id || finding.defectdojo_route?.projectId || finding.product_name || finding.defectdojo_route?.projectName || ''),
+    normalizeCompactFamilyText(finding.engagement_id || finding.defectdojo_route?.engagementId || finding.engagement_name || finding.defectdojo_route?.engagementName || '')
+].join('|'));
+
+const listCompactedCveFindings = async ({ productId = '', engagementId = '', severity = '' } = {}) => {
+    const findings = await loadFindings({ productId, engagementId });
+    const severityFilter = normalizeText(severity);
+    const scopedFindings = severityFilter
+        ? findings.filter(finding => normalizeText(finding.severity).toLowerCase() === severityFilter.toLowerCase())
+        : findings;
+    const tickets = await loadTicketRowsForScope({ productId, engagementId });
+    const groups = new Map();
+
+    scopedFindings.forEach(finding => {
+        const fingerprint = buildFindingFingerprint(finding);
+        const groupKey = fingerprint.groupKey;
+
+        if (!groups.has(groupKey)) {
+            groups.set(groupKey, {
+                compactSourceKey: groupKey,
+                compactFamilyKeys: new Set(),
+                compactFamilyTitles: new Set(),
+                compactReasons: new Set(),
+                legacySyncSourceMap: new Map(),
+                cveIds: new Set(),
+                softwareFamilies: new Set(),
+                titles: new Set(),
+                mitigations: new Set(),
+                descriptionsMap: new Map(),
+                impactsMap: new Map(),
+                endpointDetailsMap: new Map(),
+                sourceGroupsMap: new Map(),
+                allEndpointsMap: new Map(),
+                originalIds: [],
+                severity: finding.severity || 'Info',
+                productIds: new Set(),
+                productNames: new Set(),
+                engagementIds: new Set(),
+                engagementNames: new Set(),
+                findingStates: [],
+                activeCount: 0,
+                mitigatedCount: 0,
+                lastSeenSync: finding.last_seen_sync_id || null
+            });
+        }
+
+        const group = groups.get(groupKey);
+        const title = finding.title || finding.name || 'Untitled finding';
+        const sourceTitle = normalizeText(title) || 'Untitled finding';
+        const mitigation = getCompactMitigationText(finding);
+        const description = finding.description || '';
+        const impact = finding.impact || '';
+        const productIdValue = finding.product_id || finding.defectdojo_route?.projectId || '';
+        const productNameValue = finding.product_name || finding.defectdojo_route?.projectName || '';
+        const engagementIdValue = finding.engagement_id || finding.defectdojo_route?.engagementId || '';
+        const engagementNameValue = finding.engagement_name || finding.defectdojo_route?.engagementName || '';
+
+        group.severity = highestSeverity(group.severity, finding.severity || 'Info');
+        if (fingerprint.compactFamilyKey) group.compactFamilyKeys.add(fingerprint.compactFamilyKey);
+        if (fingerprint.compactFamilyTitle) group.compactFamilyTitles.add(fingerprint.compactFamilyTitle);
+        if (fingerprint.compactReason) group.compactReasons.add(fingerprint.compactReason);
+        group.originalIds.push(finding.id);
+        const legacyGroupKey = buildLegacyFindingGroupKey(finding);
+        if (!group.legacySyncSourceMap.has(legacyGroupKey)) group.legacySyncSourceMap.set(legacyGroupKey, new Set());
+        group.legacySyncSourceMap.get(legacyGroupKey).add(finding.id);
+        group.lastSeenSync = finding.last_seen_sync_id || group.lastSeenSync;
+        if (fingerprint.softwareFamily) group.softwareFamilies.add(fingerprint.softwareFamily);
+        fingerprint.cveIds.forEach(cveId => group.cveIds.add(cveId));
+        group.titles.add(normalizeText(title));
+        if (mitigation) group.mitigations.add(mitigation);
+        addTextSource(group.descriptionsMap, description, finding.id);
+        addTextSource(group.impactsMap, impact, finding.id);
+        if (!group.sourceGroupsMap.has(sourceTitle)) {
+            group.sourceGroupsMap.set(sourceTitle, {
+                title: sourceTitle,
+                findingIds: [],
+                severity: finding.severity || 'Info',
+                cveIds: new Set(),
+                endpointDetailsMap: new Map(),
+                descriptionsMap: new Map(),
+                impactsMap: new Map(),
+                mitigations: new Set(),
+                activeCount: 0,
+                mitigatedCount: 0
+            });
+        }
+        const sourceGroup = group.sourceGroupsMap.get(sourceTitle);
+        sourceGroup.findingIds.push(finding.id);
+        sourceGroup.severity = highestSeverity(sourceGroup.severity, finding.severity || 'Info');
+        fingerprint.cveIds.forEach(cveId => sourceGroup.cveIds.add(cveId));
+        if (mitigation) sourceGroup.mitigations.add(mitigation);
+        addTextSource(sourceGroup.descriptionsMap, description, finding.id);
+        addTextSource(sourceGroup.impactsMap, impact, finding.id);
+        if (productIdValue) group.productIds.add(productIdValue);
+        if (productNameValue) group.productNames.add(productNameValue);
+        if (engagementIdValue) group.engagementIds.add(engagementIdValue);
+        if (engagementNameValue) group.engagementNames.add(engagementNameValue);
+
+        const endpoints = normalizeArray(finding.endpoints).length > 0
+            ? normalizeArray(finding.endpoints)
+            : [{ host: 'Unknown endpoint' }];
+        endpoints.forEach(endpoint => {
+            const label = getEndpointLabel(endpoint);
+            const endpointKey = label;
+            group.allEndpointsMap.set(endpointKey, endpoint);
+            if (!group.endpointDetailsMap.has(endpointKey)) {
+                group.endpointDetailsMap.set(endpointKey, {
+                    endpoint,
+                    label,
+                    host: getEndpointHost(endpoint),
+                    severity: finding.severity || 'Info',
+                    cves: new Set(),
+                    mitigations: new Set(),
+                    findingIds: []
+                });
+            }
+            const detail = group.endpointDetailsMap.get(endpointKey);
+            detail.severity = highestSeverity(detail.severity, finding.severity || 'Info');
+            detail.findingIds.push(finding.id);
+            fingerprint.cveIds.forEach(cveId => detail.cves.add(cveId));
+            if (mitigation) detail.mitigations.add(mitigation);
+
+            if (!sourceGroup.endpointDetailsMap.has(endpointKey)) {
+                sourceGroup.endpointDetailsMap.set(endpointKey, {
+                    endpoint,
+                    label,
+                    host: getEndpointHost(endpoint),
+                    severity: finding.severity || 'Info',
+                    cves: new Set(),
+                    mitigations: new Set(),
+                    findingIds: []
+                });
+            }
+            const sourceDetail = sourceGroup.endpointDetailsMap.get(endpointKey);
+            sourceDetail.severity = highestSeverity(sourceDetail.severity, finding.severity || 'Info');
+            sourceDetail.findingIds.push(finding.id);
+            fingerprint.cveIds.forEach(cveId => sourceDetail.cves.add(cveId));
+            if (mitigation) sourceDetail.mitigations.add(mitigation);
+        });
+
+        const mitigated = Boolean(finding.mitigated || finding.is_mitigated);
+        if (mitigated) {
+            group.mitigatedCount += 1;
+            sourceGroup.mitigatedCount += 1;
+        } else if (finding.active !== false) {
+            group.activeCount += 1;
+            sourceGroup.activeCount += 1;
+        }
+        group.findingStates.push({
+            findingId: finding.id,
+            title,
+            severity: finding.severity || 'Info',
+            mitigated,
+            active: finding.active !== false && !mitigated,
+            endpoint: normalizeArray(finding.endpoints).map(getEndpointLabel).join(', '),
+            cveIds: fingerprint.cveIds,
+            mitigationConfirmedAt: finding.mitigation_confirmed_at || null
+        });
+    });
+
+    return Array.from(groups.values()).map(group => {
+        const cveIds = sortStrings(group.cveIds);
+        const cveSignature = cveIds.join(',');
+        const originalIds = sortFindingIds(group.originalIds);
+        const productIds = sortStrings(group.productIds);
+        const productNames = sortStrings(group.productNames);
+        const engagementIds = sortStrings(group.engagementIds);
+        const engagementNames = sortStrings(group.engagementNames);
+        const syncKey = buildCompactSyncKey({
+            groupKey: group.compactSourceKey,
+            productIds,
+            engagementIds
+        });
+        const legacySyncKeys = Array.from(new Set([
+            buildLegacyCompactSyncKey({
+                groupKey: group.compactSourceKey,
+                findingIds: originalIds,
+                productIds,
+                engagementIds
+            }),
+            ...Array.from(group.legacySyncSourceMap.entries()).map(([legacyGroupKey, legacyFindingIds]) => (
+                buildLegacyCompactSyncKey({
+                    groupKey: legacyGroupKey,
+                    findingIds: sortFindingIds(legacyFindingIds),
+                    productIds,
+                    engagementIds
+                })
+            ))
+        ].filter(key => key && key !== syncKey)));
+        const ticket = findTicketForGroup(tickets, syncKey, originalIds, cveSignature, legacySyncKeys);
+        const endpointDetails = finalizeEndpointDetails(group.endpointDetailsMap);
+        const sourceGroups = finalizeSourceGroups(group.sourceGroupsMap);
+        const allDescriptionSources = sortTextSources(group.descriptionsMap);
+        const allImpactSources = sortTextSources(group.impactsMap);
+        const allTitles = sortStrings(group.titles);
+        const softwareFamily = sortStrings(group.softwareFamilies)[0] || '';
+        const compactFamilyTitle = sortStrings(group.compactFamilyTitles)[0] || '';
+        const compactFamilyKey = sortStrings(group.compactFamilyKeys)[0] || group.compactSourceKey;
+        const compactReason = sortStrings(group.compactReasons)[0] || 'strict-fingerprint';
+        const currentStatus = group.activeCount > 0 && group.mitigatedCount > 0
+            ? 'mixed'
+            : group.activeCount > 0
+                ? 'active'
+                : 'mitigated';
+        return {
+            groupKey: syncKey,
+            compactedSyncKey: syncKey,
+            compactGroupId: syncKey,
+            compactSourceKey: group.compactSourceKey,
+            compactFamilyKey,
+            compactFamilyTitle,
+            compactReason,
+            legacySyncKeys,
+            cveId: cveSignature,
+            cveIds,
+            isCveGroup: cveIds.length > 0,
+            severity: group.severity,
+            productId: productIds[0] || '',
+            productName: productNames[0] || '',
+            engagementId: engagementIds[0] || '',
+            engagementName: engagementNames[0] || '',
+            title: chooseCompactDisplayTitle(allTitles, compactFamilyTitle || 'Untitled finding'),
+            affectedEndpoints: endpointDetails.map(detail => detail.label),
+            allEndpoints: Array.from(group.allEndpointsMap.values()),
+            allCVEs: cveIds.map(vulnerability_id => ({ vulnerability_id })),
+            allMitigations: sortStrings(group.mitigations),
+            allDescriptions: allDescriptionSources.map(source => source.text),
+            allImpacts: allImpactSources.map(source => source.text),
+            allDescriptionSources,
+            allImpactSources,
+            allTitles,
+            sourceGroups,
+            softwareFamily,
+            endpointDetails,
+            originalIds,
+            findingIds: originalIds.map(String),
+            findingCount: originalIds.length,
+            findingStates: group.findingStates,
+            activeCount: group.activeCount,
+            mitigatedCount: group.mitigatedCount,
+            lastSeenSync: group.lastSeenSync,
+            redmineTicketId: ticket?.issue_id || '',
+            redmineTicketKey: ticket?.ticket_key || '',
+            redmineStatus: ticket?.status_name || '',
+            redmineStatusId: ticket?.status_id || '',
+            currentStatus
+        };
+    }).sort((a, b) => (
+        (SEVERITY_RANK[b.severity] || 0) - (SEVERITY_RANK[a.severity] || 0)
+        || a.cveId.localeCompare(b.cveId, undefined, { numeric: true })
+        || a.productName.localeCompare(b.productName, undefined, { numeric: true })
+    ));
+};
+
+const recordMitigationRechecks = async (records = []) => {
+    if (records.length === 0) return { inserted: 0 };
+
+    let inserted = 0;
+    await withTransaction(async (client) => {
+        for (const record of records) {
+            await client.query(`
+                INSERT INTO ${TABLES.mitigationRechecks} (
+                    sync_history_id,
+                    ticket_key,
+                    issue_id,
+                    defectdojo_finding_id,
+                    product_key,
+                    product_id,
+                    product_name,
+                    engagement_key,
+                    engagement_id,
+                    engagement_name,
+                    cve_id,
+                    previous_status,
+                    next_status,
+                    result,
+                    reason,
+                    raw
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
+            `, [
+                record.syncHistoryId || null,
+                record.ticketKey || null,
+                record.issueId || null,
+                record.defectdojoFindingId || null,
+                record.productKey || null,
+                record.productId || null,
+                record.productName || null,
+                record.engagementKey || null,
+                record.engagementId || null,
+                record.engagementName || null,
+                record.cveId || null,
+                record.previousStatus || null,
+                record.nextStatus || null,
+                record.result || 'checked',
+                record.reason || '',
+                JSON.stringify(record.raw || record)
+            ]);
+            inserted += 1;
+        }
+    });
+
+    return { inserted };
+};
+
+const listMitigationRechecks = async ({ syncHistoryId = '', productId = '', engagementId = '' } = {}) => {
+    const clauses = [];
+    const params = [];
+    let index = 1;
+
+    if (normalizeText(syncHistoryId)) {
+        clauses.push(`sync_history_id = $${index}`);
+        params.push(Number.parseInt(syncHistoryId, 10));
+        index += 1;
+    }
+    if (normalizeText(productId)) {
+        clauses.push(`product_id = $${index}`);
+        params.push(normalizeText(productId));
+        index += 1;
+    }
+    if (normalizeText(engagementId)) {
+        clauses.push(`engagement_id = $${index}`);
+        params.push(normalizeText(engagementId));
+    }
+
+    const { rows } = await pool.query(`
+        SELECT *
+        FROM ${TABLES.mitigationRechecks}
+        ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY created_at DESC, id DESC
+    `, params);
+
+    return rows.map(row => ({
+        id: row.id,
+        syncHistoryId: row.sync_history_id,
+        ticketKey: row.ticket_key,
+        issueId: row.issue_id,
+        defectdojoFindingId: row.defectdojo_finding_id,
+        productId: row.product_id,
+        productName: row.product_name,
+        engagementId: row.engagement_id,
+        engagementName: row.engagement_name,
+        cveId: row.cve_id,
+        previousStatus: row.previous_status,
+        nextStatus: row.next_status,
+        result: row.result,
+        reason: row.reason,
+        raw: parseJsonValue(row.raw, {}),
+        createdAt: toIsoString(row.created_at)
+    }));
+};
+
+const upsertMitigationReviewItems = async (items = []) => {
+    let upserted = 0;
+    await withTransaction(async (client) => {
+        for (const item of items) {
+            const reviewKey = normalizeText(item.reviewKey);
+            if (!reviewKey) continue;
+            await client.query(`
+                INSERT INTO ${TABLES.mitigationReviews} (
+                    review_key,
+                    sync_history_id,
+                    ticket_key,
+                    issue_id,
+                    defectdojo_finding_id,
+                    product_key,
+                    product_id,
+                    product_name,
+                    engagement_key,
+                    engagement_id,
+                    engagement_name,
+                    cve_id,
+                    title,
+                    endpoint,
+                    severity,
+                    redmine_status_id,
+                    redmine_status_name,
+                    mitigation_confirmed_at,
+                    last_sync_history_id,
+                    state,
+                    raw
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                    $11, $12, $13, $14, $15, $16, $17, $18::timestamptz,
+                    $19, 'pending', $20::jsonb
+                )
+                ON CONFLICT (review_key)
+                DO UPDATE SET
+                    sync_history_id = EXCLUDED.sync_history_id,
+                    ticket_key = EXCLUDED.ticket_key,
+                    issue_id = EXCLUDED.issue_id,
+                    defectdojo_finding_id = EXCLUDED.defectdojo_finding_id,
+                    product_key = EXCLUDED.product_key,
+                    product_id = EXCLUDED.product_id,
+                    product_name = EXCLUDED.product_name,
+                    engagement_key = EXCLUDED.engagement_key,
+                    engagement_id = EXCLUDED.engagement_id,
+                    engagement_name = EXCLUDED.engagement_name,
+                    cve_id = EXCLUDED.cve_id,
+                    title = EXCLUDED.title,
+                    endpoint = EXCLUDED.endpoint,
+                    severity = EXCLUDED.severity,
+                    redmine_status_id = EXCLUDED.redmine_status_id,
+                    redmine_status_name = EXCLUDED.redmine_status_name,
+                    mitigation_confirmed_at = EXCLUDED.mitigation_confirmed_at,
+                    last_sync_history_id = EXCLUDED.last_sync_history_id,
+                    raw = EXCLUDED.raw,
+                    updated_at = now()
+                WHERE ${TABLES.mitigationReviews}.state = 'pending'
+            `, [
+                reviewKey,
+                item.syncHistoryId || null,
+                item.ticketKey || null,
+                item.issueId || null,
+                item.defectdojoFindingId || null,
+                item.productKey || null,
+                item.productId || null,
+                item.productName || null,
+                item.engagementKey || null,
+                item.engagementId || null,
+                item.engagementName || null,
+                item.cveId || null,
+                item.title || null,
+                item.endpoint || null,
+                item.severity || null,
+                item.redmineStatusId || null,
+                item.redmineStatusName || null,
+                item.mitigationConfirmedAt || null,
+                item.lastSyncHistoryId || item.syncHistoryId || null,
+                JSON.stringify(item.raw || item)
+            ]);
+            upserted += 1;
+        }
+    });
+
+    return { upserted };
+};
+
+const listMitigationReviewQueue = async ({ productId = '', engagementId = '' } = {}) => {
+    const clauses = [`state = 'pending'`];
+    const params = [];
+    let index = 1;
+
+    if (normalizeText(productId)) {
+        clauses.push(`product_id = $${index}`);
+        params.push(normalizeText(productId));
+        index += 1;
+    }
+    if (normalizeText(engagementId)) {
+        clauses.push(`engagement_id = $${index}`);
+        params.push(normalizeText(engagementId));
+    }
+
+    const { rows } = await pool.query(`
+        SELECT *
+        FROM ${TABLES.mitigationReviews}
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY updated_at DESC, created_at DESC
+    `, params);
+
+    const items = rows.map(row => ({
+        reviewKey: row.review_key,
+        syncHistoryId: row.sync_history_id,
+        ticketKey: row.ticket_key,
+        issueId: row.issue_id,
+        defectdojoFindingId: row.defectdojo_finding_id,
+        productId: row.product_id,
+        productName: row.product_name,
+        engagementId: row.engagement_id,
+        engagementName: row.engagement_name,
+        cveId: row.cve_id,
+        title: row.title,
+        endpoint: row.endpoint,
+        severity: row.severity,
+        redmineStatusId: row.redmine_status_id,
+        redmineStatusName: row.redmine_status_name,
+        mitigationConfirmedAt: toIsoString(row.mitigation_confirmed_at),
+        lastSyncHistoryId: row.last_sync_history_id,
+        state: row.state,
+        raw: parseJsonValue(row.raw, {}),
+        createdAt: toIsoString(row.created_at),
+        updatedAt: toIsoString(row.updated_at)
+    }));
+
+    const groups = new Map();
+    items.forEach(item => {
+        const groupKey = item.ticketKey
+            ? `ticket:${item.ticketKey}`
+            : item.issueId
+                ? `issue:${item.issueId}`
+                : `review:${item.reviewKey}`;
+
+        if (!groups.has(groupKey)) {
+            groups.set(groupKey, {
+                ...item,
+                reviewKeys: [],
+                defectdojoFindingIds: [],
+                cveIds: [],
+                titles: [],
+                endpoints: [],
+                findingCount: 0,
+                cveCount: 0
+            });
+        }
+
+        const group = groups.get(groupKey);
+        group.reviewKeys.push(item.reviewKey);
+        if (normalizeText(item.defectdojoFindingId)) group.defectdojoFindingIds.push(item.defectdojoFindingId);
+        if (normalizeText(item.cveId)) group.cveIds.push(item.cveId);
+        if (normalizeText(item.title)) group.titles.push(item.title);
+        if (normalizeText(item.endpoint)) group.endpoints.push(item.endpoint);
+        group.severity = highestSeverity(group.severity || 'Info', item.severity || 'Info');
+
+        const currentUpdatedAt = new Date(group.updatedAt || 0).getTime();
+        const nextUpdatedAt = new Date(item.updatedAt || 0).getTime();
+        if (nextUpdatedAt > currentUpdatedAt) {
+            group.syncHistoryId = item.syncHistoryId;
+            group.lastSyncHistoryId = item.lastSyncHistoryId;
+            group.updatedAt = item.updatedAt;
+        }
+    });
+
+    return Array.from(groups.values()).map(group => {
+        const defectdojoFindingIds = sortFindingIds(Array.from(new Set(group.defectdojoFindingIds))).map(String);
+        const cveIds = sortStrings(Array.from(new Set(group.cveIds)));
+        const titles = sortStrings(Array.from(new Set(group.titles)));
+        const endpoints = sortStrings(Array.from(new Set(group.endpoints)));
+
+        return {
+            ...group,
+            reviewKeys: sortStrings(Array.from(new Set(group.reviewKeys))),
+            defectdojoFindingIds,
+            defectdojoFindingId: defectdojoFindingIds[0] || '',
+            findingCount: defectdojoFindingIds.length,
+            cveIds,
+            cveCount: cveIds.length,
+            cveId: cveIds.join(', '),
+            titles,
+            sourceTitleCount: titles.length,
+            title: titles[0] || group.title || '',
+            endpoints,
+            endpoint: endpoints.length > 1 ? `${endpoints.length} endpoints` : endpoints[0] || group.endpoint || ''
+        };
+    });
+};
+
+const applyMitigationReviewAction = async (reviewKey, {
+    action,
+    actor = '',
+    actorRole = '',
+    reason = '',
+    raw = {}
+} = {}) => {
+    const nextStateByAction = {
+        mark_reviewed: 'reviewed',
+        close_redmine: 'closed',
+        ignore: 'ignored'
+    };
+    const nextState = nextStateByAction[action];
+    if (!nextState) {
+        const error = new Error('Unsupported mitigation review action');
+        error.status = 400;
+        throw error;
+    }
+
+    return withTransaction(async (client) => {
+        const { rows } = await client.query(
+            `SELECT * FROM ${TABLES.mitigationReviews} WHERE review_key = $1 FOR UPDATE`,
+            [reviewKey]
+        );
+        if (rows.length === 0) {
+            const error = new Error('Review item not found');
+            error.status = 404;
+            throw error;
+        }
+        const review = rows[0];
+
+        await client.query(`
+            UPDATE ${TABLES.mitigationReviews}
+            SET
+                state = $2,
+                ignored_reason = CASE WHEN $2 = 'ignored' THEN $3 ELSE ignored_reason END,
+                reviewed_by = $4,
+                reviewed_at = now(),
+                updated_at = now()
+            WHERE review_key = $1
+        `, [reviewKey, nextState, reason || '', actor || '']);
+
+        await client.query(`
+            INSERT INTO ${TABLES.adminActions} (
+                action,
+                review_key,
+                ticket_key,
+                issue_id,
+                defectdojo_finding_id,
+                product_key,
+                product_id,
+                product_name,
+                engagement_key,
+                engagement_id,
+                engagement_name,
+                cve_id,
+                actor,
+                actor_role,
+                reason,
+                raw
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
+        `, [
+            action,
+            review.review_key,
+            review.ticket_key,
+            review.issue_id,
+            review.defectdojo_finding_id,
+            review.product_key,
+            review.product_id,
+            review.product_name,
+            review.engagement_key,
+            review.engagement_id,
+            review.engagement_name,
+            review.cve_id,
+            actor || '',
+            actorRole || '',
+            reason || '',
+            JSON.stringify(raw)
+        ]);
+
+        return {
+            reviewKey,
+            action,
+            state: nextState
+        };
+    });
 };
 
 module.exports = {
@@ -373,7 +2379,26 @@ module.exports = {
     loadRedmineSyncRecords,
     saveRedmineSyncRecords,
     loadFindings,
+    upsertFindingsForSync,
+    markUnseenActiveFindingsInactiveForSync,
     replaceFindings,
     clearFindings,
-    countFindings
+    clearAllData,
+    countFindings,
+    createSyncHistory,
+    finishSyncHistory,
+    markSyncHistorySplitParent,
+    listSyncHistory,
+    getSyncHistory,
+    getDashboardSummary,
+    upsertRedmineTickets,
+    listCompactedCveFindings,
+    recordMitigationRechecks,
+    listMitigationRechecks,
+    upsertMitigationReviewItems,
+    listMitigationReviewQueue,
+    applyMitigationReviewAction,
+    __test: {
+        findTicketForGroup
+    }
 };

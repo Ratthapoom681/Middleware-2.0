@@ -1,0 +1,126 @@
+// Sync utilities — concurrency control, SSE broadcasting, severity/filter normalization.
+
+const SEVERITY_VALUES = ['Critical', 'High', 'Medium', 'Low', 'Info'];
+
+const normalizeSeverityFilter = (severity) => {
+    const values = Array.isArray(severity)
+        ? severity
+        : String(severity || '').split(',');
+
+    return Array.from(new Set(values
+        .map(item => String(item || '').trim())
+        .filter(Boolean)
+        .map(item => SEVERITY_VALUES.find(sev => sev.toLowerCase() === item.toLowerCase()))
+        .filter(Boolean)));
+};
+
+const normalizePullFilters = (filters = {}) => ({
+    ...filters,
+    severity: normalizeSeverityFilter(filters.severity)
+});
+
+const shouldMarkUnseenActiveFindingsInactive = (filters = {}) => {
+    const activeFilter = String(filters.active || '').trim().toLowerCase();
+    const mitigatedFilter = String(filters.is_mitigated || filters.mitigated || '').trim().toLowerCase();
+
+    return activeFilter === 'true' && (mitigatedFilter === '' || mitigatedFilter === 'false');
+};
+
+const splitDelimitedFilterValue = (value) => {
+    const values = Array.isArray(value)
+        ? value
+        : String(value || '').split(/[,\r\n;]+/);
+
+    return Array.from(new Set(values
+        .map(item => String(item || '').trim())
+        .filter(Boolean)));
+};
+
+const runWithConcurrency = async (items, concurrency, mapper, { onProgress } = {}) => {
+    const list = Array.from(items || []);
+    if (list.length === 0) return [];
+
+    const workerCount = Math.max(1, Math.min(Number.parseInt(concurrency, 10) || 1, list.length));
+    const results = new Array(list.length);
+    let nextIndex = 0;
+    let completed = 0;
+
+    const workers = Array.from({ length: workerCount }, async () => {
+        while (nextIndex < list.length) {
+            const index = nextIndex;
+            nextIndex += 1;
+
+            try {
+                results[index] = await mapper(list[index], index);
+            } finally {
+                completed += 1;
+                if (onProgress) {
+                    onProgress({ completed, total: list.length, item: list[index], index });
+                }
+            }
+        }
+    });
+
+    await Promise.all(workers);
+    return results;
+};
+
+const createProgressLogger = (label, total, prefix = 'PULL') => {
+    const totalCount = Number.parseInt(total, 10) || 0;
+    const interval = Math.max(1, Math.ceil(totalCount / 10));
+
+    return ({ completed }) => {
+        if (totalCount === 0) return;
+        if (completed === 1 || completed === totalCount || completed % interval === 0) {
+            console.log(`[${prefix}] ${label}: ${completed}/${totalCount}`);
+        }
+    };
+};
+
+/**
+ * Factory that creates a dashboard SSE broadcast system.
+ * Returns an object with mutable state (clients set) and broadcast helpers.
+ */
+const createDashboardSync = () => {
+    const clients = new Set();
+    let version = 0;
+    let state = {
+        version: 0,
+        reason: 'startup',
+        updatedAt: new Date().toISOString()
+    };
+
+    const writeEvent = (res, event, payload = {}) => {
+        res.write(`event: ${event}\n`);
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const broadcast = (reason, metadata = {}) => {
+        version += 1;
+        state = {
+            version,
+            reason,
+            updatedAt: new Date().toISOString(),
+            ...metadata
+        };
+
+        for (const client of clients) {
+            writeEvent(client.res, 'dashboard-sync', state);
+        }
+    };
+
+    const getState = () => state;
+
+    return { clients, writeEvent, broadcast, getState };
+};
+
+module.exports = {
+    SEVERITY_VALUES,
+    normalizeSeverityFilter,
+    normalizePullFilters,
+    shouldMarkUnseenActiveFindingsInactive,
+    splitDelimitedFilterValue,
+    runWithConcurrency,
+    createProgressLogger,
+    createDashboardSync
+};

@@ -1,0 +1,774 @@
+// Redmine API client — project routing, issue CRUD, and status mapping.
+
+const axios = require('axios');
+const crypto = require('crypto');
+const { cleanRouteValue, asArray, normalizeFindingIds } = require('./utils.cjs');
+
+const REDMINE_ISSUE_SEARCH_LIMIT = 100;
+const REDMINE_ISSUE_SEARCH_MAX_PAGES = 5;
+
+const getRedmineHeaders = (apiKey) => ({
+    'X-Redmine-API-Key': apiKey,
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+});
+
+const getRedmineIssueUrl = (baseUrl, issue) => (
+    issue?.id ? `${baseUrl}/issues/${issue.id}` : baseUrl
+);
+
+const appendSyncMetadata = (description, syncKey, findingIds = []) => {
+    const metadata = [];
+    if (syncKey) metadata.push(`DefectDojo Sync Key: ${syncKey}`);
+    if (findingIds.length > 0) metadata.push(`DefectDojo Finding IDs: ${findingIds.join(', ')}`);
+    if (metadata.length === 0) return description;
+    return `${description}\n\n---\n${metadata.join('\n')}`;
+};
+
+const REDMINE_PRIORITY_FIELD_BY_SEVERITY = {
+    Critical: 'redminePriorityCriticalId',
+    High: 'redminePriorityHighId',
+    Medium: 'redminePriorityMediumId',
+    Low: 'redminePriorityLowId',
+    Info: 'redminePriorityInfoId',
+    Informational: 'redminePriorityInfoId',
+    None: 'redminePriorityInfoId'
+};
+
+const getRedminePriorityIdForSeverity = (severity, config = {}) => {
+    const severityText = cleanRouteValue(severity);
+    const normalizedSeverity = Object.keys(REDMINE_PRIORITY_FIELD_BY_SEVERITY)
+        .find(item => item.toLowerCase() === severityText.toLowerCase()) || '';
+    const field = REDMINE_PRIORITY_FIELD_BY_SEVERITY[normalizedSeverity];
+    if (field && config[field]) return cleanRouteValue(config[field]);
+
+    return severityText ? '' : cleanRouteValue(config.redminePriorityId);
+};
+
+const normalizeProjectToken = (value) => (
+    cleanRouteValue(value)
+        .toLowerCase()
+        .replace(/[\s_-]+/g, '')
+);
+
+const redmineProjectMatches = (project, candidate) => {
+    const rawCandidate = cleanRouteValue(candidate);
+    const normalizedCandidate = normalizeProjectToken(candidate);
+    if (!rawCandidate) return false;
+
+    const values = [
+        project?.identifier,
+        project?.name
+    ].map(value => cleanRouteValue(value)).filter(Boolean);
+
+    return values.some(value => (
+        value === rawCandidate
+        || value.toLowerCase() === rawCandidate.toLowerCase()
+        || normalizeProjectToken(value) === normalizedCandidate
+    ));
+};
+
+const getProjectIssueValue = (project) => cleanRouteValue(project?.identifier);
+
+const isRedmineNotFoundError = (error) => error.response?.status === 404;
+
+const isRedmineProjectReferenceError = (error) => {
+    const status = error.response?.status;
+    const details = error.response?.data || error.message || '';
+    const detailText = typeof details === 'string'
+        ? details
+        : JSON.stringify(details);
+
+    return isRedmineNotFoundError(error)
+        || ([400, 422].includes(status) && /project/i.test(detailText));
+};
+
+const getMissingRedmineProjectLabel = ({ configuredProjectId = '', route = {}, fallback = '' } = {}) => (
+    cleanRouteValue(configuredProjectId)
+    || cleanRouteValue(route.projectName)
+    || cleanRouteValue(route.projectIdentifier)
+    || cleanRouteValue(route.projectId)
+    || cleanRouteValue(fallback)
+);
+
+const buildMissingRedmineProject = ({ configuredProjectId = '', route = {}, fallback = '' } = {}) => {
+    const label = getMissingRedmineProjectLabel({ configuredProjectId, route, fallback });
+    return {
+        id: '',
+        identifier: cleanRouteValue(configuredProjectId),
+        name: label,
+        source: 'missing_project',
+        project: {
+            identifier: cleanRouteValue(configuredProjectId),
+            name: label
+        },
+        route
+    };
+};
+
+const buildRedmineProjectMissingStatus = ({ ticket = {}, configuredProjectId = '', route = ticket.route || {}, fallback = '', status = 'Project not found' } = {}) => ({
+    ticketKey: ticket.ticketKey,
+    action: 'not_found',
+    status,
+    projectMissing: true,
+    resolvedProject: buildMissingRedmineProject({ configuredProjectId, route, fallback })
+});
+
+const makeRedmineProjectIdentifier = (value) => {
+    const source = cleanRouteValue(value);
+    const identifier = source
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^[-_]+|[-_]+$/g, '')
+        .slice(0, 100);
+
+    if (identifier) return identifier;
+
+    const hash = crypto
+        .createHash('sha1')
+        .update(source || 'defectdojo-project')
+        .digest('hex')
+        .slice(0, 12);
+    return `defectdojo-${hash}`;
+};
+
+const getRouteCandidates = (route = {}) => {
+    const projectId = cleanRouteValue(route.projectId);
+    const nonNumericProjectId = /^\d+$/.test(projectId) ? '' : projectId;
+    const identifierSource = cleanRouteValue(route.projectIdentifier)
+        || cleanRouteValue(route.projectName)
+        || nonNumericProjectId;
+    return Array.from(new Set([
+        cleanRouteValue(route.projectIdentifier),
+        cleanRouteValue(route.projectName),
+        nonNumericProjectId,
+        identifierSource ? makeRedmineProjectIdentifier(identifierSource) : '',
+    ].filter(Boolean)));
+};
+
+const getRouteProjectName = (route = {}, candidates = []) => {
+    const projectName = cleanRouteValue(route.projectName);
+    if (projectName) return projectName;
+
+    const namedCandidate = candidates.find(candidate => candidate && !/^\d+$/.test(candidate));
+    if (namedCandidate) return namedCandidate;
+
+    const productId = cleanRouteValue(route.projectId);
+    if (productId) return `DefectDojo Project ${productId}`;
+
+    return 'DefectDojo Project';
+};
+
+const isRedmineProjectDuplicateError = (error) => {
+    const status = error.response?.status;
+    const details = error.response?.data || error.message || '';
+    const detailText = typeof details === 'string'
+        ? details
+        : JSON.stringify(details);
+
+    return status === 409
+        || (status === 422 && /(already|duplicate|exist|taken|identifier|name)/i.test(detailText));
+};
+
+const createRedmineProject = async ({ baseUrl, apiKey, route, identifierOverride = '', candidates = [] }) => {
+    const projectName = getRouteProjectName(route, candidates);
+    const identifierSource = cleanRouteValue(identifierOverride)
+        || cleanRouteValue(route.projectIdentifier)
+        || cleanRouteValue(route.projectName)
+        || cleanRouteValue(route.projectId)
+        || projectName;
+    const identifier = makeRedmineProjectIdentifier(identifierSource);
+    const projectPayload = {
+        name: projectName,
+        identifier,
+        description: 'Created automatically from middleware.'
+    };
+
+    console.log(`[ROUTE] Creating Redmine project "${projectName}" (${identifier})`);
+    let response;
+    try {
+        response = await axios.post(`${baseUrl}/projects.json`, { project: projectPayload }, {
+            headers: getRedmineHeaders(apiKey)
+        });
+    } catch (error) {
+        if (isRedmineProjectDuplicateError(error)) {
+            const retryCandidates = Array.from(new Set([
+                identifier,
+                projectName,
+                ...candidates
+            ].filter(Boolean)));
+            console.warn(`[ROUTE] Redmine project create reported a duplicate; re-checking candidates: ${retryCandidates.join(', ')}`);
+            const existingProject = await findRedmineProjectByCandidates({ baseUrl, apiKey, candidates: retryCandidates });
+            if (existingProject) return existingProject;
+        }
+
+        throw error;
+    }
+
+    return response.data.project || {
+        name: projectName,
+        identifier
+    };
+};
+
+const fetchRedmineProjectDirect = async ({ baseUrl, apiKey, candidate }) => {
+    if (/^\d+$/.test(candidate)) return null;
+
+    try {
+        const response = await axios.get(`${baseUrl}/projects/${encodeURIComponent(candidate)}.json`, {
+            headers: getRedmineHeaders(apiKey)
+        });
+        return response.data.project || null;
+    } catch (error) {
+        if (isRedmineNotFoundError(error)) return null;
+        throw error;
+    }
+};
+
+const findRedmineProjectByCandidates = async ({ baseUrl, apiKey, candidates }) => {
+    console.log(`[ROUTE] Searching Redmine for project matching candidates: ${candidates.join(', ')}`);
+
+    for (const candidate of candidates) {
+        const directProject = await fetchRedmineProjectDirect({ baseUrl, apiKey, candidate });
+        if (directProject) {
+            console.log(`[ROUTE] Found Redmine project by identifier: "${directProject.name}" (${directProject.identifier})`);
+            return directProject;
+        }
+    }
+
+    for (const candidate of candidates) {
+        try {
+            const searchParams = new URLSearchParams({ limit: '100' });
+            const searchUrl = `${baseUrl}/projects.json?${searchParams.toString()}`;
+            console.log(`[ROUTE] Searching Redmine projects list for name match: "${candidate}"`);
+            const response = await axios.get(searchUrl, {
+                headers: getRedmineHeaders(apiKey)
+            });
+
+            const projects = response.data.projects || [];
+            const exactMatch = projects.find(project => redmineProjectMatches(project, candidate));
+            if (exactMatch) {
+                console.log(`[ROUTE] Found Redmine project by name search: "${exactMatch.name}" (${exactMatch.identifier})`);
+                return exactMatch;
+            }
+        } catch (searchError) {
+            console.warn(`[ROUTE] Name search failed for "${candidate}": ${searchError.message}`);
+        }
+    }
+
+    console.log(`[ROUTE] Direct and search lookup failed; falling back to paginated project scan`);
+    const limit = 100;
+    const maxPages = 10;
+
+    for (let page = 0; page < maxPages; page += 1) {
+        const params = new URLSearchParams({
+            limit: String(limit),
+            offset: String(page * limit)
+        });
+
+        const response = await axios.get(`${baseUrl}/projects.json?${params.toString()}`, {
+            headers: getRedmineHeaders(apiKey)
+        });
+
+        const projects = response.data.projects || [];
+        const match = projects.find(project => candidates.some(candidate => redmineProjectMatches(project, candidate)));
+        if (match) {
+            console.log(`[ROUTE] Found Redmine project by pagination scan: "${match.name}" (${match.identifier})`);
+            return match;
+        }
+        if (projects.length < limit) break;
+    }
+
+    console.warn(`[ROUTE] No Redmine project matched any candidate: ${candidates.join(', ')}`);
+    return null;
+};
+
+const resolveRedmineProject = async ({ baseUrl, apiKey, configuredProjectId, route, allowCreate = true }) => {
+    const override = cleanRouteValue(configuredProjectId);
+    if (override) {
+        if (/^\d+$/.test(override)) {
+            const error = new Error('Use the Redmine project identifier, not the numeric Redmine project id.');
+            error.status = 400;
+            throw error;
+        }
+
+        const existingProject = await fetchRedmineProjectDirect({ baseUrl, apiKey, candidate: override });
+        if (existingProject) {
+            console.log(`[ROUTE] Using configured Redmine project override: "${override}"`);
+            return {
+                id: getProjectIssueValue(existingProject),
+                identifier: getProjectIssueValue(existingProject),
+                name: existingProject.name,
+                source: 'configured_override',
+                project: existingProject,
+                route
+            };
+        }
+
+        if (!allowCreate) {
+            console.log(`[ROUTE] Configured Redmine project override "${override}" does not exist`);
+            return null;
+        }
+
+        console.log(`[ROUTE] Configured Redmine project override "${override}" does not exist; creating it`);
+        const createdProject = await createRedmineProject({
+            baseUrl,
+            apiKey,
+            route,
+            identifierOverride: override,
+            candidates: [override]
+        });
+
+        return {
+            id: getProjectIssueValue(createdProject) || override,
+            identifier: getProjectIssueValue(createdProject) || override,
+            name: createdProject.name,
+            source: 'created_from_override',
+            project: createdProject,
+            route
+        };
+    }
+
+    const candidates = getRouteCandidates(route);
+    console.log(`[ROUTE] Auto-routing: No Redmine project override configured. DefectDojo route candidates: ${candidates.length > 0 ? candidates.join(', ') : '(none)'}`);
+
+    if (candidates.length === 0) {
+        if (!allowCreate) return null;
+
+        const error = new Error('Redmine Project Identifier override is empty and the compacted ticket has no DefectDojo product name to auto-route.');
+        error.status = 400;
+        throw error;
+    }
+
+    const project = await findRedmineProjectByCandidates({ baseUrl, apiKey, candidates });
+    if (!project) {
+        if (!allowCreate) return null;
+
+        console.log(`[ROUTE] No Redmine project matched; creating project for DefectDojo route`);
+        const createdProject = await createRedmineProject({
+            baseUrl,
+            apiKey,
+            route,
+            candidates
+        });
+        const createdIdentifier = getProjectIssueValue(createdProject);
+        if (!createdIdentifier) {
+            const error = new Error(`Created Redmine project "${createdProject.name || candidates[0]}", but it has no project identifier.`);
+            error.status = 400;
+            throw error;
+        }
+
+        return {
+            id: createdIdentifier,
+            identifier: createdIdentifier,
+            name: createdProject.name,
+            source: 'created_from_defectdojo_product',
+            project: createdProject,
+            route
+        };
+    }
+
+    const identifier = getProjectIssueValue(project);
+    if (!identifier) {
+        const error = new Error(`Matched Redmine project "${project.name || project.id}", but it has no project identifier.`);
+        error.status = 400;
+        throw error;
+    }
+
+    console.log(`[ROUTE] Auto-routed to Redmine project: "${project.name}" (identifier: ${identifier})`);
+    return {
+        id: identifier,
+        identifier,
+        name: project.name,
+        source: 'defectdojo_product',
+        project,
+        route
+    };
+};
+
+const getRedmineProjectCacheKey = ({ baseUrl, configuredProjectId, route = {} }) => {
+    const baseKey = cleanRouteValue(baseUrl).replace(/\/+$/, '').toLowerCase();
+    const override = cleanRouteValue(configuredProjectId);
+    if (override) return `${baseKey}|override:${override.toLowerCase()}`;
+
+    const candidates = getRouteCandidates(route)
+        .map(candidate => normalizeProjectToken(candidate))
+        .filter(Boolean)
+        .sort();
+
+    return `${baseKey}|route:${candidates.join('|')}`;
+};
+
+const resolveRedmineProjectCached = async ({
+    cache,
+    baseUrl,
+    apiKey,
+    configuredProjectId,
+    route,
+    allowCreate = true,
+    retain = true
+}) => {
+    const cacheKey = getRedmineProjectCacheKey({ baseUrl, configuredProjectId, route });
+    if (!cache.has(cacheKey)) {
+        const projectPromise = resolveRedmineProject({
+            baseUrl,
+            apiKey,
+            configuredProjectId,
+            route,
+            allowCreate
+        }).catch(error => {
+            cache.delete(cacheKey);
+            throw error;
+        }).finally(() => {
+            if (!retain) cache.delete(cacheKey);
+        });
+
+        cache.set(cacheKey, projectPromise);
+    }
+
+    return cache.get(cacheKey);
+};
+
+const extractRedmineIssueFindingIds = (issue = {}) => {
+    const description = String(issue.description || '');
+    const match = description.match(/DefectDojo Finding IDs:\s*([^\r\n]+)/i);
+    if (!match) return [];
+
+    return normalizeFindingIds(match[1].split(/[\s,]+/));
+};
+
+const extractRedmineIssueSyncKey = (issue = {}) => {
+    const description = String(issue.description || '');
+    const match = description.match(/DefectDojo Sync Key:\s*([^\r\n]+)/i);
+    return match ? cleanRouteValue(match[1]) : '';
+};
+
+const redmineIssueMatchesSyncKey = (issue = {}, syncKey = '') => {
+    const expectedSyncKey = cleanRouteValue(syncKey);
+    if (!expectedSyncKey) return false;
+
+    return extractRedmineIssueSyncKey(issue) === expectedSyncKey;
+};
+
+const compareFindingIdsWithRedmineIssue = (currentFindingIds = [], issue = {}) => {
+    const currentIds = normalizeFindingIds(currentFindingIds);
+    const issueIds = extractRedmineIssueFindingIds(issue);
+    const issueIdSet = new Set(issueIds);
+    const newFindingIds = currentIds.filter(id => !issueIdSet.has(id));
+
+    return {
+        currentIds,
+        issueIds,
+        newFindingIds,
+        hasNewFindingIds: currentIds.length > 0 && (issueIds.length === 0 || newFindingIds.length > 0)
+    };
+};
+
+const redmineIssueFindingIdsAreSubsetOfCurrent = (currentFindingIds = [], issue = {}) => {
+    const currentIds = normalizeFindingIds(currentFindingIds);
+    const issueIds = extractRedmineIssueFindingIds(issue);
+    if (currentIds.length === 0 || issueIds.length === 0) return false;
+
+    const currentIdSet = new Set(currentIds.map(String));
+    return issueIds.every(issueId => currentIdSet.has(String(issueId)));
+};
+
+const findIssueInList = (issues = [], { subject, syncKey, legacySyncKeys = [], findingIds = [] }) => {
+    const syncKeys = Array.from(new Set([
+        syncKey,
+        ...asArray(legacySyncKeys)
+    ].map(key => cleanRouteValue(key)).filter(Boolean)));
+    const syncKeyMatch = issues.find(issue => syncKeys.some(key => redmineIssueMatchesSyncKey(issue, key)));
+    if (syncKeyMatch) return syncKeyMatch;
+
+    const currentFindingIds = normalizeFindingIds(findingIds);
+    if (currentFindingIds.length > 0) {
+        const findingIdMatch = issues.find(issue => (
+            redmineIssueFindingIdsAreSubsetOfCurrent(currentFindingIds, issue)
+        ));
+        if (findingIdMatch) return findingIdMatch;
+        return null;
+    }
+
+    return issues.find(issue => !extractRedmineIssueSyncKey(issue) && issue.subject === subject) || null;
+};
+
+const fetchRedmineIssuesForProjectStatus = async ({ baseUrl, apiKey, projectId, trackerId, statusId }) => {
+    const allIssues = [];
+
+    for (let page = 0; page < REDMINE_ISSUE_SEARCH_MAX_PAGES; page += 1) {
+        const params = new URLSearchParams({
+            project_id: projectId,
+            status_id: statusId,
+            limit: String(REDMINE_ISSUE_SEARCH_LIMIT),
+            offset: String(page * REDMINE_ISSUE_SEARCH_LIMIT),
+            sort: 'updated_on:desc'
+        });
+
+        if (trackerId) params.append('tracker_id', trackerId);
+
+        const response = await axios.get(`${baseUrl}/issues.json?${params.toString()}`, {
+            headers: getRedmineHeaders(apiKey)
+        });
+
+        const issues = response.data.issues || [];
+        allIssues.push(...issues);
+
+        if (issues.length < REDMINE_ISSUE_SEARCH_LIMIT) break;
+    }
+
+    return allIssues;
+};
+
+const findMatchingRedmineIssue = async ({ baseUrl, apiKey, projectId, trackerId, subject, syncKey, legacySyncKeys = [], findingIds = [], statusId }) => {
+    const issues = await fetchRedmineIssuesForProjectStatus({ baseUrl, apiKey, projectId, trackerId, statusId });
+    return findIssueInList(issues, { subject, syncKey, legacySyncKeys, findingIds });
+};
+
+const updateRedmineIssue = async ({ baseUrl, apiKey, issueId, issue }) => {
+    await axios.put(`${baseUrl}/issues/${issueId}.json`, { issue }, {
+        headers: getRedmineHeaders(apiKey)
+    });
+};
+
+const getRedmineIssuePriorityId = (issue = {}) => (
+    cleanRouteValue(issue?.priority?.id || issue?.priority_id || issue?.priorityId)
+);
+
+const updateOpenRedmineIssuePriorityIfNeeded = async ({ baseUrl, apiKey, issue = {}, issueId, priorityId, severity = '' }) => {
+    const targetPriorityId = cleanRouteValue(priorityId);
+    const targetIssueId = cleanRouteValue(issueId || issue?.id);
+    if (!targetPriorityId || !targetIssueId) return false;
+    if (getRedmineIssuePriorityId(issue) === targetPriorityId) return false;
+
+    await updateRedmineIssue({
+        baseUrl,
+        apiKey,
+        issueId: targetIssueId,
+        issue: {
+            priority_id: targetPriorityId,
+            notes: `Synchronized Redmine priority from DefectDojo severity${severity ? ` (${severity})` : ''}.`
+        }
+    });
+    return true;
+};
+
+const normalizeTicketStatus = (statusName = '') => (
+    cleanRouteValue(statusName).toLowerCase().replace(/[_-]+/g, ' ')
+);
+
+const isResolveStatus = (statusName = '', statusId = '', statusIds = {}, config = {}) => {
+    const normalized = normalizeTicketStatus(statusName);
+    const configuredResolveId = cleanRouteValue(statusIds.resolve || config.redmineStatusResolveId);
+    return (configuredResolveId && cleanRouteValue(statusId) === configuredResolveId)
+        || normalized === 'resolve'
+        || normalized === 'resolved';
+};
+
+const isInProgressStatus = (statusName = '', statusId = '', statusIds = {}, config = {}) => {
+    const normalized = normalizeTicketStatus(statusName);
+    const configuredInProgressId = cleanRouteValue(statusIds.inProgress || config.redmineStatusInProgressId);
+    return (configuredInProgressId && cleanRouteValue(statusId) === configuredInProgressId)
+        || normalized === 'in progress'
+        || normalized === 'progress';
+};
+
+const isClosedStatus = (statusName = '', statusId = '', statusIds = {}, config = {}) => {
+    const normalized = normalizeTicketStatus(statusName);
+    const configuredClosedId = cleanRouteValue(statusIds.closed || config.redmineStatusClosedId);
+    if (isResolveStatus(statusName, statusId, statusIds, config)) return false;
+    return (configuredClosedId && cleanRouteValue(statusId) === configuredClosedId)
+        || normalized === 'closed'
+        || normalized === 'done'
+        || normalized === 'rejected';
+};
+
+const getStatusNameIsClosed = (statusName = '', config = {}) => isClosedStatus(statusName, '', {}, config);
+
+const fetchRedmineIssueStatuses = async ({ baseUrl, apiKey }) => {
+    try {
+        const response = await axios.get(`${baseUrl}/issue_statuses.json`, {
+            headers: getRedmineHeaders(apiKey)
+        });
+        return response.data.issue_statuses || [];
+    } catch (error) {
+        console.warn(`[WARN] Could not fetch Redmine issue statuses: ${error.message}`);
+        return [];
+    }
+};
+
+const resolveRedmineStatusIds = async ({ baseUrl, apiKey, config = {} } = {}) => {
+    const statuses = await fetchRedmineIssueStatuses({ baseUrl, apiKey });
+    const byName = new Map(statuses.map(status => [normalizeTicketStatus(status.name), String(status.id)]));
+    return {
+        new: cleanRouteValue(config.redmineStatusNewId) || byName.get('new') || '',
+        feedback: cleanRouteValue(config.redmineStatusFeedbackId) || byName.get('feedback') || '',
+        inProgress: cleanRouteValue(config.redmineStatusInProgressId) || byName.get('in progress') || '',
+        resolve: cleanRouteValue(config.redmineStatusResolveId) || byName.get('resolve') || byName.get('resolved') || '',
+        closed: cleanRouteValue(config.redmineStatusClosedId) || byName.get('closed') || '',
+        statuses
+    };
+};
+
+const fetchRedmineIssueStatusMap = async ({ baseUrl, apiKey }) => {
+    try {
+        const issueStatuses = await fetchRedmineIssueStatuses({ baseUrl, apiKey });
+
+        return new Map(issueStatuses.map(status => [
+            String(status.id),
+            Boolean(status.is_closed)
+        ]));
+    } catch (error) {
+        console.warn(`[WARN] Could not fetch Redmine issue status metadata: ${error.message}`);
+        return new Map();
+    }
+};
+
+const fetchRedmineIssueStatus = async ({ baseUrl, apiKey, issueId, statusMap, statusIds = {}, config = {} }) => {
+    const response = await axios.get(`${baseUrl}/issues/${issueId}.json`, {
+        headers: getRedmineHeaders(apiKey)
+    });
+    const issue = response.data.issue;
+    const statusId = issue?.status?.id !== undefined ? String(issue.status.id) : '';
+    const statusName = issue?.status?.name || '';
+    const isClosed = isResolveStatus(statusName, statusId, statusIds, config)
+        ? false
+        : statusMap.has(statusId)
+            ? statusMap.get(statusId)
+            : getStatusNameIsClosed(statusName, config);
+
+    return {
+        action: isClosed ? 'existing_closed' : 'existing_open',
+        issue,
+        issueId: issue?.id || issueId,
+        issueUrl: getRedmineIssueUrl(baseUrl, issue),
+        isClosed,
+        status: statusName,
+        statusId
+    };
+};
+
+const getKnownRedmineIssueId = (ticket = {}, redmineSyncStore) => {
+    const explicitIssueId = Number.parseInt(ticket.issueId, 10);
+    if (Number.isInteger(explicitIssueId) && explicitIssueId > 0) return explicitIssueId;
+
+    const ticketKeys = [
+        ticket.syncKey,
+        ticket.ticketKey,
+        ...asArray(ticket.legacySyncKeys || ticket.legacyTicketKeys)
+    ].map(key => cleanRouteValue(key)).filter(Boolean);
+
+    for (const ticketKey of ticketKeys) {
+        const storedIssueId = Number.parseInt(redmineSyncStore.byTicket[ticketKey]?.issueId, 10);
+        if (Number.isInteger(storedIssueId) && storedIssueId > 0) return storedIssueId;
+    }
+
+    const findingIds = normalizeFindingIds(ticket.findingIds || []);
+    const findingIdSet = new Set(findingIds.map(String));
+    for (const findingId of findingIds) {
+        const storedRecord = redmineSyncStore.byFindingId[String(findingId)];
+        const storedFindingIds = normalizeFindingIds(storedRecord?.findingIds || []);
+        const canUseFindingFallback = storedRecord
+            && storedFindingIds.length > 0
+            && storedFindingIds.every(id => findingIdSet.has(String(id)));
+        if (!canUseFindingFallback) continue;
+
+        const storedIssueId = Number.parseInt(storedRecord.issueId, 10);
+        if (Number.isInteger(storedIssueId) && storedIssueId > 0) return storedIssueId;
+    }
+
+    return null;
+};
+
+const getIssueResolvedProject = (issue = {}, fallbackProject = null) => {
+    if (fallbackProject) return fallbackProject;
+    const issueProject = issue.project || {};
+    const projectValue = getProjectIssueValue(issueProject) || issueProject.identifier || issueProject.id || '';
+
+    return {
+        id: projectValue,
+        identifier: projectValue,
+        name: issueProject.name || '',
+        source: 'issue_project',
+        project: issueProject
+    };
+};
+
+const buildTicketStatusFromIssue = ({ ticket, issueStatus, baseUrl, resolvedProject }) => {
+    const issue = issueStatus.issue || issueStatus;
+    const action = issueStatus.isClosed ? 'existing_closed' : 'existing_open';
+    const baseResult = {
+        ticketKey: ticket.ticketKey,
+        action,
+        issue,
+        issueId: issueStatus.issueId || issue?.id,
+        status: issueStatus.status || issue?.status?.name || (issueStatus.isClosed ? 'closed' : 'open'),
+        statusId: issueStatus.statusId || issue?.status?.id || '',
+        issueUrl: issueStatus.issueUrl || getRedmineIssueUrl(baseUrl, issue),
+        resolvedProject: getIssueResolvedProject(issue, resolvedProject),
+        isClosed: Boolean(issueStatus.isClosed)
+    };
+
+    if (issueStatus.isClosed) {
+        return {
+            ...baseResult,
+            action: 'existing_closed'
+        };
+    }
+
+    return baseResult;
+};
+
+module.exports = {
+    REDMINE_ISSUE_SEARCH_LIMIT,
+    REDMINE_ISSUE_SEARCH_MAX_PAGES,
+    getRedmineHeaders,
+    getRedmineIssueUrl,
+    appendSyncMetadata,
+    REDMINE_PRIORITY_FIELD_BY_SEVERITY,
+    getRedminePriorityIdForSeverity,
+    normalizeProjectToken,
+    redmineProjectMatches,
+    getProjectIssueValue,
+    isRedmineNotFoundError,
+    isRedmineProjectReferenceError,
+    getMissingRedmineProjectLabel,
+    buildMissingRedmineProject,
+    buildRedmineProjectMissingStatus,
+    makeRedmineProjectIdentifier,
+    getRouteCandidates,
+    getRouteProjectName,
+    isRedmineProjectDuplicateError,
+    createRedmineProject,
+    fetchRedmineProjectDirect,
+    findRedmineProjectByCandidates,
+    resolveRedmineProject,
+    getRedmineProjectCacheKey,
+    resolveRedmineProjectCached,
+    extractRedmineIssueFindingIds,
+    extractRedmineIssueSyncKey,
+    redmineIssueMatchesSyncKey,
+    compareFindingIdsWithRedmineIssue,
+    redmineIssueFindingIdsAreSubsetOfCurrent,
+    findIssueInList,
+    fetchRedmineIssuesForProjectStatus,
+    findMatchingRedmineIssue,
+    updateRedmineIssue,
+    getRedmineIssuePriorityId,
+    updateOpenRedmineIssuePriorityIfNeeded,
+    normalizeTicketStatus,
+    isResolveStatus,
+    isInProgressStatus,
+    isClosedStatus,
+    getStatusNameIsClosed,
+    fetchRedmineIssueStatuses,
+    resolveRedmineStatusIds,
+    fetchRedmineIssueStatusMap,
+    fetchRedmineIssueStatus,
+    getKnownRedmineIssueId,
+    getIssueResolvedProject,
+    buildTicketStatusFromIssue
+};

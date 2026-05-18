@@ -6,18 +6,21 @@ import {
   Info,
   Filter,
   Database,
-  Terminal,
   ExternalLink,
   LogOut,
-  X
+  X,
+  History,
+  ShieldCheck
 } from 'lucide-react';
 import { AUTH_EXPIRED_EVENT, apiFetch, getCurrentUser, openDashboardSyncStream, removeAuthToken, removeCurrentUser } from '../services/api';
 import Login from '../features/auth/Login';
 import SettingsView from '../features/settings/Settings';
+import SummaryCards from '../features/dashboard/SummaryCards';
+import SyncHistory from '../features/sync-history/SyncHistory';
+import MitigationReview from '../features/admin/MitigationReview';
 
 const PULL_SEVERITY_OPTIONS = ['Critical', 'High', 'Medium', 'Low', 'Info'];
 const DEFAULT_REDMINE_STATUS_POLL_SECONDS = 60;
-const SYNC_ALL_REDMINE_CONCURRENCY = 5;
 const SYNC_ALL_REDMINE_REQUEST_TIMEOUT_MS = 120000;
 const DEFAULT_REDMINE_SYNC_STATUS = {
   enabled: false,
@@ -46,9 +49,9 @@ const setHashRoute = (hash) => {
 
 const DEFAULT_PULL_FILTERS = {
   severity: [],
-  active: 'true',
+  active: '',
   verified: '',
-  is_mitigated: 'false',
+  is_mitigated: '',
   test__engagement__product: '',
   test__engagement: '',
 };
@@ -67,6 +70,11 @@ const createDefaultConfig = () => ({
   redminePriorityMediumId: '',
   redminePriorityLowId: '',
   redminePriorityInfoId: '',
+  redmineStatusNewId: '',
+  redmineStatusFeedbackId: '',
+  redmineStatusInProgressId: '',
+  redmineStatusResolveId: '',
+  redmineStatusClosedId: '',
   redmineStatusPollIntervalSeconds: DEFAULT_REDMINE_STATUS_POLL_SECONDS,
   pullFilters: { ...DEFAULT_PULL_FILTERS },
 });
@@ -113,26 +121,6 @@ const createPullFiltersDraft = (filters = {}) => ({
 const formatSyncTimestamp = (value) => (
   value ? new Date(value).toLocaleString() : 'Not yet'
 );
-
-const runWithClientConcurrency = async (items, concurrency, mapper) => {
-  const list = Array.from(items || []);
-  if (list.length === 0) return [];
-
-  const workerCount = Math.max(1, Math.min(Number.parseInt(concurrency, 10) || 1, list.length));
-  const results = new Array(list.length);
-  let nextIndex = 0;
-
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (nextIndex < list.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await mapper(list[index], index);
-    }
-  });
-
-  await Promise.all(workers);
-  return results;
-};
 
 const formatTimeoutSeconds = (timeoutMs) => Math.round(timeoutMs / 1000);
 
@@ -219,26 +207,21 @@ const normalizeRedmineStatus = (status) => (
     .replace(/[_-]+/g, ' ')
 );
 
-const isTicketCreatedOrInProgress = (sync) => {
-  if (!sync) return false;
-  const status = normalizeRedmineStatus(sync.status);
-  const isClosedStatus = sync.isClosed || ['closed', 'resolved', 'done', 'rejected'].includes(status);
-  if (isClosedStatus || sync.action === 'existing_closed' || sync.action === 'not_found' || sync.action === 'check_failed') {
-    return false;
-  }
-
-  if (sync.action === 'created') return !status || status === 'new' || status === 'in progress' || status === 'open';
-  return sync.action === 'existing_open' && (!status || status === 'new' || status === 'in progress' || status === 'open');
+const getRedmineStatusBadgeClass = (sync = {}) => {
+  const normalizedStatus = normalizeRedmineStatus(sync.status);
+  if (sync.action === 'existing_closed' || ['closed', 'done'].includes(normalizedStatus)) return 'status-closed';
+  if (normalizedStatus === 'new') return 'status-new';
+  if (normalizedStatus === 'feedback') return 'status-feedback';
+  if (normalizedStatus === 'in progress') return 'status-in-progress';
+  if (['resolve', 'resolved'].includes(normalizedStatus)) return 'status-resolve';
+  if (sync.action === 'not_found') return 'status-not-found';
+  if (sync.action === 'check_failed') return 'status-error';
+  return 'status-synced';
 };
 
-const isTicketClosedInRedmine = (sync) => {
-  if (!sync) return false;
-  const status = normalizeRedmineStatus(sync.status);
-  return Boolean(sync.isClosed)
-    || sync.action === 'existing_closed'
-    || sync.action === 'closed_with_new_findings'
-    || ['closed', 'resolved', 'done', 'rejected'].includes(status);
-};
+const getRedmineSyncBadgeClass = (sync = {}) => (
+  ['redmine-sync-badge', sync.action, getRedmineStatusBadgeClass(sync)].filter(Boolean).join(' ')
+);
 
 const REDMINE_SYNC_PRIORITY = {
   created: 5,
@@ -273,10 +256,13 @@ const REDMINE_PRIORITY_FIELD_BY_SEVERITY = {
 };
 
 const getRedminePriorityIdForSeverity = (severity, config) => {
-  const field = REDMINE_PRIORITY_FIELD_BY_SEVERITY[severity];
+  const severityText = cleanText(severity);
+  const normalizedSeverity = Object.keys(REDMINE_PRIORITY_FIELD_BY_SEVERITY)
+    .find(item => item.toLowerCase() === severityText.toLowerCase()) || '';
+  const field = REDMINE_PRIORITY_FIELD_BY_SEVERITY[normalizedSeverity];
   if (field && config[field]) return cleanText(config[field]);
 
-  return severity ? '' : cleanText(config.redminePriorityId);
+  return severityText ? '' : cleanText(config.redminePriorityId);
 };
 
 const SEVERITY_RANK = {
@@ -316,6 +302,8 @@ const compactDefectDojoText = (value) => {
       .split('\n')
       .filter(line => !DEFECTDOJO_EVIDENCE_LINE_RE.test(line.trim()))
       .join('\n')
+      .replace(/\busing the following request\s*:\s*https?:\/\/\S+/i, 'using a request to the affected endpoint')
+      .replace(/\s*This produced the following truncated output[\s\S]*$/i, '\n\nEvidence output omitted. See DefectDojo finding for raw truncated output.')
   );
 };
 
@@ -392,6 +380,46 @@ const getDescriptionText = (finding) => compactDefectDojoText(finding.descriptio
 
 const getImpactText = (finding) => compactDefectDojoText(finding.impact || '');
 
+const getStrictCompactFamilyKey = (finding) => ([
+  'strict',
+  normalizeForGrouping(finding.title || finding.name),
+  normalizeForGrouping(getMitigationText(finding)),
+  normalizeForGrouping(getDescriptionText(finding)),
+  normalizeForGrouping(getImpactText(finding)),
+].join('|'));
+
+const getLegacyCompactGroupKey = (finding) => {
+  const target = parseUpgradeTarget(finding);
+  const mitigationText = getMitigationText(finding);
+
+  if (target) return `upgrade|${normalizeForGrouping(target.software)}`;
+
+  return [
+    'finding',
+    normalizeForGrouping(finding.title || finding.name),
+    normalizeForGrouping(mitigationText),
+    normalizeForGrouping(getDescriptionText(finding)),
+    normalizeForGrouping(getImpactText(finding)),
+  ].join('|');
+};
+
+const getKnownNoCveFamily = (finding) => {
+  const title = normalizeForGrouping(finding.title || finding.name);
+  const hasSslOrTls = /\b(?:ssl|tls)\b/i.test(title);
+  const hasCertificate = /\bcert(?:ificate)?s?\b/i.test(title);
+  const hasTrustSignal = /cannot be trusted|not trusted|untrusted|self[-\s]?signed|invalid chain|certificate chain|expired|hostname|common[-\s]?name|name mismatch|unknown ca|unrecognized ca/i.test(title);
+  const isProtocolOrCipher = /\b(?:protocol|cipher|sslv2|sslv3|tlsv1|sweet32|beast|poodle)\b/i.test(title);
+
+  if (hasSslOrTls && hasCertificate && hasTrustSignal && !isProtocolOrCipher) {
+    return {
+      key: 'ssl-certificate-trust',
+      title: 'SSL Certificate Trust Issues',
+    };
+  }
+
+  return null;
+};
+
 const firstPresent = (...values) => {
   for (const value of values) {
     if (value && typeof value === 'object') continue;
@@ -457,7 +485,30 @@ const getDefectDojoRoute = (finding) => {
       finding.engagement,
       test.engagement_name
     ),
+    productKey: firstPresent(
+      finding.productKey,
+      finding.product_key,
+      explicitRoute.productKey
+    ),
+    engagementKey: firstPresent(
+      finding.engagementKey,
+      finding.engagement_key,
+      explicitRoute.engagementKey
+    ),
   };
+};
+
+const getEntityRouteKey = (prefix, id, name) => {
+  const cleanedId = cleanText(id);
+  if (cleanedId) return `${prefix}:id:${cleanedId}`;
+  const cleanedName = cleanText(name);
+  return cleanedName ? `${prefix}:name:${cleanedName.toLowerCase()}` : '';
+};
+
+const routeValueMatches = (selectedValue, ...candidates) => {
+  const selected = cleanText(selectedValue).toLowerCase();
+  if (!selected) return true;
+  return candidates.some(candidate => cleanText(candidate).toLowerCase() === selected);
 };
 
 const parseUpgradeTarget = (finding) => {
@@ -486,42 +537,164 @@ const parseUpgradeTarget = (finding) => {
   return null;
 };
 
-const getCompactGroupKey = (finding) => {
-  const target = parseUpgradeTarget(finding);
-  const mitigationText = getMitigationText(finding);
-
-  if (target) {
-    const mitigationFamily = normalizeForGrouping(mitigationText || target.title);
-    return `upgrade|${target.software.toLowerCase()}|${mitigationFamily}`;
-  }
-
-  return `finding|${normalizeForGrouping(finding.title || finding.name)}|${normalizeForGrouping(mitigationText)}`;
-};
-
 const collectVulnerabilityIds = (finding) => {
   const ids = new Set();
 
   const pushId = (value) => {
+    if (value && typeof value === 'object') {
+      pushId(value.vulnerability_id || value.name || value.id);
+      return;
+    }
     const cleaned = cleanText(value);
     if (cleaned && cleaned.toLowerCase() !== 'none' && cleaned.toLowerCase() !== 'n/a') {
       ids.add(cleaned);
     }
   };
 
-  if (Array.isArray(finding.vulnerability_ids)) {
-    finding.vulnerability_ids.forEach(v => {
-      if (typeof v === 'string') {
-        pushId(v);
-      } else if (v && typeof v === 'object') {
-        pushId(v.vulnerability_id || v.name || v.id);
-      }
-    });
-  }
-
+  if (Array.isArray(finding.vulnerability_ids)) finding.vulnerability_ids.forEach(pushId);
   if (Array.isArray(finding.cves)) finding.cves.forEach(pushId);
+  if (Array.isArray(finding.cve_ids)) finding.cve_ids.forEach(pushId);
   pushId(finding.cve || finding.CVE);
 
-  return Array.from(ids).sort();
+  return sortStrings(ids);
+};
+
+const resolveCompactFamily = (finding) => {
+  const cves = collectVulnerabilityIds(finding);
+  const target = parseUpgradeTarget(finding);
+
+  if (target) {
+    return {
+      cves,
+      familyKey: `upgrade|${normalizeForGrouping(target.software)}`,
+      familyTitle: getSoftwareFamilyTitle(target.software, [finding.title || finding.name || '']) || `${target.software} Vulnerabilities`,
+      softwareFamily: target.software,
+      reason: 'upgrade-family',
+      isSoftwareFamily: true,
+    };
+  }
+
+  const knownFamily = cves.length === 0 ? getKnownNoCveFamily(finding) : null;
+  if (knownFamily) {
+    return {
+      cves,
+      familyKey: `known|${knownFamily.key}`,
+      familyTitle: knownFamily.title,
+      softwareFamily: '',
+      reason: 'known-no-cve-family',
+      isSoftwareFamily: false,
+    };
+  }
+
+  if (cves.length > 0) {
+    return {
+      cves,
+      familyKey: `cve|${cves.join(',')}`,
+      familyTitle: '',
+      softwareFamily: '',
+      reason: 'same-cve',
+      isSoftwareFamily: false,
+    };
+  }
+
+  return {
+    cves,
+    familyKey: getStrictCompactFamilyKey(finding),
+    familyTitle: '',
+    softwareFamily: '',
+    reason: 'strict-fingerprint',
+    isSoftwareFamily: false,
+  };
+};
+
+const getCompactFingerprint = (finding, route = getDefectDojoRoute(finding), config = {}) => {
+  const family = resolveCompactFamily(finding);
+  const cves = family.cves;
+  const cveSignature = cves.join(',');
+  const detailKey = getCompactionDetailKey(finding);
+  const productKey = route.projectId
+    || route.projectName
+    || config.pullFilters?.test__engagement__product
+    || '';
+  const engagementKey = route.engagementId
+    || route.engagementName
+    || config.pullFilters?.test__engagement
+    || '';
+
+  return {
+    cves,
+    cveSignature,
+    compactFamilyKey: family.familyKey,
+    compactFamilyTitle: family.familyTitle,
+    compactReason: family.reason,
+    softwareFamily: family.softwareFamily,
+    isSoftwareFamily: family.isSoftwareFamily,
+    groupKey: [
+      family.familyKey,
+      detailKey,
+      'route',
+      normalizeForGrouping(productKey),
+      normalizeForGrouping(engagementKey),
+    ].join('|'),
+  };
+};
+
+const getLegacyFindingGroupKey = (finding, route = getDefectDojoRoute(finding), config = {}) => {
+  const productKey = route.projectId
+    || route.projectName
+    || config.pullFilters?.test__engagement__product
+    || '';
+  const engagementKey = route.engagementId
+    || route.engagementName
+    || config.pullFilters?.test__engagement
+    || '';
+
+  return [
+    getLegacyCompactGroupKey(finding),
+    'route',
+    normalizeForGrouping(productKey),
+    normalizeForGrouping(engagementKey),
+  ].join('|');
+};
+
+const getSoftwareFamilyTitle = (softwareFamily, titles = []) => {
+  const software = cleanText(softwareFamily);
+  if (!software) return '';
+  const hasMultipleVulnerabilities = sortStrings(titles).some(title => /multiple vulnerabilities/i.test(cleanText(title)));
+  return `${software} ${hasMultipleVulnerabilities ? 'Multiple Vulnerabilities' : 'Vulnerabilities'}`;
+};
+
+const parseTitleUpgradeTarget = (value = '') => {
+  const titleMatch = cleanText(value).match(TITLE_VERSION_RE);
+  if (!titleMatch) return null;
+  return {
+    software: cleanSoftwareName(titleMatch[1]),
+    version: titleMatch[2].replace(/\.$/, ''),
+  };
+};
+
+const collectTicketUpgradeTargets = (ticket = {}) => {
+  const candidates = [
+    ticket.title,
+    ticket.subject,
+    ...(asArray(ticket.allTitles)),
+    ...(asArray(ticket.allMitigations)),
+    ...(asArray(ticket.sourceGroups).flatMap(sourceGroup => [
+      sourceGroup.title,
+      ...(asArray(sourceGroup.mitigations)),
+    ])),
+  ];
+
+  return candidates
+    .map(candidate => parseUpgradeText(candidate) || parseTitleUpgradeTarget(candidate))
+    .filter(target => target?.software && target?.version)
+    .sort((left, right) => compareVersions(right.version, left.version));
+};
+
+const getTicketUpgradeTarget = (ticket = {}) => collectTicketUpgradeTargets(ticket)[0] || null;
+
+const buildActionRequiredSubject = (ticket = {}) => {
+  return cleanText(ticket.title || chooseDisplayTitle(ticket.allTitles || [], ticket.subject || 'Untitled finding'));
 };
 
 const firstCleanText = (...values) => {
@@ -661,26 +834,149 @@ const endpointKey = (endpoint) => {
   return parts.host ? endpointLabel(endpoint) : String(endpoint ?? 'N/A');
 };
 
-const sortStrings = (values) => Array.from(values).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+const asArray = (value) => {
+  if (Array.isArray(value)) return value;
+  if (value instanceof Set) return Array.from(value);
+  if (value === undefined || value === null || value === '') return [];
+  return [value];
+};
+
+const asFindingIdArray = (value) => {
+  if (typeof value === 'string') return value.split(/[\s,]+/).filter(Boolean);
+  return asArray(value);
+};
+
+const sortStrings = (values) => asArray(values)
+  .map(value => cleanText(value))
+  .filter(Boolean)
+  .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
 const sortFindingIds = (ids = []) => (
-  sortStrings(new Set(ids.map(id => cleanText(id)).filter(Boolean)))
+  sortStrings(new Set(asFindingIdArray(ids).map(id => cleanText(id)).filter(Boolean)))
     .map(id => (/^\d+$/.test(id) ? Number.parseInt(id, 10) : id))
 );
+
+const addCompactedFindingIds = (target, value) => {
+  asFindingIdArray(value).forEach(id => {
+    const cleaned = cleanText(id);
+    if (cleaned) target.add(cleaned);
+  });
+};
+
+const getCompactedFindingIds = (finding = {}) => {
+  const ids = new Set();
+
+  addCompactedFindingIds(ids, finding.originalIds);
+  addCompactedFindingIds(ids, finding.findingIds);
+  addCompactedFindingIds(ids, finding.defectdojoFindingIds);
+  addCompactedFindingIds(ids, finding.serverRedmineSync?.findingIds);
+
+  asArray(finding.findingStates).forEach(state => {
+    addCompactedFindingIds(ids, state?.findingId || state?.finding_id || state?.id);
+  });
+
+  asArray(finding.endpointDetails).forEach(detail => {
+    addCompactedFindingIds(ids, detail?.findingIds);
+  });
+
+  asArray(finding.allDescriptionSources).forEach(source => {
+    addCompactedFindingIds(ids, source?.findingIds);
+  });
+  asArray(finding.allImpactSources).forEach(source => {
+    addCompactedFindingIds(ids, source?.findingIds);
+  });
+
+  asArray(finding.sourceGroups).forEach(sourceGroup => {
+    addCompactedFindingIds(ids, sourceGroup?.findingIds);
+    asArray(sourceGroup?.endpointDetails).forEach(detail => {
+      addCompactedFindingIds(ids, detail?.findingIds);
+    });
+    asArray(sourceGroup?.descriptionSources).forEach(source => {
+      addCompactedFindingIds(ids, source?.findingIds);
+    });
+    asArray(sourceGroup?.impactSources).forEach(source => {
+      addCompactedFindingIds(ids, source?.findingIds);
+    });
+  });
+
+  return sortFindingIds(Array.from(ids));
+};
+
+const getCompactedFindingCount = (finding = {}) => {
+  const ids = getCompactedFindingIds(finding);
+  if (ids.length > 0) return ids.length;
+
+  const fallback = [finding.findingCount, finding.sourceFindingCount, finding.count]
+    .map(value => Number.parseInt(value, 10))
+    .find(value => Number.isFinite(value) && value > 0);
+
+  return fallback || 1;
+};
+
+const SOURCE_EVIDENCE_RE = /\b(?:URL|URI)\s*:\s*https?:\/\/\S+(?:\s+\([^)]*\))?(?:\s+(?:Installed|Detected|Current|Fixed|Affected) version\s*:\s*\S+)*|\bVersion source\s*:\s*\S+(?:\s+(?!(?:Installed|Detected|Current|Fixed|Affected) version\s*:)\S+)*(?:\s+(?:Installed|Detected|Current|Fixed|Affected) version\s*:\s*\S+)*/gi;
+
+const cleanTextSourceBody = (text = '') => (
+  cleanBlockText(text)
+    .replace(SOURCE_EVIDENCE_RE, '')
+    .replace(/\busing the following request\s*:\s*https?:\/\/\S+/i, 'using a request to the affected endpoint')
+    .replace(/\s*This produced the following truncated output[\s\S]*$/i, '\n\nEvidence output omitted. See DefectDojo finding for raw truncated output.')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+);
+
+const extractTextSourceEvidenceLines = (text = '') => {
+  const evidenceLines = new Set();
+  cleanBlockText(text).replace(SOURCE_EVIDENCE_RE, (match) => {
+    const cleaned = cleanText(match);
+    if (cleaned) evidenceLines.add(cleaned);
+    return match;
+  });
+  return Array.from(evidenceLines);
+};
+
+const normalizeTextSourceKey = (text = '') => (
+  [
+    cleanTextSourceBody(text),
+    extractTextSourceEvidenceLines(text)
+      .map(line => line
+        .replace(/\bURL\s*:\s*https?:\/\/\S+/gi, 'URL: <endpoint>')
+        .replace(/\bhttps?:\/\/[^\s)]+/gi, '<url>')
+        .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, '<host>')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase())
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+      .join('|'),
+  ]
+    .filter(Boolean)
+    .join('|evidence|')
+    .toLowerCase()
+);
+
+const getCompactionDetailKey = (finding = {}) => ([
+  'detail',
+  normalizeTextSourceKey(finding.description || ''),
+  normalizeTextSourceKey(finding.impact || ''),
+].join('|'));
 
 const addTextSource = (sourceMap, text, findingId) => {
   const cleanedText = cleanBlockText(text);
   if (!cleanedText) return;
+  const bodyText = cleanTextSourceBody(cleanedText);
+  const evidenceLines = extractTextSourceEvidenceLines(cleanedText);
+  const sourceKey = normalizeTextSourceKey(cleanedText);
 
-  if (!sourceMap.has(cleanedText)) {
-    sourceMap.set(cleanedText, {
-      text: cleanedText,
+  if (!sourceMap.has(sourceKey)) {
+    sourceMap.set(sourceKey, {
+      text: bodyText,
       findingIds: new Set(),
+      evidenceLines: new Set(),
     });
   }
 
+  evidenceLines.forEach(line => sourceMap.get(sourceKey).evidenceLines.add(line));
   const cleanedFindingId = cleanText(findingId);
-  if (cleanedFindingId) sourceMap.get(cleanedText).findingIds.add(cleanedFindingId);
+  if (cleanedFindingId) sourceMap.get(sourceKey).findingIds.add(cleanedFindingId);
 };
 
 const sortTextSources = (sourceMap) => (
@@ -688,8 +984,10 @@ const sortTextSources = (sourceMap) => (
     .map(source => ({
       text: source.text,
       findingIds: sortFindingIds(Array.from(source.findingIds)),
+      evidenceLines: sortStrings(source.evidenceLines || []),
     }))
-    .sort((a, b) => cleanText(a.text).localeCompare(cleanText(b.text), undefined, { numeric: true }))
+    .filter(source => source.text || source.evidenceLines.length > 0)
+    .sort((a, b) => cleanText(a.text || a.evidenceLines.join(' ')).localeCompare(cleanText(b.text || b.evidenceLines.join(' ')), undefined, { numeric: true }))
 );
 
 const stableHash = (value) => {
@@ -711,15 +1009,29 @@ const stableHash = (value) => {
 
 const buildCompactedSyncKey = ({
   groupKey,
+  productIds = [],
+  engagementIds = [],
+}) => {
+  const source = [
+    `group:${groupKey}`,
+    `products:${sortStrings(asArray(productIds).map(id => cleanText(id)).filter(Boolean)).join(',')}`,
+    `engagements:${sortStrings(asArray(engagementIds).map(id => cleanText(id)).filter(Boolean)).join(',')}`,
+  ].join('|');
+
+  return `dd-compact-${stableHash(source)}`;
+};
+
+const buildLegacyCompactedSyncKey = ({
+  groupKey,
   findingIds = [],
   productIds = [],
   engagementIds = [],
 }) => {
   const source = [
     `group:${groupKey}`,
-    `findings:${sortStrings(findingIds.map(id => cleanText(id)).filter(Boolean)).join(',')}`,
-    `products:${sortStrings(productIds.map(id => cleanText(id)).filter(Boolean)).join(',')}`,
-    `engagements:${sortStrings(engagementIds.map(id => cleanText(id)).filter(Boolean)).join(',')}`,
+    `findings:${sortStrings(asFindingIdArray(findingIds).map(id => cleanText(id)).filter(Boolean)).join(',')}`,
+    `products:${sortStrings(asArray(productIds).map(id => cleanText(id)).filter(Boolean)).join(',')}`,
+    `engagements:${sortStrings(asArray(engagementIds).map(id => cleanText(id)).filter(Boolean)).join(',')}`,
   ].join('|');
 
   return `dd-compact-${stableHash(source)}`;
@@ -760,35 +1072,6 @@ const chooseDisplayTitle = (titles, fallbackTitle) => {
   }, cleanedTitles[0]);
 };
 
-const compactMitigations = (values) => {
-  const upgradeMitigations = new Map();
-  const otherMitigations = new Set();
-
-  sortStrings(values).forEach(value => {
-    const mitigation = cleanText(value);
-    if (!mitigation) return;
-
-    const upgradeTarget = parseUpgradeText(mitigation);
-    if (!upgradeTarget) {
-      otherMitigations.add(mitigation);
-      return;
-    }
-
-    const key = upgradeTarget.software.toLowerCase();
-    const existing = upgradeMitigations.get(key);
-    if (!existing || compareVersions(upgradeTarget.version, existing.version) > 0) {
-      upgradeMitigations.set(key, upgradeTarget);
-    }
-  });
-
-  return [
-    ...Array.from(upgradeMitigations.values())
-      .sort((a, b) => a.software.localeCompare(b.software, undefined, { numeric: true }))
-      .map(item => item.title),
-    ...sortStrings(otherMitigations),
-  ];
-};
-
 const groupEndpointDetailsByCves = (details) => {
   const groups = new Map();
 
@@ -816,13 +1099,133 @@ const groupEndpointDetailsByCves = (details) => {
     });
 };
 
+const sortSourceGroupsByTitleVersion = (groups = []) => (
+  groups.sort((a, b) => {
+    const versionA = extractTitleVersion(a.title);
+    const versionB = extractTitleVersion(b.title);
+    if (versionA && versionB) return compareVersions(versionB, versionA);
+    if (versionA) return -1;
+    if (versionB) return 1;
+    return cleanText(a.title).localeCompare(cleanText(b.title), undefined, { numeric: true });
+  })
+);
+
+const finalizeEndpointDetails = (endpointDetailMap) => (
+  Array.from(endpointDetailMap.values())
+    .map(detail => ({
+      endpoint: detail.endpoint,
+      label: detail.label,
+      host: detail.host,
+      severity: detail.severity,
+      cves: sortStrings(detail.cves),
+      mitigations: sortStrings(detail.mitigations),
+      findingIds: sortFindingIds(detail.findingIds),
+    }))
+    .sort((a, b) => (
+      a.host.localeCompare(b.host, undefined, { numeric: true })
+      || a.label.localeCompare(b.label, undefined, { numeric: true })
+    ))
+);
+
+const finalizeSourceGroups = (sourceGroupsMap) => (
+  sortSourceGroupsByTitleVersion(Array.from(sourceGroupsMap.values()).map(sourceGroup => {
+    const activeCount = sourceGroup.activeCount || 0;
+    const mitigatedCount = sourceGroup.mitigatedCount || 0;
+    return {
+      title: sourceGroup.title,
+      findingIds: sortFindingIds(sourceGroup.findingIds),
+      severity: sourceGroup.severity || 'Info',
+      cveIds: sortStrings(sourceGroup.cveIds),
+      endpointDetails: finalizeEndpointDetails(sourceGroup.endpointDetailMap),
+      descriptionSources: sortTextSources(sourceGroup.descriptionsMap),
+      impactSources: sortTextSources(sourceGroup.impactsMap),
+      mitigations: sortStrings(sourceGroup.mitigations),
+      activeCount,
+      mitigatedCount,
+      currentStatus: activeCount > 0 && mitigatedCount > 0
+        ? 'mixed'
+        : activeCount > 0
+          ? 'active'
+          : 'mitigated',
+    };
+  }))
+);
+
 const formatTextSourceLabel = (source, index) => {
   const findingIds = source.findingIds || [];
   const idLabel = findingIds.length === 0
     ? ''
-    : ` (DefectDojo Finding ID${findingIds.length === 1 ? '' : 's'}: ${findingIds.join(', ')})`;
+    : ` (DefectDojo Finding IDs: ${findingIds.join(', ')})`;
 
   return `Source ${index + 1}${idLabel}`;
+};
+
+const formatEvidenceLine = (value = '') => {
+  const text = cleanText(value);
+  if (!text) return '';
+
+  const lines = [];
+  const urlMatch = text.match(/\b(URL|URI)\s*:\s*(https?:\/\/\S+)(\s+\([^)]*\))?/i);
+  if (urlMatch) {
+    lines.push(`${urlMatch[1].toUpperCase()}: ${urlMatch[2]}${urlMatch[3] || ''}`);
+  }
+  const versionSourceMatch = text.match(/\bVersion source\s*:\s*(.*?)(?=\s+(?:Installed|Detected|Current|Fixed|Affected) version\s*:|$)/i);
+  if (versionSourceMatch) {
+    lines.push(`Version source : ${cleanText(versionSourceMatch[1])}`);
+  }
+
+  const versionRe = /\b(Installed|Detected|Current|Fixed|Affected) version\s*:\s*([^\s]+)/gi;
+  let versionMatch = versionRe.exec(text);
+  while (versionMatch) {
+    const label = `${versionMatch[1][0].toUpperCase()}${versionMatch[1].slice(1).toLowerCase()} version`;
+    lines.push(`${label.padEnd(18, ' ')}: ${versionMatch[2]}`);
+    versionMatch = versionRe.exec(text);
+  }
+
+  return lines.length > 0 ? lines.join('\n') : text;
+};
+
+const formatSourceFindingAssets = (source = {}, endpointDetails = []) => {
+  const sourceFindingIds = new Set(sortFindingIds(source.findingIds || []).map(id => String(id)));
+  if (sourceFindingIds.size === 0) return '';
+
+  const scopedDetails = asArray(endpointDetails).filter(detail => (
+    asArray(detail.findingIds).some(findingId => sourceFindingIds.has(String(findingId)))
+  ));
+  if (scopedDetails.length === 0) return '';
+
+  return `Affected IP:\n${formatSourceGroupAssets(scopedDetails)}`;
+};
+
+const getEndpointPort = (detail = {}) => {
+  const parts = getEndpointParts(detail.endpoint);
+  if (parts.port) return parts.port;
+  const label = cleanText(detail.label || '');
+  const match = label.match(/:(\d+)(?:\/|\s|$)?/);
+  return match ? match[1] : '';
+};
+
+const formatAffectedAssetsAndPorts = (endpointDetails = []) => {
+  const hosts = new Map();
+  asArray(endpointDetails).forEach(detail => {
+    const host = cleanText(detail.host || endpointHost(detail.endpoint) || 'Unknown host');
+    if (!hosts.has(host)) hosts.set(host, { ports: new Set(), labels: new Set() });
+    const port = getEndpointPort(detail);
+    if (port) hosts.get(host).ports.add(port);
+    const label = cleanText(detail.label || endpointLabel(detail.endpoint));
+    if (label) hosts.get(host).labels.add(label);
+  });
+
+  if (hosts.size === 0) return 'None';
+
+  return Array.from(hosts.entries())
+    .sort(([hostA], [hostB]) => hostA.localeCompare(hostB, undefined, { numeric: true }))
+    .map(([host, detail]) => {
+      const ports = sortStrings(detail.ports);
+      if (ports.length > 0) return `**Host:** ${host}\n\n**Affected Ports:** ${ports.join(', ')}`;
+      return `**Host:** ${host}\n\n**Affected Endpoints:** ${sortStrings(detail.labels).join(', ') || 'N/A'}`;
+    })
+    .join('\n\n');
 };
 
 const formatTicketTextSection = (title, values) => {
@@ -854,10 +1257,197 @@ const formatDefectDojoContext = (ticket) => {
   return `\n\n**DefectDojo Context:**\n- Project: ${project}\n- Engagement: ${engagement}`;
 };
 
+const formatSourceGroupTextBlock = (title, values = [], endpointDetails = []) => {
+  const escapeText = (text = '') => (
+    cleanBlockText(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+  );
+  const items = values
+    .map(value => (typeof value === 'string' ? { text: value, findingIds: [] } : value))
+    .map(value => ({
+      text: escapeText(value?.text || ''),
+      findingIds: sortFindingIds(value?.findingIds || []),
+      evidenceLines: sortStrings(value?.evidenceLines || []).map(line => escapeText(formatEvidenceLine(line))),
+    }))
+    .filter(value => value.text || value.evidenceLines.length > 0);
+
+  const formatItem = (item) => [
+    items.length > 1 ? formatSourceFindingAssets(item, endpointDetails) : '',
+    item.text,
+    item.evidenceLines.length > 0 ? item.evidenceLines.join('\n') : '',
+  ].filter(Boolean).join('\n');
+  if (items.length === 0) return '';
+  if (items.length === 1) return `\n\n**${title}:**\n${formatItem(items[0])}`;
+
+  return `\n\n**${title}:**\n${items.map((item, idx) => `${formatTextSourceLabel(item, idx)}:\n${formatItem(item)}`).join('\n\n')}`;
+};
+
+const formatSourceGroupAssets = (endpointDetails = []) => {
+  const details = Array.isArray(endpointDetails) ? endpointDetails : [];
+  if (details.length === 0) return 'None';
+
+  const endpointsByHost = new Map();
+  details.forEach(detail => {
+    const host = detail.host || endpointHost(detail.endpoint) || 'Unknown host';
+    if (!endpointsByHost.has(host)) endpointsByHost.set(host, []);
+    endpointsByHost.get(host).push(detail);
+  });
+
+  return Array.from(endpointsByHost.entries())
+    .sort(([hostA], [hostB]) => hostA.localeCompare(hostB, undefined, { numeric: true }))
+    .map(([host, hostDetails]) => {
+      const endpointLines = hostDetails
+        .sort((a, b) => cleanText(a.label).localeCompare(cleanText(b.label), undefined, { numeric: true }))
+        .map(detail => `  - ${detail.label || endpointLabel(detail.endpoint)} (Severity: ${detail.severity || 'Info'})`)
+        .join('\n');
+
+      return `**Host:** ${host}\n${endpointLines}`;
+    })
+    .join('\n\n');
+};
+
+const normalizeTextSource = (source = {}) => ({
+  text: source.text || '',
+  findingIds: sortFindingIds(source.findingIds || []),
+  evidenceLines: sortStrings(source.evidenceLines || []),
+  endpointDetails: asArray(source.endpointDetails),
+});
+
+const collectAppendixSources = (sourceGroups = [], sourceKey = 'descriptionSources') => {
+  const sourcesByKey = new Map();
+
+  asArray(sourceGroups).forEach(sourceGroup => {
+    asArray(sourceGroup[sourceKey]).forEach(source => {
+      const sourceItem = normalizeTextSource({
+        ...source,
+        endpointDetails: sourceGroup.endpointDetails || [],
+      });
+      if (!sourceItem.text && sourceItem.evidenceLines.length === 0) return;
+      const key = [
+        sourceItem.text,
+        ...sourceItem.evidenceLines.map(line => line
+          .replace(/\bURL\s*:\s*https?:\/\/\S+/gi, 'URL: <endpoint>')
+          .replace(/\bhttps?:\/\/[^\s)]+/gi, '<url>')
+          .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, '<host>')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .toLowerCase()),
+      ].join('|');
+      if (!sourcesByKey.has(key)) {
+        sourcesByKey.set(key, {
+          text: sourceItem.text,
+          findingIds: new Set(),
+          evidenceLines: new Set(),
+          endpointDetails: [],
+        });
+      }
+      const target = sourcesByKey.get(key);
+      sourceItem.findingIds.forEach(findingId => target.findingIds.add(String(findingId)));
+      sourceItem.evidenceLines.forEach(line => target.evidenceLines.add(line));
+      target.endpointDetails.push(...sourceItem.endpointDetails);
+    });
+  });
+
+  return Array.from(sourcesByKey.values()).map(source => normalizeTextSource(source));
+};
+
+const formatQuoteBlock = (value = '') => (
+  cleanBlockText(value)
+    .split('\n')
+    .map(line => `> ${line}`)
+    .join('\n')
+);
+
+const formatAppendixTextBlock = (title, sources = []) => {
+  const items = asArray(sources)
+    .map(source => normalizeTextSource(source))
+    .filter(source => source.text || source.evidenceLines.length > 0);
+  if (items.length === 0) return '';
+
+  const escapeText = (text = '') => (
+    cleanBlockText(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+  );
+  const formatItem = (item, includeAssets) => [
+    includeAssets ? formatSourceFindingAssets(item, item.endpointDetails) : '',
+    escapeText(item.text || ''),
+    ...item.evidenceLines.map(line => escapeText(formatEvidenceLine(line))),
+  ].filter(Boolean).join('\n');
+
+  if (items.length === 1) {
+    return `\n\n**${title}:**\n${formatQuoteBlock(formatItem(items[0], false))}`;
+  }
+
+  return `\n\n**${title}:**\n${items.map((item, idx) => `${formatTextSourceLabel(item, idx)}:\n${formatItem(item, true)}`).join('\n\n')}`;
+};
+
+const buildSourceGroupSection = (sourceGroup = {}) => {
+  const title = cleanText(sourceGroup.title || 'Untitled finding');
+  const findingIds = sortFindingIds(sourceGroup.findingIds || []);
+  const idLabel = findingIds.length > 0
+    ? ` (DefectDojo Finding IDs: ${findingIds.join(', ')})`
+    : '';
+  const cveIds = sortStrings(asArray(sourceGroup.cveIds).map(cve => cve?.vulnerability_id || cve).filter(Boolean));
+  const mitigations = sortStrings(asArray(sourceGroup.mitigations));
+  const mitigationBlock = mitigations.length > 0
+    ? `\n\nMitigation:\n${mitigations.map(item => `- ${item}`).join('\n')}`
+    : '';
+  const descriptionSources = asArray(sourceGroup.descriptionSources).filter(source => source?.text || source?.evidenceLines?.length > 0);
+  const impactSources = asArray(sourceGroup.impactSources).filter(source => source?.text || source?.evidenceLines?.length > 0);
+  const hasScopedTextSources = descriptionSources.length > 1 || impactSources.length > 1;
+  const assetsBlock = hasScopedTextSources
+    ? ''
+    : `Affected Assets:\n${formatSourceGroupAssets(sourceGroup.endpointDetails)}\n\n`;
+
+  return `${title}${idLabel}:\n${assetsBlock}CVEs: ${cveIds.length > 0 ? cveIds.join(', ') : 'None'}${formatSourceGroupTextBlock('Description', descriptionSources, sourceGroup.endpointDetails)}${formatSourceGroupTextBlock('Impact', impactSources, sourceGroup.endpointDetails)}${mitigationBlock}`;
+};
+
+const buildSourceGroupsBlock = (ticket) => {
+  const sourceGroups = Array.isArray(ticket.sourceGroups)
+    ? ticket.sourceGroups.filter(sourceGroup => sourceGroup && sourceGroup.title)
+    : [];
+  if (sourceGroups.length === 0) return '';
+
+  const listTitle = cleanText(ticket.title || 'Compacted Vulnerabilities');
+  return `\n\nList of ${listTitle}:\n\n${sourceGroups.map(buildSourceGroupSection).join('\n\n')}`;
+};
+
+const buildActionRequiredMarkdown = (ticket) => {
+  const target = getTicketUpgradeTarget(ticket);
+  const targetMitigation = target
+    ? `Upgrade to ${target.software} version ${target.version} or later.`
+    : sortStrings(ticket.allMitigations || [])[0] || 'Review the affected finding and apply the recommended remediation.';
+  const sourceGroups = asArray(ticket.sourceGroups).filter(sourceGroup => sourceGroup && sourceGroup.title);
+  const cveIds = sortStrings([
+    ...(asArray(ticket.cveIds)),
+    ...(asArray(ticket.allCVEs).map(cve => cve?.vulnerability_id || cve?.name || cve?.id || cve)),
+  ]);
+  const descriptionSources = collectAppendixSources(sourceGroups, 'descriptionSources');
+  const impactSources = collectAppendixSources(sourceGroups, 'impactSources');
+  const cveBlock = cveIds.length > 0 ? cveIds.join(', ') : 'None';
+  const defectDojoContextBlock = formatDefectDojoContext(ticket);
+
+  return `Vulnerability Overview:\nThe endpoints listed below are running outdated software and require patching.${defectDojoContextBlock}\n\n**Target Mitigation:**\n${targetMitigation}\n\n**Affected Assets & Ports:**\n\n${formatAffectedAssetsAndPorts(ticket.endpointDetails || [])}\n\n**Appendix:** Vulnerability Details\n**Associated CVEs:** ${cveBlock}${formatAppendixTextBlock('DefectDojo Description', descriptionSources)}${formatAppendixTextBlock('Impact', impactSources)}`;
+};
+
 const buildSuperTicketMarkdown = (ticket) => {
+  if (asArray(ticket.sourceGroups).length > 0 || getTicketUpgradeTarget(ticket)) {
+    return buildActionRequiredMarkdown(ticket);
+  }
+
+  const defectDojoContextBlock = formatDefectDojoContext(ticket);
+  const sourceGroupsBlock = buildSourceGroupsBlock(ticket);
+  if (sourceGroupsBlock) {
+    return `**Vulnerability Overview:**\nThe targeted software is out of date and affected by one or more vulnerabilities. Please apply the mitigation to the endpoints listed below.${defectDojoContextBlock}${sourceGroupsBlock}`;
+  }
+
   const endpointsByHost = new Map();
 
-  ticket.endpointDetails.forEach(detail => {
+  (ticket.endpointDetails || []).forEach(detail => {
     if (!endpointsByHost.has(detail.host)) endpointsByHost.set(detail.host, []);
     endpointsByHost.get(detail.host).push(detail);
   });
@@ -875,27 +1465,140 @@ const buildSuperTicketMarkdown = (ticket) => {
         })
         .join('\n');
 
-      return `Host: ${host}\n${endpointLines}`;
+      return `**Host:** ${host}\n${endpointLines}`;
     })
     .join('\n\n');
 
+  const sourceTitles = Array.isArray(ticket.allTitles) ? ticket.allTitles.filter(Boolean) : [];
+  const sourceTitlesBlock = sourceTitles.length > 0
+    ? `\n\n**Source Titles:**\n${sourceTitles.map(title => `- ${title}`).join('\n')}`
+    : '';
+  const allCveIds = Array.isArray(ticket.allCVEs)
+    ? ticket.allCVEs.map(item => item?.vulnerability_id || item?.name || item?.id || item).filter(Boolean)
+    : [];
+  const cveBlock = allCveIds.length > 0
+    ? `\n\n**CVEs:**\n${allCveIds.join(', ')}`
+    : '';
   const mitigationBlock = ticket.allMitigations.length > 0
     ? `\n\n**${ticket.allMitigations.length === 1 ? 'Mitigation' : 'Mitigations'}:**\n${ticket.allMitigations.map(item => `- ${item}`).join('\n')}`
     : '';
 
   const descriptionBlock = formatTicketTextSection('Description', ticket.allDescriptionSources || ticket.allDescriptions || []);
   const impactBlock = formatTicketTextSection('Impact', ticket.allImpactSources || ticket.allImpacts || []);
-  const defectDojoContextBlock = formatDefectDojoContext(ticket);
 
-  return `**Vulnerability Overview:**\nThe targeted software is out of date and affected by one or more vulnerabilities. Please apply the mitigation to the endpoints listed below.${defectDojoContextBlock}${descriptionBlock}${impactBlock}${mitigationBlock}\n\n**Affected Assets & Details:**\n\n${hostBlocks}`;
+  return `**Vulnerability Overview:**\nThe targeted software is out of date and affected by one or more vulnerabilities. Please apply the mitigation to the endpoints listed below.${defectDojoContextBlock}${sourceTitlesBlock}${cveBlock}${descriptionBlock}${impactBlock}${mitigationBlock}\n\n**Affected Assets & Details:**\n\n${hostBlocks}`;
+};
+
+const normalizeBackendCveGroupForDisplay = (group) => {
+  const backendCves = Array.isArray(group.allCVEs)
+    ? group.allCVEs.map(item => item?.vulnerability_id || item?.name || item?.id || item).filter(Boolean)
+    : [];
+  const cveIds = backendCves.length > 0
+    ? backendCves
+    : (Array.isArray(group.cveIds) ? group.cveIds.filter(Boolean) : []);
+  const cveLabel = cveIds.length > 0 ? cveIds.join(', ') : (group.cveId || 'No CVE');
+  const findingStates = Array.isArray(group.findingStates) ? group.findingStates : [];
+  const endpointDetails = Array.isArray(group.endpointDetails) && group.endpointDetails.length > 0
+    ? group.endpointDetails
+    : findingStates.map(state => ({
+      endpoint: state.endpoint || 'Unknown endpoint',
+      label: state.endpoint || 'Unknown endpoint',
+      host: state.endpoint || 'Unknown endpoint',
+      severity: state.severity || group.severity || 'Info',
+      cves: state.cveIds?.length > 0 ? state.cveIds : (cveIds.length > 0 ? cveIds : (group.cveId ? [group.cveId] : [])),
+      mitigations: state.mitigated ? ['Mitigated in DefectDojo'] : [],
+      findingIds: [state.findingId],
+      mitigated: Boolean(state.mitigated),
+    }));
+  const originalIds = getCompactedFindingIds({
+    ...group,
+    findingStates,
+    endpointDetails,
+  });
+  const sourceFindingCount = getCompactedFindingCount({ ...group, originalIds, findingStates, endpointDetails });
+  const route = {
+    projectId: group.productId || '',
+    projectName: group.productName || '',
+    engagementId: group.engagementId || '',
+    engagementName: group.engagementName || '',
+  };
+  const compactedSyncKey = group.compactedSyncKey || group.redmineTicketKey || group.groupKey;
+  const displayTicket = {
+    title: group.title || (group.cveId ? `${cveLabel} - ${group.currentStatus || 'active'}` : findingStates[0]?.title || cveLabel),
+    allTitles: Array.isArray(group.allTitles) ? group.allTitles : findingStates.map(state => state.title).filter(Boolean),
+    allCVEs: cveIds.length > 0
+      ? cveIds.map(vulnerability_id => ({ vulnerability_id }))
+      : (group.cveId ? [{ vulnerability_id: group.cveId }] : []),
+    allMitigations: Array.isArray(group.allMitigations) ? group.allMitigations : findingStates.filter(state => state.mitigated).map(state => `Finding ${state.findingId} mitigated`),
+    allDescriptionSources: group.allDescriptionSources,
+    allImpactSources: group.allImpactSources,
+    allDescriptions: Array.isArray(group.allDescriptions) ? group.allDescriptions : [],
+    allImpacts: Array.isArray(group.allImpacts) ? group.allImpacts : [],
+    endpointDetails,
+    sourceGroups: Array.isArray(group.sourceGroups) ? group.sourceGroups : [],
+    defectDojoProjectId: route.projectId,
+    defectDojoProjectName: route.projectName,
+    defectDojoEngagementId: route.engagementId,
+    defectDojoEngagementName: route.engagementName,
+  };
+  const redmineSubject = buildActionRequiredSubject(displayTicket) || group.redmineSubject || group.subject;
+
+  return {
+    id: compactedSyncKey,
+    compactedSyncKey,
+    compactGroupId: compactedSyncKey,
+    compactSourceKey: group.compactSourceKey,
+    compactFamilyKey: group.compactFamilyKey,
+    compactFamilyTitle: group.compactFamilyTitle,
+    compactReason: group.compactReason,
+    legacySyncKeys: Array.isArray(group.legacySyncKeys) ? group.legacySyncKeys : [],
+    redmineSubject,
+    subject: redmineSubject,
+    title: displayTicket.title,
+    severity: group.severity || 'Info',
+    count: sourceFindingCount,
+    findingCount: sourceFindingCount,
+    sourceFindingCount,
+    originalIds,
+    allEndpoints: Array.isArray(group.allEndpoints) ? group.allEndpoints : (group.affectedEndpoints || []),
+    allCVEs: cveIds.length > 0
+      ? cveIds.map(vulnerability_id => ({ vulnerability_id }))
+      : (group.cveId ? [{ vulnerability_id: group.cveId }] : []),
+    allMitigations: displayTicket.allMitigations,
+    allDescriptions: displayTicket.allDescriptions,
+    allImpacts: displayTicket.allImpacts,
+    allDescriptionSources: displayTicket.allDescriptionSources,
+    allImpactSources: displayTicket.allImpactSources,
+    allTitles: Array.isArray(group.allTitles) ? group.allTitles : findingStates.map(state => state.title).filter(Boolean),
+    endpointDetails,
+    sourceGroups: displayTicket.sourceGroups,
+    defectDojoProjectId: route.projectId,
+    defectDojoProjectName: route.projectName,
+    defectDojoEngagementId: route.engagementId,
+    defectDojoEngagementName: route.engagementName,
+    defectdojo_route: route,
+    serverRedmineSync: group.redmineTicketId ? {
+      action: group.redmineStatus && ['closed', 'done'].includes(normalizeRedmineStatus(group.redmineStatus)) ? 'existing_closed' : 'existing_open',
+      issueId: group.redmineTicketId,
+      status: group.redmineStatus,
+      statusId: group.redmineStatusId,
+      findingIds: originalIds,
+    } : null,
+    currentStatus: group.currentStatus,
+    mitigationStates: findingStates,
+    superTicketMarkdown: group.superTicketMarkdown || buildSuperTicketMarkdown(displayTicket),
+  };
 };
 
 function App() {
   const [findings, setFindings] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [pulling, setPulling] = useState(false);
   const [activeFilter, setActiveFilter] = useState('All');
-  const [selectedProductFilter, setSelectedProductFilter] = useState('All');
+  const [selectedProductId, setSelectedProductId] = useState('');
+  const [selectedEngagementId, setSelectedEngagementId] = useState('');
+  const [dashboardSummary, setDashboardSummary] = useState(null);
+  const [compactedCveFindings, setCompactedCveFindings] = useState(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
   const [config, setConfig] = useState(() => createDefaultConfig());
   const [currentHash, setCurrentHash] = useState(window.location.hash);
   const [selectedFinding, setSelectedFinding] = useState(null);
@@ -910,9 +1613,6 @@ function App() {
     localStorage.removeItem('defectdojo_redmine_sync');
   }, []);
   
-  const [logs, setLogs] = useState([]);
-  const [showLogs, setShowLogs] = useState(false);
-  const logsEndRef = useRef(null);
   const findingsRefreshRef = useRef({ inFlight: false, queued: false });
   const dashboardSyncVersionRef = useRef(null);
   const dashboardSyncReconnectRef = useRef(0);
@@ -964,6 +1664,36 @@ function App() {
     }
 
     return nextFindings;
+  };
+
+  const buildScopedQuery = () => {
+    const params = new URLSearchParams();
+    if (selectedProductId) params.set('productId', selectedProductId);
+    if (selectedEngagementId) params.set('engagementId', selectedEngagementId);
+    if (activeFilter !== 'All') params.set('severity', activeFilter);
+    const query = params.toString();
+    return query ? `?${query}` : '';
+  };
+
+  const fetchDashboardData = async ({ silent = false } = {}) => {
+    if (!user) return;
+    if (!silent) setDashboardLoading(true);
+    try {
+      const query = buildScopedQuery();
+      const [summaryRes, cveRes] = await Promise.all([
+        apiFetch(`/dashboard/summary${query}`),
+        apiFetch(`/compacted-cves${query}`),
+      ]);
+      if (summaryRes.ok) setDashboardSummary(await summaryRes.json());
+      if (cveRes.ok) {
+        const groups = await cveRes.json();
+        setCompactedCveFindings(Array.isArray(groups) ? groups.map(normalizeBackendCveGroupForDisplay) : []);
+      }
+    } catch (err) {
+      console.warn('Unable to fetch dashboard summary:', err);
+    } finally {
+      if (!silent) setDashboardLoading(false);
+    }
   };
 
   const fetchConfig = async () => {
@@ -1146,16 +1876,6 @@ function App() {
     }
   };
 
-  const fetchLogs = async () => {
-    try {
-      const res = await apiFetch('/logs');
-      const data = await res.json();
-      setLogs(data);
-    } catch (err) {
-      console.error('Error fetching logs:', err);
-    }
-  };
-
   const fetchRedmineSyncStatus = async () => {
     try {
       const res = await apiFetch('/redmine/sync/status');
@@ -1167,68 +1887,6 @@ function App() {
       });
     } catch (err) {
       console.warn('Unable to fetch Redmine sync status:', err);
-    }
-  };
-
-  const pullFromApi = async (options = {}) => {
-    const pullOptions = options && typeof options === 'object' && !options.nativeEvent ? options : {};
-    const {
-      showSuccessAlert = true,
-      showFailureAlert = true,
-      refreshFindingsAfterPull = true,
-      filters = config.pullFilters,
-    } = pullOptions;
-
-    if (!config.defectDojoUrl || !config.defectDojoApiKey) {
-      if (showFailureAlert) alert('Please configure DefectDojo URL and API Key first.');
-      setHashRoute('#settings');
-      return null;
-    }
-
-    try {
-      await apiFetch('/logs', { method: 'DELETE' });
-      setLogs([]);
-    } catch (err) {
-      console.warn('Unable to clear backend logs before pull:', err);
-    }
-
-    setPulling(true);
-    try {
-      const res = await apiFetch('/pull', {
-        method: 'POST',
-        body: JSON.stringify({
-          url: config.defectDojoUrl,
-          apiKey: config.defectDojoApiKey,
-          filters
-        })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        const refreshedFindings = refreshFindingsAfterPull
-          ? await loadFindingsFromApi()
-          : [];
-
-        if (refreshFindingsAfterPull) {
-          setFindings(refreshedFindings);
-        }
-
-        if (showSuccessAlert) {
-          alert(`Successfully pulled ${data.count} findings!`);
-        }
-
-        return { data, findings: refreshedFindings };
-      } else {
-        if (showFailureAlert) {
-          alert(`Error: ${data.error || 'Failed to pull'}\n${JSON.stringify(data.details || '')}`);
-        }
-        return null;
-      }
-    } catch (err) {
-      console.error('Error pulling from API:', err);
-      if (showFailureAlert) alert('Failed to connect to backend server.');
-      return null;
-    } finally {
-      setPulling(false);
     }
   };
 
@@ -1250,9 +1908,14 @@ function App() {
     return localSync;
   };
 
-  const getStoredRedmineSync = (finding) => (
-    chooseDashboardRedmineSync(redmineSyncByTicket[getTicketActionId(finding)], finding.serverRedmineSync)
-  );
+  const getStoredRedmineSync = (finding) => {
+    const candidateKeys = [
+      getTicketActionId(finding),
+      ...(Array.isArray(finding.legacySyncKeys) ? finding.legacySyncKeys : []),
+    ].filter(Boolean);
+    const localSync = candidateKeys.map(key => redmineSyncByTicket[key]).find(Boolean);
+    return chooseDashboardRedmineSync(localSync, finding.serverRedmineSync);
+  };
 
   const getKnownRedmineIssueId = (finding) => {
     const sync = getStoredRedmineSync(finding);
@@ -1330,6 +1993,7 @@ function App() {
           severity: finding.severity || '',
           syncKey: getTicketActionId(finding),
           issueId: getKnownRedmineIssueId(finding),
+          legacySyncKeys: finding.legacySyncKeys || [],
           findingIds: finding.originalIds || [],
           route: defectDojoRoute,
         },
@@ -1434,55 +2098,6 @@ function App() {
     }
   };
 
-  const applyRedmineTicketStatuses = (ticketStatuses = []) => {
-    setRedmineSyncByTicket(prev => {
-      const next = { ...prev };
-      ticketStatuses.forEach(ticketStatus => {
-        const previous = next[ticketStatus.ticketKey] || {};
-        if (ticketStatus.action === 'check_failed') {
-          next[ticketStatus.ticketKey] = {
-            ...previous,
-            action: previous.action || 'check_failed',
-            lastCheckError: ticketStatus.error || 'Check failed',
-            checkedAt: new Date().toISOString(),
-          };
-          return;
-        }
-
-        const resolvedProjectLabel = ticketStatus.resolvedProject?.project?.name
-          || ticketStatus.resolvedProject?.name
-          || ticketStatus.resolvedProject?.identifier
-          || previous.projectName
-          || '';
-
-        const nextSync = {
-          ...previous,
-          action: (ticketStatus.action === 'not_found' && previous.action === 'staged')
-            ? 'staged'
-            : ticketStatus.action,
-          status: ticketStatus.status || ticketStatus.issue?.status?.name || previous.status,
-          projectName: resolvedProjectLabel,
-          projectMissing: Boolean(ticketStatus.projectMissing),
-          lastCheckError: '',
-          checkedAt: new Date().toISOString(),
-        };
-
-        if (ticketStatus.action === 'not_found') {
-          nextSync.issueId = undefined;
-          nextSync.issueUrl = undefined;
-          nextSync.isClosed = false;
-        } else {
-          nextSync.issueId = ticketStatus.issueId || ticketStatus.issue?.id || previous.issueId;
-          nextSync.issueUrl = ticketStatus.issueUrl || previous.issueUrl;
-          nextSync.isClosed = ticketStatus.action === 'existing_closed' || Boolean(ticketStatus.isClosed);
-        }
-
-        next[ticketStatus.ticketKey] = nextSync;
-      });
-      return next;
-    });
-  };
-
   useEffect(() => {
     if (user) {
       let active = true;
@@ -1493,8 +2108,8 @@ function App() {
           fetchConfig();
           fetchConfigBackups();
         }
+        fetchDashboardData({ silent: true });
         fetchRedmineSyncStatus();
-        fetchLogs();
       });
 
       return () => {
@@ -1502,6 +2117,7 @@ function App() {
       };
     }
     return undefined;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   useEffect(() => {
@@ -1551,6 +2167,7 @@ function App() {
             fetchRedmineSyncStatus();
             if (previousVersion !== null && data.version !== previousVersion) {
               fetchFindings({ silent: true });
+              fetchDashboardData({ silent: true });
             }
           }
         });
@@ -1575,6 +2192,7 @@ function App() {
       clearTimeout(reconnectTimer);
       abortController?.abort();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   useEffect(() => {
@@ -1596,10 +2214,16 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (currentHash === '#settings' && user?.role !== 'admin') {
+    if ((currentHash === '#settings' || currentHash === '#mitigation-review') && user?.role !== 'admin') {
       setHashRoute('');
     }
   }, [currentHash, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    queueMicrotask(() => fetchDashboardData({ silent: true }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, selectedProductId, selectedEngagementId, activeFilter]);
 
   const handleLogout = () => {
     apiFetch('/logout', { method: 'POST' }).catch(() => {});
@@ -1617,24 +2241,9 @@ function App() {
     setUser(loggedInUser);
   };
 
-  useEffect(() => {
-    let interval;
-    if (showLogs) {
-      queueMicrotask(fetchLogs);
-      interval = setInterval(fetchLogs, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [showLogs]);
-
-  useEffect(() => {
-    if (logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [logs]);
-
-  const uniqueProducts = Array.from(new Set(
-    findings.map(f => getDefectDojoRoute(f).projectName).filter(Boolean)
-  )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const availableProducts = dashboardSummary?.filters?.products || [];
+  const availableEngagements = dashboardSummary?.filters?.engagements || [];
+  const uniqueProducts = availableProducts.map(product => product.name).filter(Boolean);
 
   let filteredFindings = findings;
   
@@ -1642,28 +2251,45 @@ function App() {
     filteredFindings = filteredFindings.filter(f => f.severity === activeFilter);
   }
 
-  if (selectedProductFilter !== 'All') {
-    filteredFindings = filteredFindings.filter(f => getDefectDojoRoute(f).projectName === selectedProductFilter);
+  if (selectedProductId) {
+    filteredFindings = filteredFindings.filter(f => {
+      const route = getDefectDojoRoute(f);
+      return routeValueMatches(
+        selectedProductId,
+        route.projectId,
+        route.projectName,
+        route.productKey,
+        getEntityRouteKey('product', route.projectId, route.projectName)
+      );
+    });
+  }
+
+  if (selectedEngagementId) {
+    filteredFindings = filteredFindings.filter(f => {
+      const route = getDefectDojoRoute(f);
+      return routeValueMatches(
+        selectedEngagementId,
+        route.engagementId,
+        route.engagementName,
+        route.engagementKey,
+        getEntityRouteKey('engagement', route.engagementId, route.engagementName)
+      );
+    });
   }
 
   const getCompactedFindings = (findingsToCompact) => {
     const groups = new Map();
     findingsToCompact.forEach(f => {
       const defectDojoRoute = getDefectDojoRoute(f);
-      const routeProjectKey = defectDojoRoute.projectId
-        || defectDojoRoute.projectName
-        || config.pullFilters?.test__engagement__product
-        || '';
-      const routeEngagementKey = defectDojoRoute.engagementId
-        || defectDojoRoute.engagementName
-        || config.pullFilters?.test__engagement
-        || '';
-      const key = `${getCompactGroupKey(f)}|route|${normalizeForGrouping(routeProjectKey)}|${normalizeForGrouping(routeEngagementKey)}`;
+      const fingerprint = getCompactFingerprint(f, defectDojoRoute, config);
+      const key = fingerprint.groupKey;
       const target = parseUpgradeTarget(f);
-      const cves = collectVulnerabilityIds(f);
+      const cves = fingerprint.cves;
       const mitigation = getMitigationText(f);
       const description = getDescriptionText(f);
       const impact = getImpactText(f);
+      const rawDescription = f.description || '';
+      const rawImpact = f.impact || '';
       const endpoints = Array.isArray(f.endpoints) && f.endpoints.length > 0
         ? f.endpoints
         : [{ id: 'N/A', host: 'Unknown host' }];
@@ -1674,12 +2300,18 @@ function App() {
           compactSourceKey: key,
           compactGroupId: `compact-${key}`,
           originalIds: [],
+          compactFamilyKeysSet: new Set(),
+          compactFamilyTitlesSet: new Set(),
+          compactReasonsSet: new Set(),
+          legacySyncSourceMap: new Map(),
+          softwareFamilies: new Set(),
           allEndpointsMap: new Map(),
           allCVEsSet: new Set(),
           allMitigationsSet: new Set(),
           allDescriptionsMap: new Map(),
           allImpactsMap: new Map(),
           allTitlesSet: new Set(),
+          sourceGroupsMap: new Map(),
           defectDojoProjectIdsSet: new Set(),
           defectDojoProjectNamesSet: new Set(),
           defectDojoEngagementIdsSet: new Set(),
@@ -1687,6 +2319,9 @@ function App() {
           endpointDetailMap: new Map(),
           highestUpgradeTarget: null,
           serverRedmineSync: null,
+          findingStates: [],
+          activeCount: 0,
+          mitigatedCount: 0,
           count: 0,
         });
       }
@@ -1696,11 +2331,40 @@ function App() {
       group.count += 1;
       group.originalIds.push(f.id);
       group.severity = highestSeverity(group.severity || 'Info', f.severity || 'Info');
-      group.allTitlesSet.add(cleanText(f.title || f.name || 'Untitled finding'));
+      if (fingerprint.compactFamilyKey) group.compactFamilyKeysSet.add(fingerprint.compactFamilyKey);
+      if (fingerprint.compactFamilyTitle) group.compactFamilyTitlesSet.add(fingerprint.compactFamilyTitle);
+      if (fingerprint.compactReason) group.compactReasonsSet.add(fingerprint.compactReason);
+      if (fingerprint.softwareFamily) group.softwareFamilies.add(fingerprint.softwareFamily);
+      const legacyGroupKey = getLegacyFindingGroupKey(f, defectDojoRoute, config);
+      if (!group.legacySyncSourceMap.has(legacyGroupKey)) group.legacySyncSourceMap.set(legacyGroupKey, new Set());
+      group.legacySyncSourceMap.get(legacyGroupKey).add(f.id);
+      const sourceTitle = cleanText(f.title || f.name || 'Untitled finding');
+      group.allTitlesSet.add(sourceTitle);
       cves.forEach(cve => group.allCVEsSet.add(cve));
       if (mitigation) group.allMitigationsSet.add(mitigation);
-      addTextSource(group.allDescriptionsMap, description, f.id);
-      addTextSource(group.allImpactsMap, impact, f.id);
+      addTextSource(group.allDescriptionsMap, rawDescription || description, f.id);
+      addTextSource(group.allImpactsMap, rawImpact || impact, f.id);
+      if (!group.sourceGroupsMap.has(sourceTitle)) {
+        group.sourceGroupsMap.set(sourceTitle, {
+          title: sourceTitle,
+          findingIds: [],
+          severity: f.severity || 'Info',
+          cveIds: new Set(),
+          endpointDetailMap: new Map(),
+          descriptionsMap: new Map(),
+          impactsMap: new Map(),
+          mitigations: new Set(),
+          activeCount: 0,
+          mitigatedCount: 0,
+        });
+      }
+      const sourceGroup = group.sourceGroupsMap.get(sourceTitle);
+      sourceGroup.findingIds.push(f.id);
+      sourceGroup.severity = highestSeverity(sourceGroup.severity, f.severity || 'Info');
+      cves.forEach(cve => sourceGroup.cveIds.add(cve));
+      if (mitigation) sourceGroup.mitigations.add(mitigation);
+      addTextSource(sourceGroup.descriptionsMap, rawDescription || description, f.id);
+      addTextSource(sourceGroup.impactsMap, rawImpact || impact, f.id);
       if (defectDojoRoute.projectId) group.defectDojoProjectIdsSet.add(defectDojoRoute.projectId);
       if (defectDojoRoute.projectName) group.defectDojoProjectNamesSet.add(defectDojoRoute.projectName);
       if (defectDojoRoute.engagementId) group.defectDojoEngagementIdsSet.add(defectDojoRoute.engagementId);
@@ -1731,16 +2395,54 @@ function App() {
         detail.findingIds.push(f.id);
         cves.forEach(cve => detail.cves.add(cve));
         if (mitigation) detail.mitigations.add(mitigation);
+
+        if (!sourceGroup.endpointDetailMap.has(keyForEndpoint)) {
+          sourceGroup.endpointDetailMap.set(keyForEndpoint, {
+            endpoint,
+            label: endpointLabel(endpoint),
+            host: endpointHost(endpoint),
+            severity: f.severity || 'Info',
+            cves: new Set(),
+            mitigations: new Set(),
+            findingIds: [],
+          });
+        }
+
+        const sourceDetail = sourceGroup.endpointDetailMap.get(keyForEndpoint);
+        sourceDetail.severity = highestSeverity(sourceDetail.severity, f.severity || 'Info');
+        sourceDetail.findingIds.push(f.id);
+        cves.forEach(cve => sourceDetail.cves.add(cve));
+        if (mitigation) sourceDetail.mitigations.add(mitigation);
+      });
+
+      const mitigatedState = Boolean(f.mitigated || f.is_mitigated);
+      if (mitigatedState) {
+        group.mitigatedCount += 1;
+        sourceGroup.mitigatedCount += 1;
+      } else if (f.active !== false) {
+        group.activeCount += 1;
+        sourceGroup.activeCount += 1;
+      }
+      group.findingStates.push({
+        findingId: f.id,
+        title: cleanText(f.title || f.name || 'Untitled finding'),
+        severity: f.severity || 'Info',
+        mitigated: mitigatedState,
+        active: f.active !== false && !mitigatedState,
+        endpoint: endpoints.map(endpointLabel).join(', '),
+        cveIds: cves,
+        mitigationConfirmedAt: f.mitigation_confirmed_at || f.mitigation_confirmed || f.mitigated_at || null,
       });
     });
 
     return Array.from(groups.values()).map(group => {
-      const allMitigations = compactMitigations(group.allMitigationsSet);
+      const allMitigations = sortStrings(group.allMitigationsSet);
       const allDescriptionSources = sortTextSources(group.allDescriptionsMap);
       const allImpactSources = sortTextSources(group.allImpactsMap);
       const allDescriptions = allDescriptionSources.map(source => source.text);
       const allImpacts = allImpactSources.map(source => source.text);
       const allTitles = sortStrings(group.allTitlesSet);
+      const softwareFamily = sortStrings(group.softwareFamilies)[0] || '';
       const defectDojoProjectIds = sortStrings(group.defectDojoProjectIdsSet);
       const defectDojoProjectNames = sortStrings(group.defectDojoProjectNamesSet);
       const defectDojoEngagementIds = sortStrings(group.defectDojoEngagementIdsSet);
@@ -1753,32 +2455,49 @@ function App() {
       if (defectDojoEngagementIds.length === 0 && pullEngagementId) defectDojoEngagementIds.push(pullEngagementId);
       const compactedSyncKey = buildCompactedSyncKey({
         groupKey: group.compactSourceKey || group.compactGroupId || '',
-        findingIds: originalIds,
         productIds: defectDojoProjectIds,
         engagementIds: defectDojoEngagementIds,
       });
+      const legacySyncKeys = Array.from(new Set([
+        buildLegacyCompactedSyncKey({
+          groupKey: group.compactSourceKey || group.compactGroupId || '',
+          findingIds: originalIds,
+          productIds: defectDojoProjectIds,
+          engagementIds: defectDojoEngagementIds,
+        }),
+        ...Array.from(group.legacySyncSourceMap.entries()).map(([legacyGroupKey, legacyFindingIds]) => (
+          buildLegacyCompactedSyncKey({
+            groupKey: legacyGroupKey,
+            findingIds: sortFindingIds(legacyFindingIds),
+            productIds: defectDojoProjectIds,
+            engagementIds: defectDojoEngagementIds,
+          })
+        )),
+      ].filter(key => key && key !== compactedSyncKey)));
+      const compactFamilyTitle = sortStrings(group.compactFamilyTitlesSet)[0] || '';
+      const compactFamilyKey = sortStrings(group.compactFamilyKeysSet)[0] || group.compactSourceKey || '';
+      const compactReason = sortStrings(group.compactReasonsSet)[0] || 'strict-fingerprint';
 
-      const endpointDetails = Array.from(group.endpointDetailMap.values())
-        .map(detail => ({
-          endpoint: detail.endpoint,
-          label: detail.label,
-          host: detail.host,
-          severity: detail.severity,
-          cves: sortStrings(detail.cves),
-          mitigations: compactMitigations(detail.mitigations),
-          findingIds: detail.findingIds,
-        }))
-        .sort((a, b) => (
-          a.host.localeCompare(b.host, undefined, { numeric: true })
-          || a.label.localeCompare(b.label, undefined, { numeric: true })
-        ));
+      const endpointDetails = finalizeEndpointDetails(group.endpointDetailMap);
+      const sourceGroups = finalizeSourceGroups(group.sourceGroupsMap);
+      const currentStatus = group.activeCount > 0 && group.mitigatedCount > 0
+        ? 'mixed'
+        : group.activeCount > 0
+          ? 'active'
+          : 'mitigated';
 
       const compactedTicket = {
         ...group,
         compactedSyncKey,
         compactGroupId: compactedSyncKey,
+        compactFamilyKey,
+        compactFamilyTitle,
+        compactReason,
+        legacySyncKeys,
         originalIds,
-        title: chooseDisplayTitle(allTitles, group.title),
+        findingCount: originalIds.length || group.count || 1,
+        sourceFindingCount: originalIds.length || group.count || 1,
+        title: chooseDisplayTitle(allTitles, compactFamilyTitle || getSoftwareFamilyTitle(softwareFamily, allTitles) || group.title),
         description: allDescriptions[0] || group.description,
         impact: allImpacts[0] || group.impact,
         allEndpoints: Array.from(group.allEndpointsMap.values()),
@@ -1789,6 +2508,8 @@ function App() {
         allDescriptionSources,
         allImpactSources,
         allTitles,
+        sourceGroups,
+        softwareFamily,
         defectDojoProjectId: defectDojoProjectIds[0] || '',
         defectDojoProjectName: defectDojoProjectNames[0] || '',
         defectDojoEngagementId: defectDojoEngagementIds[0] || '',
@@ -1798,14 +2519,23 @@ function App() {
         allDefectDojoEngagementIds: defectDojoEngagementIds,
         allDefectDojoEngagementNames: defectDojoEngagementNames,
         endpointDetails,
+        currentStatus,
       };
+      compactedTicket.redmineSubject = buildActionRequiredSubject(compactedTicket);
+      compactedTicket.subject = compactedTicket.redmineSubject;
 
       delete compactedTicket.allEndpointsMap;
+      delete compactedTicket.softwareFamilies;
       delete compactedTicket.allCVEsSet;
       delete compactedTicket.allMitigationsSet;
       delete compactedTicket.allDescriptionsMap;
       delete compactedTicket.allImpactsMap;
       delete compactedTicket.allTitlesSet;
+      delete compactedTicket.compactFamilyKeysSet;
+      delete compactedTicket.compactFamilyTitlesSet;
+      delete compactedTicket.compactReasonsSet;
+      delete compactedTicket.legacySyncSourceMap;
+      delete compactedTicket.sourceGroupsMap;
       delete compactedTicket.defectDojoProjectIdsSet;
       delete compactedTicket.defectDojoProjectNamesSet;
       delete compactedTicket.defectDojoEngagementIdsSet;
@@ -1820,9 +2550,14 @@ function App() {
     });
   };
 
-  const getFindingRedmineSync = (finding) => (
-    chooseDashboardRedmineSync(redmineSyncByTicket[getTicketActionId(finding)], finding.serverRedmineSync)
-  );
+  const getFindingRedmineSync = (finding) => {
+    const candidateKeys = [
+      getTicketActionId(finding),
+      ...(Array.isArray(finding.legacySyncKeys) ? finding.legacySyncKeys : []),
+    ].filter(Boolean);
+    const localSync = candidateKeys.map(key => redmineSyncByTicket[key]).find(Boolean);
+    return chooseDashboardRedmineSync(localSync, finding.serverRedmineSync);
+  };
 
   const getFindingIdentity = (finding, fallback = '') => {
     const identityParts = [
@@ -1840,9 +2575,11 @@ function App() {
     && getFindingIdentity(selectedFinding) === getFindingIdentity(finding, idx)
   );
 
-  const formatCountLabel = (count, singular, plural = `${singular}s`) => (
-    `${count} ${count === 1 ? singular : plural}`
-  );
+  const formatCountLabel = (count, singular, plural = `${singular}s`) => {
+    const normalizedCount = Number.parseInt(count, 10);
+    const safeCount = Number.isFinite(normalizedCount) ? normalizedCount : 0;
+    return `${safeCount} ${safeCount === 1 ? singular : plural}`;
+  };
 
   const formatRouteSummary = (finding) => {
     const parts = [];
@@ -1861,6 +2598,7 @@ function App() {
     const findingRedmineSync = getFindingRedmineSync(finding);
     const endpointCount = finding.allEndpoints?.length || 0;
     const cveCount = getFindingCveCount(finding);
+    const sourceFindingCount = getCompactedFindingCount(finding);
     const selected = isSelectedFinding(finding, idx);
 
     return (
@@ -1889,12 +2627,12 @@ function App() {
         </div>
       </div>
       <div className="finding-row-meta" aria-label="Finding summary">
-        {finding.count > 1 && <span>{formatCountLabel(finding.count, 'finding')}</span>}
+        <span>{formatCountLabel(sourceFindingCount, 'finding')}</span>
         <span>{formatCountLabel(endpointCount, 'endpoint')}</span>
         <span>{formatCountLabel(cveCount, 'CVE')}</span>
         <span>{finding.date || 'No date'}</span>
         {findingRedmineSync && (
-          <span className={`redmine-sync-badge ${findingRedmineSync.action}`}>
+          <span className={getRedmineSyncBadgeClass(findingRedmineSync)}>
             {getRedmineSyncLabel(findingRedmineSync)}
           </span>
         )}
@@ -1937,184 +2675,170 @@ function App() {
     );
   };
 
-  const renderFindingDetailPanel = () => {
-    if (!selectedFinding) {
-      return (
-        <aside className="finding-detail-panel empty" aria-label="Finding detail">
-          <Info size={28} className="empty-state-icon" />
-          <h2>Select a finding</h2>
-          <p>Choose a row to review endpoints, CVEs, mitigation, and raw JSON without losing your place in the list.</p>
-        </aside>
-      );
-    }
+  const renderFindingDetailModal = () => {
+    if (!selectedFinding) return null;
 
     const findingRedmineSync = getFindingRedmineSync(selectedFinding);
     const endpoints = selectedFinding.allEndpoints || [];
     const cves = selectedFinding.allCVEs || [];
     const mitigations = selectedFinding.allMitigations || [];
+    const sourceFindingCount = getCompactedFindingCount(selectedFinding);
 
     return (
-      <aside className="finding-detail-panel" aria-label="Selected finding detail">
-        <div className="finding-detail-header">
-          <div>
-            <span className={`severity-badge badge-${(selectedFinding.severity || 'Info').toLowerCase()}`}>
-              {selectedFinding.severity || 'Info'}
-            </span>
-            <h2>{selectedFinding.title}</h2>
-          </div>
-          <button
-            type="button"
-            className="icon-btn detail-close-btn"
-            onClick={() => setSelectedFinding(null)}
-            aria-label="Close finding details"
-            title="Close details"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="detail-status-row">
-          {selectedFinding.count > 1 && <span className="count-badge">{formatCountLabel(selectedFinding.count, 'finding')}</span>}
-          {findingRedmineSync && (
-            <span className={`redmine-sync-badge ${findingRedmineSync.action}`}>
-              {getRedmineSyncLabel(findingRedmineSync)}
-            </span>
-          )}
-          <span className="detail-date">{selectedFinding.date || 'No date'}</span>
-        </div>
-
-        <section className="detail-section">
-          <h3>DefectDojo Route</h3>
-          <div className="meta-value-list">
-            {(selectedFinding.defectDojoProjectId || selectedFinding.defectDojoProjectName) && (
-              <span className="endpoint-tag id">
-                Project: {formatRouteValue(selectedFinding.defectDojoProjectName, selectedFinding.defectDojoProjectId)}
+      <div className="modal-overlay" role="presentation" onClick={() => setSelectedFinding(null)}>
+        <div className="modal-content finding-detail-modal" role="dialog" aria-modal="true" aria-labelledby="finding-detail-title" onClick={e => e.stopPropagation()}>
+          <div className="finding-detail-header">
+            <div>
+              <span className={`severity-badge badge-${(selectedFinding.severity || 'Info').toLowerCase()}`}>
+                {selectedFinding.severity || 'Info'}
               </span>
-            )}
-            {(selectedFinding.defectDojoEngagementId || selectedFinding.defectDojoEngagementName) && (
-              <span className="endpoint-tag id">
-                Engagement: {formatRouteValue(selectedFinding.defectDojoEngagementName, selectedFinding.defectDojoEngagementId)}
-              </span>
-            )}
-            {!(selectedFinding.defectDojoProjectId || selectedFinding.defectDojoProjectName || selectedFinding.defectDojoEngagementId || selectedFinding.defectDojoEngagementName) && (
-              <p className="detail-empty-text">No route information available.</p>
-            )}
-          </div>
-        </section>
-
-        <section className="detail-section">
-          <h3>Description</h3>
-          {renderDetailTextList(selectedFinding.allDescriptions, selectedFinding.description)}
-        </section>
-
-        <section className="detail-section">
-          <h3>Impact</h3>
-          {renderDetailTextList(selectedFinding.allImpacts, selectedFinding.impact)}
-        </section>
-
-        <section className="detail-section">
-          <h3>Endpoints</h3>
-          <div className="meta-value-list">
-            {endpoints.length > 0 ? endpoints.map((ep, i) => {
-              const label = endpointLabel(ep);
-              return (
-                <span key={`${label}-${i}`} className={`endpoint-tag ${label.startsWith('ID:') ? 'id' : ''}`}>
-                  {label}
-                  {ep?.is_fallback && <small className="tag-note">(desc)</small>}
-                </span>
-              );
-            }) : <p className="detail-empty-text">No endpoints found.</p>}
-          </div>
-        </section>
-
-        {selectedFinding.endpointDetails?.length > 0 && (
-          <section className="detail-section">
-            <h3>Endpoint Details</h3>
-            <div className="endpoint-details-list">
-              {selectedFinding.endpointDetails.map((detail, i) => (
-                <div key={`${detail.label}-${i}`} className="endpoint-detail-row">
-                  <div className="endpoint-detail-main">
-                    <span className={`severity-badge detail-severity badge-${(detail.severity || 'Info').toLowerCase()}`}>
-                      {detail.severity || 'Info'}
-                    </span>
-                    <span className="endpoint-detail-target">{detail.label}</span>
-                  </div>
-                  <span className="endpoint-detail-cves">
-                    CVEs: {detail.cves.length > 0 ? detail.cves.join(', ') : 'None'}
-                  </span>
-                </div>
-              ))}
+              <h2 id="finding-detail-title">{selectedFinding.title}</h2>
             </div>
-          </section>
-        )}
-
-        <section className="detail-section">
-          <h3>CVEs</h3>
-          <div className="meta-value-list">
-            {cves.length > 0 ? cves.map((v, i) => (
-              <span key={i} className="cve-tag">{typeof v === 'string' ? v : v.vulnerability_id}</span>
-            )) : <p className="detail-empty-text">No CVEs listed.</p>}
-          </div>
-        </section>
-
-        <section className="detail-section">
-          <h3>Mitigation</h3>
-          {mitigations.length > 0 ? (
-            <div className="mitigation-list">
-              {mitigations.map((item, i) => (
-                <span key={i} className="mitigation-item">{item}</span>
-              ))}
-            </div>
-          ) : (
-            <p className="detail-empty-text">No mitigation provided.</p>
-          )}
-        </section>
-
-        {selectedFinding.superTicketMarkdown && (
-          <section className="detail-section">
-            <h3>Super Ticket Markdown</h3>
-            <div className="ticket-preview compact">
-              <pre>{selectedFinding.superTicketMarkdown}</pre>
-            </div>
-          </section>
-        )}
-
-        <section className="detail-section">
-          <h3>Raw JSON Preview</h3>
-          <div className="json-container compact">
-            <pre>{JSON.stringify(selectedFinding, null, 2)}</pre>
-          </div>
-        </section>
-
-        <div className="detail-actions">
-          {selectedFinding.superTicketMarkdown && user?.role === 'admin' && (
             <button
-              className="btn-secondary"
-              onClick={() => openRedmineIssue(selectedFinding)}
-              disabled={bulkOpeningRedmine || openingRedmineId === getTicketActionId(selectedFinding)}
+              type="button"
+              className="icon-btn detail-close-btn"
+              onClick={() => setSelectedFinding(null)}
+              aria-label="Close finding details"
+              title="Close details"
             >
-              <ExternalLink size={18} />
-              {bulkOpeningRedmine || openingRedmineId === getTicketActionId(selectedFinding) ? 'Opening...' : 'Open in Redmine'}
+              <X size={18} />
             </button>
+          </div>
+
+          <div className="detail-status-row">
+            <span className="count-badge">{formatCountLabel(sourceFindingCount, 'finding')}</span>
+            {findingRedmineSync && (
+              <span className={getRedmineSyncBadgeClass(findingRedmineSync)}>
+                {getRedmineSyncLabel(findingRedmineSync)}
+              </span>
+            )}
+            <span className="detail-date">{selectedFinding.date || 'No date'}</span>
+          </div>
+
+          <section className="detail-section">
+            <h3>DefectDojo Route</h3>
+            <div className="meta-value-list">
+              {(selectedFinding.defectDojoProjectId || selectedFinding.defectDojoProjectName) && (
+                <span className="endpoint-tag id">
+                  Project: {formatRouteValue(selectedFinding.defectDojoProjectName, selectedFinding.defectDojoProjectId)}
+                </span>
+              )}
+              {(selectedFinding.defectDojoEngagementId || selectedFinding.defectDojoEngagementName) && (
+                <span className="endpoint-tag id">
+                  Engagement: {formatRouteValue(selectedFinding.defectDojoEngagementName, selectedFinding.defectDojoEngagementId)}
+                </span>
+              )}
+              {!(selectedFinding.defectDojoProjectId || selectedFinding.defectDojoProjectName || selectedFinding.defectDojoEngagementId || selectedFinding.defectDojoEngagementName) && (
+                <p className="detail-empty-text">No route information available.</p>
+              )}
+            </div>
+          </section>
+
+          <section className="detail-section">
+            <h3>Description</h3>
+            {renderDetailTextList(selectedFinding.allDescriptions, selectedFinding.description)}
+          </section>
+
+          <section className="detail-section">
+            <h3>Impact</h3>
+            {renderDetailTextList(selectedFinding.allImpacts, selectedFinding.impact)}
+          </section>
+
+          <section className="detail-section">
+            <h3>Endpoints</h3>
+            <div className="meta-value-list">
+              {endpoints.length > 0 ? endpoints.map((ep, i) => {
+                const label = endpointLabel(ep);
+                return (
+                  <span key={`${label}-${i}`} className={`endpoint-tag ${label.startsWith('ID:') ? 'id' : ''}`}>
+                    {label}
+                    {ep?.is_fallback && <small className="tag-note">(desc)</small>}
+                  </span>
+                );
+              }) : <p className="detail-empty-text">No endpoints found.</p>}
+            </div>
+          </section>
+
+          {selectedFinding.endpointDetails?.length > 0 && (
+            <section className="detail-section">
+              <h3>Endpoint Details</h3>
+              <div className="endpoint-details-list">
+                {selectedFinding.endpointDetails.map((detail, i) => (
+                  <div key={`${detail.label}-${i}`} className="endpoint-detail-row">
+                    <div className="endpoint-detail-main">
+                      <span className={`severity-badge detail-severity badge-${(detail.severity || 'Info').toLowerCase()}`}>
+                        {detail.severity || 'Info'}
+                      </span>
+                      <span className="endpoint-detail-target">{detail.label}</span>
+                    </div>
+                    <span className="endpoint-detail-cves">
+                      CVEs: {detail.cves.length > 0 ? detail.cves.join(', ') : 'None'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
-          <button className="btn-primary" onClick={() => setSelectedFinding(null)}>Done</button>
+
+          <section className="detail-section">
+            <h3>CVEs</h3>
+            <div className="meta-value-list">
+              {cves.length > 0 ? cves.map((v, i) => (
+                <span key={i} className="cve-tag">{typeof v === 'string' ? v : v.vulnerability_id}</span>
+              )) : <p className="detail-empty-text">No CVEs listed.</p>}
+            </div>
+          </section>
+
+          <section className="detail-section">
+            <h3>Mitigation</h3>
+            {mitigations.length > 0 ? (
+              <div className="mitigation-list">
+                {mitigations.map((item, i) => (
+                  <span key={i} className="mitigation-item">{item}</span>
+                ))}
+              </div>
+            ) : (
+              <p className="detail-empty-text">No mitigation provided.</p>
+            )}
+          </section>
+
+          {selectedFinding.superTicketMarkdown && (
+            <section className="detail-section">
+              <h3>Super Ticket Markdown</h3>
+              <div className="ticket-preview compact">
+                <pre>{selectedFinding.superTicketMarkdown}</pre>
+              </div>
+            </section>
+          )}
+
+          <section className="detail-section">
+            <h3>Raw JSON Preview</h3>
+            <div className="json-container compact">
+              <pre>{JSON.stringify(selectedFinding, null, 2)}</pre>
+            </div>
+          </section>
+
+          <div className="detail-actions">
+            {selectedFinding.superTicketMarkdown && user?.role === 'admin' && (
+              <button
+                className="btn-secondary"
+                onClick={() => openRedmineIssue(selectedFinding)}
+                disabled={bulkOpeningRedmine || openingRedmineId === getTicketActionId(selectedFinding)}
+              >
+                <ExternalLink size={18} />
+                {bulkOpeningRedmine || openingRedmineId === getTicketActionId(selectedFinding) ? 'Opening...' : 'Open in Redmine'}
+              </button>
+            )}
+            <button className="btn-primary" onClick={() => setSelectedFinding(null)}>Done</button>
+          </div>
         </div>
-      </aside>
+      </div>
     );
   };
 
-  const displayFindings = getCompactedFindings(filteredFindings);
-  const compactedFindingsForStats = getCompactedFindings(findings);
-  const redmineCheckTickets = compactedFindingsForStats.filter(finding => finding.superTicketMarkdown);
-  const redmineSyncValues = redmineCheckTickets
-    .map(getFindingRedmineSync)
-    .filter(Boolean);
-  const dashboardStats = {
-    totalFindings: findings.length,
-    totalCompacted: compactedFindingsForStats.length,
-    ticketsCreated: redmineSyncValues.filter(isTicketCreatedOrInProgress).length,
-    ticketsClosed: redmineSyncValues.filter(isTicketClosedInRedmine).length,
-  };
+  const fallbackCompactedFindings = getCompactedFindings(filteredFindings);
+  const displayFindings = compactedCveFindings ?? fallbackCompactedFindings;
+  const compactedFindingsForStats = compactedCveFindings ?? getCompactedFindings(findings);
 
   const openSyncAllFilters = () => {
     if (user?.role !== 'admin') {
@@ -2122,7 +2846,7 @@ function App() {
       return;
     }
 
-    if (bulkOpeningRedmine || pulling) {
+    if (bulkOpeningRedmine) {
       return;
     }
 
@@ -2154,20 +2878,11 @@ function App() {
       return;
     }
 
-    if (bulkOpeningRedmine || pulling) {
+    if (bulkOpeningRedmine) {
       return;
     }
 
     const filtersForSync = createPullFiltersDraft(pullFilters);
-
-    const summary = {
-      created: 0,
-      existing_open: 0,
-      existing_closed: 0,
-      other: 0,
-      failed: [],
-    };
-    let stoppedMessage = '';
 
     setSyncAllProgress({
       phase: 'Starting',
@@ -2178,175 +2893,71 @@ function App() {
     });
     setBulkOpeningRedmine(true);
     try {
-      setSyncProgress({ phase: 'Pulling', message: 'Pulling matching findings from DefectDojo' });
-      const pullResult = await pullFromApi({
-        showSuccessAlert: false,
-        showFailureAlert: true,
-        refreshFindingsAfterPull: true,
-        filters: filtersForSync,
-      });
-
-      if (!pullResult) return;
-
-      const freshFindings = Array.isArray(pullResult.findings) ? pullResult.findings : [];
-      const tickets = getCompactedFindings(freshFindings).filter(finding => finding.superTicketMarkdown);
       setSyncProgress({
-        phase: 'Preparing',
-        current: 0,
-        total: tickets.length,
-        message: `Prepared ${tickets.length} compacted Redmine tickets`,
+        phase: 'Syncing',
+        message: 'Pulling DefectDojo data, syncing Redmine, and rechecking mitigations',
       });
-
-      if (tickets.length === 0) {
-        alert(`Pulled ${pullResult.data?.count || 0} DefectDojo findings, but no compacted tickets are available to sync to Redmine.`);
-        return;
-      }
-
-      const ticketRequests = tickets.map(finding => ({ finding, request: buildRedmineIssueRequest(finding) }));
-      const invalidTicket = ticketRequests.find(item => item.request.error);
-
-      if (invalidTicket) {
-        if (invalidTicket.request.openConfig) {
-          setHashRoute('#settings');
-        }
-        alert(`${invalidTicket.finding.title}\n\n${invalidTicket.request.error}`);
-        return;
-      }
 
       const normalizedConfig = normalizeConfig(config);
-      const ticketRefs = ticketRequests.map(({ finding, request }) => ({
-        ticketKey: getTicketActionId(finding),
-        subject: request.body.issue.subject,
-        syncKey: request.body.issue.syncKey,
-        issueId: getKnownRedmineIssueId(finding),
-        findingIds: request.body.issue.findingIds,
-        route: request.body.issue.route,
-      }));
-
-      setSyncProgress({
-        phase: 'Checking Redmine',
-        current: 0,
-        total: ticketRefs.length,
-        message: `Checking ${ticketRefs.length} Redmine tickets in batches`,
-      });
-
       const checkRes = await runWithTimeout(
-        (signal) => apiFetch('/redmine/issues/check', {
+        (signal) => apiFetch('/sync-all', {
           method: 'POST',
           body: JSON.stringify({
+            url: normalizedConfig.defectDojoUrl,
+            apiKey: normalizedConfig.defectDojoApiKey,
+            filters: filtersForSync,
             redmine: {
               url: normalizedConfig.redmineUrl,
               apiKey: normalizedConfig.redmineApiKey,
               projectId: normalizedConfig.redmineProjectId,
               trackerId: normalizedConfig.redmineTrackerId,
             },
-            tickets: ticketRefs,
           }),
           signal,
         }),
         SYNC_ALL_REDMINE_REQUEST_TIMEOUT_MS,
-        `Timed out checking Redmine tickets after ${formatTimeoutSeconds(SYNC_ALL_REDMINE_REQUEST_TIMEOUT_MS)} seconds`
+        `Timed out during Sync All after ${formatTimeoutSeconds(SYNC_ALL_REDMINE_REQUEST_TIMEOUT_MS)} seconds`
       );
-      const checkData = await checkRes.json();
+      const data = await checkRes.json();
 
       if (!checkRes.ok) {
-        alert(`Error checking Redmine tickets: ${checkData.error || 'Failed'}\n${JSON.stringify(checkData.details || '')}`);
+        alert(`Error during Sync All: ${data.error || 'Failed'}\n${JSON.stringify(data.details || '')}`);
         return;
       }
 
-      const ticketStatuses = checkData.tickets || [];
-      applyRedmineTicketStatuses(ticketStatuses);
-      setSyncProgress({
-        phase: 'Checking Redmine',
-        current: ticketStatuses.length,
-        total: ticketRefs.length,
-        message: `Checked ${ticketStatuses.length} Redmine ticket statuses`,
-      });
-
-      const statusByTicketKey = new Map(ticketStatuses.map(status => [status.ticketKey, status]));
-      ticketStatuses.forEach(status => {
-        if (status.action === 'existing_open') summary.existing_open += 1;
-        else if (status.action === 'existing_closed') summary.existing_closed += 1;
-        else if (status.action === 'check_failed') summary.failed.push(`${status.ticketKey}: ${status.error || 'Check failed'}`);
-      });
-
-      const ticketsToSync = ticketRequests.filter(({ finding }) => {
-        const status = statusByTicketKey.get(getTicketActionId(finding));
-        return !status || status.action === 'not_found';
-      });
-
-      setSyncProgress({
-        phase: 'Syncing Redmine',
-        current: 0,
-        total: ticketsToSync.length,
-        message: ticketsToSync.length > 0
-          ? `Creating or updating ${ticketsToSync.length} Redmine tickets (concurrency ${SYNC_ALL_REDMINE_CONCURRENCY})`
-          : 'No Redmine tickets need create/update work',
-      });
-
-      let completedSyncs = 0;
-      await runWithClientConcurrency(ticketsToSync, SYNC_ALL_REDMINE_CONCURRENCY, async ({ finding }) => {
-        const ticketActionId = getTicketActionId(finding);
-
-        try {
-          setOpeningRedmineId(ticketActionId);
-          const data = await syncRedmineIssue(finding, {
-            openIssueTab: false,
-            timeoutMs: SYNC_ALL_REDMINE_REQUEST_TIMEOUT_MS,
-          });
-          if (summary[data.action] !== undefined) {
-            summary[data.action] += 1;
-          } else {
-            summary.other += 1;
-          }
-        } catch (err) {
-          console.error('Error opening compacted Redmine issue:', err);
-          summary.failed.push(`${finding.title}: ${err.message || 'Failed'}`);
-        } finally {
-          completedSyncs += 1;
-          setSyncProgress({
-            phase: 'Syncing Redmine',
-            current: completedSyncs,
-            total: ticketsToSync.length,
-            message: `Synced ${completedSyncs}/${ticketsToSync.length} Redmine tickets`,
-            append: completedSyncs === 1 || completedSyncs === ticketsToSync.length || completedSyncs % 5 === 0,
-          });
-        }
-      });
-
       setSyncProgress({
         phase: 'Complete',
-        current: ticketRefs.length,
-        total: ticketRefs.length,
+        current: data.redmine?.checked || 0,
+        total: data.redmine?.checked || 0,
         message: 'Sync All finished',
       });
+      await Promise.all([fetchFindings({ silent: true }), fetchDashboardData({ silent: true }), fetchRedmineSyncStatus()]);
+      alert(
+        'Sync All finished.\n\n'
+        + `Findings pulled: ${data.pull?.count || 0}\n`
+        + `Tickets checked: ${data.redmine?.checked || 0}\n`
+        + `Tickets updated: ${data.redmine?.changed || 0}\n`
+        + `Ticket priorities updated: ${data.redmine?.priorityUpdated || 0}\n`
+        + `Tickets created/updated: ${data.redmine?.createdOrUpdated || 0}\n`
+        + `Attempted Feedback changes: ${data.mitigationRecheck?.attemptedFeedback || 0}\n`
+        + `Reopened from Resolve: ${data.mitigationRecheck?.reopened || 0}\n`
+        + `Queued for review: ${data.mitigationRecheck?.reviewQueued || 0}\n`
+        + `Skipped without linked findings: ${data.mitigationRecheck?.skippedNoLinkedFindings || 0}\n`
+        + `Skipped without active linked findings: ${data.mitigationRecheck?.skippedNoActiveLinkedFindings || 0}`
+        + `${data.mitigationRecheck?.warnings?.length ? `\n\nWarnings:\n${data.mitigationRecheck.warnings.slice(0, 5).join('\n')}` : ''}`
+      );
     } catch (err) {
       console.error('Error during Sync All:', err);
-      stoppedMessage = err.message || 'Sync All failed unexpectedly.';
-      summary.failed.push(stoppedMessage);
       setSyncProgress({
         phase: 'Failed',
-        message: stoppedMessage,
+        message: err.message || 'Sync All failed unexpectedly.',
       });
+      alert(err.message || 'Sync All failed unexpectedly.');
     } finally {
       setOpeningRedmineId(null);
       setBulkOpeningRedmine(false);
       setSyncAllProgress(null);
     }
-
-    const failedText = summary.failed.length > 0
-      ? `\n\nFailed:\n${summary.failed.slice(0, 5).map(item => `- ${item}`).join('\n')}${summary.failed.length > 5 ? `\n- ...and ${summary.failed.length - 5} more` : ''}`
-      : '';
-
-    alert(
-      `${stoppedMessage ? `Sync All stopped early.\n\n${stoppedMessage}\n\n` : 'Redmine bulk sync finished after pulling matching DefectDojo findings.\n\n'}`
-      + `Created: ${summary.created}\n`
-      + `Already open: ${summary.existing_open}\n`
-      + `Already closed: ${summary.existing_closed}\n`
-      + `Other: ${summary.other}\n`
-      + `Failed: ${summary.failed.length}`
-      + failedText
-    );
   };
 
   const submitSyncAllFilters = async (event) => {
@@ -2415,12 +3026,20 @@ function App() {
             onSaveConfig={async (newConfig) => {
               return updateConfig(newConfig);
             }}
-            pulling={pulling}
-            onPull={pullFromApi}
             onClearData={async () => {
-              if (confirm('Clear all local findings?')) {
+              if (confirm('Clear all local findings, Redmine ticket state, sync history, mitigation reviews, and dashboard data? Users and settings will be kept.')) {
                 await apiFetch('/clear', { method: 'POST' });
-                fetchFindings();
+                setSelectedFinding(null);
+                setSelectedProductId('');
+                setSelectedEngagementId('');
+                setRedmineSyncByTicket({});
+                setCompactedCveFindings([]);
+                setDashboardSummary(null);
+                await Promise.all([
+                  fetchFindings({ silent: true }),
+                  fetchDashboardData({ silent: true }),
+                  fetchRedmineSyncStatus(),
+                ]);
               }
             }}
             configBackups={configBackups}
@@ -2433,6 +3052,50 @@ function App() {
             onRestoreConfigBackup={restoreConfigBackup}
             user={user}
           />
+        </main>
+      </div>
+    );
+  }
+
+  if (currentHash === '#sync-history') {
+    if (user?.role !== 'admin') return null;
+    return (
+      <div className="app-shell">
+        <header className="top-bar">
+          <div className="top-bar-title">
+            <History size={22} />
+            <span>Sync History</span>
+          </div>
+          <div className="top-bar-actions">
+            <button className="icon-btn" onClick={handleLogout} title="Logout" aria-label="Logout">
+              <LogOut size={20} />
+            </button>
+          </div>
+        </header>
+        <main className="main-content">
+          <SyncHistory onBack={() => setHashRoute('')} />
+        </main>
+      </div>
+    );
+  }
+
+  if (currentHash === '#mitigation-review') {
+    if (user?.role !== 'admin') return null;
+    return (
+      <div className="app-shell">
+        <header className="top-bar">
+          <div className="top-bar-title">
+            <ShieldCheck size={22} />
+            <span>Mitigation Review</span>
+          </div>
+          <div className="top-bar-actions">
+            <button className="icon-btn" onClick={handleLogout} title="Logout" aria-label="Logout">
+              <LogOut size={20} />
+            </button>
+          </div>
+        </header>
+        <main className="main-content">
+          <MitigationReview onBack={() => setHashRoute('')} config={config} />
         </main>
       </div>
     );
@@ -2464,11 +3127,21 @@ function App() {
         </div>
         <div className="top-bar-actions">
           {user?.role === 'admin' && (
+            <button className="icon-btn" onClick={() => { setHashRoute('#sync-history'); }} title="Sync history" aria-label="Open sync history">
+              <History size={20} />
+            </button>
+          )}
+          {user?.role === 'admin' && (
+            <button className="icon-btn" onClick={() => { setHashRoute('#mitigation-review'); }} title="Mitigation review" aria-label="Open mitigation review">
+              <ShieldCheck size={20} />
+            </button>
+          )}
+          {user?.role === 'admin' && (
             <button className="icon-btn" onClick={() => { setHashRoute('#settings'); }} title="Settings" aria-label="Open settings">
               <Settings size={20} />
             </button>
           )}
-          <button className="icon-btn" onClick={fetchFindings} title="Refresh Findings" aria-label="Refresh findings" disabled={loading}>
+          <button className="icon-btn" onClick={() => { fetchFindings(); fetchDashboardData({ silent: true }); }} title="Refresh Findings" aria-label="Refresh findings" disabled={loading || dashboardLoading}>
             <RefreshCw size={20} className={loading ? "spin" : ""} />
           </button>
           <button className="icon-btn" onClick={handleLogout} title="Logout" aria-label="Logout">
@@ -2489,24 +3162,7 @@ function App() {
           </div>
         </section>
 
-        <section className="stats-grid">
-          <div className="stat-card stat-primary">
-            <span className="stat-value">{dashboardStats.totalFindings}</span>
-            <span className="stat-label">Total Findings</span>
-          </div>
-          <div className="stat-card stat-warning">
-            <span className="stat-value">{dashboardStats.totalCompacted}</span>
-            <span className="stat-label">Compacted</span>
-          </div>
-          <div className="stat-card stat-danger">
-            <span className="stat-value">{dashboardStats.ticketsCreated}</span>
-            <span className="stat-label">Tickets Open</span>
-          </div>
-          <div className="stat-card stat-success">
-            <span className="stat-value">{dashboardStats.ticketsClosed}</span>
-            <span className="stat-label">Tickets Closed</span>
-          </div>
-        </section>
+        <SummaryCards summary={dashboardSummary} loading={dashboardLoading} />
 
         <section className="filters-bar" aria-label="Finding filters">
           <div className="filters-left">
@@ -2531,11 +3187,30 @@ function App() {
               <label className="product-filter">
                 <span className="sr-only">Filter by product</span>
                 <select
-                  value={selectedProductFilter}
-                  onChange={(e) => setSelectedProductFilter(e.target.value)}
+                  value={selectedProductId}
+                  onChange={(e) => {
+                    setSelectedProductId(e.target.value);
+                    setSelectedEngagementId('');
+                  }}
                 >
-                  <option value="All">All Products ({uniqueProducts.length})</option>
-                  {uniqueProducts.map(p => (<option key={p} value={p}>{p}</option>))}
+                  <option value="">All Products ({availableProducts.length})</option>
+                  {availableProducts.map(product => (
+                    <option key={product.id || product.key || product.name} value={product.id || product.key || product.name}>{product.name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {availableEngagements.length > 0 && (
+              <label className="product-filter">
+                <span className="sr-only">Filter by engagement</span>
+                <select
+                  value={selectedEngagementId}
+                  onChange={(e) => setSelectedEngagementId(e.target.value)}
+                >
+                  <option value="">All Engagements ({availableEngagements.length})</option>
+                  {availableEngagements.map(engagement => (
+                    <option key={engagement.id || engagement.key || engagement.name} value={engagement.id || engagement.key || engagement.name}>{engagement.name}</option>
+                  ))}
                 </select>
               </label>
             )}
@@ -2545,11 +3220,11 @@ function App() {
               type="button"
               className="btn-secondary sync-all-btn"
               onClick={openSyncAllFilters}
-              disabled={bulkOpeningRedmine || pulling}
+              disabled={bulkOpeningRedmine}
               title="Choose DefectDojo pull filters, then sync every compacted ticket in Redmine"
             >
-              <RefreshCw size={14} className={bulkOpeningRedmine || pulling ? 'spin' : ''} />
-              {bulkOpeningRedmine ? 'Syncing...' : pulling ? 'Pulling...' : `Sync All (${compactedFindingsForStats.length})`}
+              <RefreshCw size={14} className={bulkOpeningRedmine ? 'spin' : ''} />
+              {bulkOpeningRedmine ? 'Syncing...' : `Sync All (${compactedFindingsForStats.length})`}
             </button>
           )}
         </section>
@@ -2565,7 +3240,7 @@ function App() {
 
             <div className="findings-list" role="listbox" aria-label="Filtered findings">
               {displayFindings.length > 0 ? (
-                selectedProductFilter === 'All' && uniqueProducts.length > 1 ? (
+                !selectedProductId && uniqueProducts.length > 1 ? (
                   uniqueProducts.map(productName => {
                     const productFindings = displayFindings.filter(f => getDefectDojoRoute(f).projectName === productName);
                     if (productFindings.length === 0) return null;
@@ -2594,17 +3269,17 @@ function App() {
               )}
             </div>
           </div>
-
-          {renderFindingDetailPanel()}
         </section>
       </main>
+
+      {renderFindingDetailModal()}
 
       {syncAllProgress && (
         <div className="modal-overlay sync-progress-overlay">
           <div className="modal-content log-modal sync-progress-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-heading-with-icon">
-                <RefreshCw size={20} className={bulkOpeningRedmine || pulling ? 'spin' : ''} />
+                <RefreshCw size={20} className={bulkOpeningRedmine ? 'spin' : ''} />
                 Sync All Progress
               </h2>
             </div>
@@ -2634,7 +3309,7 @@ function App() {
       )}
 
       {showSyncAllFilters && (
-        <div className="modal-overlay" onClick={() => !pulling && !bulkOpeningRedmine && setShowSyncAllFilters(false)}>
+        <div className="modal-overlay" onClick={() => !bulkOpeningRedmine && setShowSyncAllFilters(false)}>
           <form className="modal-content config-modal" onClick={e => e.stopPropagation()} onSubmit={submitSyncAllFilters}>
             <div className="modal-header">
               <h2 className="modal-heading-with-icon">
@@ -2651,7 +3326,7 @@ function App() {
                     type="button"
                     className={`severity-choice severity-clear ${syncAllPullFilters.severity.length === 0 ? 'selected' : ''}`}
                     onClick={() => updateSyncAllPullFilter('severity', [])}
-                    disabled={pulling || bulkOpeningRedmine}
+                    disabled={bulkOpeningRedmine}
                   >
                     All
                   </button>
@@ -2664,7 +3339,7 @@ function App() {
                         type="checkbox"
                         checked={syncAllPullFilters.severity.includes(severity)}
                         onChange={() => toggleSyncAllSeverity(severity)}
-                        disabled={pulling || bulkOpeningRedmine}
+                        disabled={bulkOpeningRedmine}
                       />
                       <span className={`severity-dot ${severity.toLowerCase()}`} />
                       {severity}
@@ -2680,7 +3355,7 @@ function App() {
                   value={syncAllPullFilters.test__engagement__product}
                   onChange={(e) => updateSyncAllPullFilter('test__engagement__product', e.target.value)}
                   placeholder="e.g. 5, 12, 23 (empty for all)"
-                  disabled={pulling || bulkOpeningRedmine}
+                  disabled={bulkOpeningRedmine}
                 />
               </div>
 
@@ -2691,7 +3366,7 @@ function App() {
                   value={syncAllPullFilters.test__engagement}
                   onChange={(e) => updateSyncAllPullFilter('test__engagement', e.target.value)}
                   placeholder="empty for all"
-                  disabled={pulling || bulkOpeningRedmine}
+                  disabled={bulkOpeningRedmine}
                 />
               </div>
 
@@ -2700,7 +3375,7 @@ function App() {
                 <select
                   value={syncAllPullFilters.active}
                   onChange={(e) => updateSyncAllPullFilter('active', e.target.value)}
-                  disabled={pulling || bulkOpeningRedmine}
+                  disabled={bulkOpeningRedmine}
                 >
                   <option value="">Any</option>
                   <option value="true">Yes</option>
@@ -2713,7 +3388,7 @@ function App() {
                 <select
                   value={syncAllPullFilters.verified}
                   onChange={(e) => updateSyncAllPullFilter('verified', e.target.value)}
-                  disabled={pulling || bulkOpeningRedmine}
+                  disabled={bulkOpeningRedmine}
                 >
                   <option value="">Any</option>
                   <option value="true">Yes</option>
@@ -2726,7 +3401,7 @@ function App() {
                 <select
                   value={syncAllPullFilters.is_mitigated}
                   onChange={(e) => updateSyncAllPullFilter('is_mitigated', e.target.value)}
-                  disabled={pulling || bulkOpeningRedmine}
+                  disabled={bulkOpeningRedmine}
                 >
                   <option value="">Any</option>
                   <option value="false">No</option>
@@ -2740,60 +3415,16 @@ function App() {
                 type="button"
                 className="btn-secondary"
                 onClick={() => setShowSyncAllFilters(false)}
-                disabled={pulling || bulkOpeningRedmine}
+                disabled={bulkOpeningRedmine}
               >
                 Cancel
               </button>
-              <button type="submit" className="btn-primary" disabled={pulling || bulkOpeningRedmine}>
-                <RefreshCw size={16} className={pulling || bulkOpeningRedmine ? 'spin' : ''} />
-                {bulkOpeningRedmine ? 'Syncing...' : pulling ? 'Pulling...' : 'Pull & Sync'}
+              <button type="submit" className="btn-primary" disabled={bulkOpeningRedmine}>
+                <RefreshCw size={16} className={bulkOpeningRedmine ? 'spin' : ''} />
+                {bulkOpeningRedmine ? 'Syncing...' : 'Pull & Sync'}
               </button>
             </div>
           </form>
-        </div>
-      )}
-
-      {showLogs && (
-        <div className="modal-overlay" onClick={() => !pulling && setShowLogs(false)}>
-          <div className="modal-content log-modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <div className="modal-title-row">
-                <h2 className="modal-heading-with-icon">
-                  <Terminal size={20} />
-                  Backend Logs {pulling && <span className="pulse modal-status">(Pulling...)</span>}
-                </h2>
-                {!pulling && (
-                  <button 
-                    className="filter-btn active" 
-                    onClick={() => setShowLogs(false)}
-                  >
-                    Close
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="terminal-window">
-              {logs.length === 0 ? (
-                <div className="log-line log-text">Waiting for logs...</div>
-              ) : (
-                logs.map(log => (
-                  <div key={log.id} className="log-line">
-                    <span className="log-time">[{log.time}]</span>
-                    <span className={`log-level-${log.level}`}>
-                      {log.text}
-                    </span>
-                  </div>
-                ))
-              )}
-              <div ref={logsEndRef} />
-            </div>
-            {pulling && (
-              <p className="helper-text">
-                Please wait while the server fetches and resolves endpoints from DefectDojo. 
-                If an endpoint fails to resolve here, it means the API Token lacks permission or the endpoint doesn't exist.
-              </p>
-            )}
-          </div>
         </div>
       )}
 

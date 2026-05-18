@@ -5,33 +5,6 @@ const path = require('path');
 const axios = require('axios');
 const crypto = require('crypto');
 const database = require('./database.cjs');
-
-const utils = require('./utils.cjs');
-const auth = require('./auth.cjs');
-const logger = require('./logger.cjs');
-const syncUtils = require('./sync-utils.cjs');
-const defectdojoClient = require('./defectdojo-client.cjs');
-const redmineClient = require('./redmine-client.cjs');
-const compaction = require('./compaction.cjs');
-
-// Expose these into the global or module scope
-const { cleanRouteValue, asArray, asFindingIdArray, normalizeFindingIds, isPlainObject } = utils;
-const { createLogCapture } = logger;
-const { SEVERITY_VALUES, normalizeSeverityFilter, normalizePullFilters, shouldMarkUnseenActiveFindingsInactive, splitDelimitedFilterValue, runWithConcurrency, createProgressLogger, createDashboardSync } = syncUtils;
-const { CONFIG_FIELDS, DEFECTDOJO_CONTEXT_CONCURRENCY, buildFindingFilterQuery, getFindingKey, getEntityId, getEntityName, withPullProductContext, fetchDefectDojoEntity, enrichFindingsWithDefectDojoContext } = defectdojoClient;
-const { REDMINE_ISSUE_SEARCH_LIMIT, REDMINE_ISSUE_SEARCH_MAX_PAGES, getRedmineHeaders, getRedmineIssueUrl, appendSyncMetadata, REDMINE_PRIORITY_FIELD_BY_SEVERITY, getRedminePriorityIdForSeverity, normalizeProjectToken, redmineProjectMatches, getProjectIssueValue, isRedmineNotFoundError, isRedmineProjectReferenceError, getMissingRedmineProjectLabel, buildMissingRedmineProject, buildRedmineProjectMissingStatus, makeRedmineProjectIdentifier, getRouteCandidates, getRouteProjectName, isRedmineProjectDuplicateError, createRedmineProject, fetchRedmineProjectDirect, findRedmineProjectByCandidates, resolveRedmineProject, getRedmineProjectCacheKey, resolveRedmineProjectCached, extractRedmineIssueFindingIds, extractRedmineIssueSyncKey, redmineIssueMatchesSyncKey, compareFindingIdsWithRedmineIssue, redmineIssueFindingIdsAreSubsetOfCurrent, findIssueInList, fetchRedmineIssuesForProjectStatus, findMatchingRedmineIssue, updateRedmineIssue, getRedmineIssuePriorityId, updateOpenRedmineIssuePriorityIfNeeded, normalizeTicketStatus, isResolveStatus, isInProgressStatus, isClosedStatus, getStatusNameIsClosed, fetchRedmineIssueStatuses, resolveRedmineStatusIds, fetchRedmineIssueStatusMap, fetchRedmineIssueStatus, getKnownRedmineIssueId, getIssueResolvedProject, buildTicketStatusFromIssue } = redmineClient;
-const { AUTO_UPGRADE_TARGET_RE, AUTO_TITLE_VERSION_RE, AUTO_LESS_THAN_VERSION_RE, AUTO_SEVERITY_RANK, normalizeAutoText, normalizeAutoGroupText, highestSeverity, isStoredFindingMitigated, isStoredFindingActive, cleanAutoBlockText, compactAutoDefectDojoText, getAutoDescriptionText, getAutoImpactText, getAutoMitigationText, getAutoStrictFindingKey, parseAutoUpgradeText, parseAutoUpgradeTarget, getAutoLegacyCompactGroupKey, getAutoKnownNoCveFamily, tokenizeAutoVersion, compareAutoVersions, firstAutoRouteValue, firstAutoRouteName, getAutoDefectDojoRoute, stableAutoHash, sortAutoStrings, sortAutoFindingIds, collectAutoCveIds, resolveAutoCompactionFamily, extractAutoTextSourceEvidenceLines, normalizeAutoTextSourceKey, getAutoCompactionDetailKey, buildAutoFindingFingerprint, buildAutoLegacyFindingGroupKey, buildAutoCompactedSyncKey, buildAutoCompactedLegacySyncKey, extractAutoTitleVersion, chooseAutoDisplayTitle, getAutoSoftwareFamilyTitle, parseAutoTitleUpgradeTarget, collectAutoTicketUpgradeTargets, getAutoTicketUpgradeTarget, buildAutoActionRequiredSubject, addAutoTextSource, getAutoEndpointParts, getAutoEndpointLabel, getAutoEndpointHost, groupAutoEndpointDetailsByCves, sortAutoSourceGroupsByTitleVersion, finalizeAutoEndpointDetails, sortAutoTextSources, finalizeAutoSourceGroups, formatAutoTextSourceLabel, formatAutoEvidenceLine, formatAutoSourceGroupAssets, formatAutoSourceFindingAssets, getAutoEndpointPort, formatAutoAffectedAssetsAndPorts, formatAutoTicketTextSection, formatAutoRouteValue, formatAutoDefectDojoContext, buildAutoSourceTitlesBlock, buildAutoCveBlock, formatAutoSourceGroupTextBlock, normalizeAutoTextSource, collectAutoAppendixSources, formatAutoQuoteBlock, formatAutoAppendixTextBlock, buildAutoSourceGroupSection, buildAutoSourceGroupsBlock, buildAutoActionRequiredMarkdown, buildAutoSuperTicketMarkdown, buildBackendCompactedRedmineTicketRefs } = compaction;
-
-// Special cases for auth
-const { hashPassword, verifyPassword, readUsersFromDisk, createDefaultAdminUser, createRequireAuth, requireAdmin } = auth;
-
-
-const logCapture = createLogCapture();
-logCapture.installConsoleOverrides();
-const addLog = logCapture.addLog;
-const getLogs = logCapture.getLogs;
-const clearLogs = logCapture.clearLogs;
-
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.resolve(__dirname, '..');
@@ -49,7 +22,6 @@ app.use(express.json());
 const usersPath = path.join(DATA_DIR, 'users.json');
 let users = [];
 const sessions = new Map();
-const requireAuth = createRequireAuth(sessions);
 const loadUsers = async () => {
     let shouldPersistUsers = false;
     if (database.isEnabled()) {
@@ -189,7 +161,16 @@ app.delete('/api/users/:username', requireAdmin, async (req, res) => {
         message: 'User deleted'
     });
 });
-
+const addLog = (level, msg) => {
+    const timestamp = new Date().toISOString().split('T')[1].slice(0, 8);
+    globalLogs.push({
+        id: Date.now() + Math.random(),
+        time: timestamp,
+        level,
+        text: msg
+    });
+    if (globalLogs.length > MAX_LOGS) globalLogs.shift();
+};
 const dashboardSyncClients = new Set();
 let dashboardSyncVersion = 0;
 let dashboardSyncState = {
@@ -228,7 +209,6 @@ let config = {
     redminePriorityLowId: '',
     redminePriorityInfoId: '',
     redmineStatusNewId: '',
-    redmineStatusFeedbackId: '',
     redmineStatusInProgressId: '',
     redmineStatusResolveId: '',
     redmineStatusClosedId: '',
@@ -464,17 +444,6 @@ const redmineSyncRecordMatchesScope = (record = {}, {productId = '', engagementI
     if (scopedProductId && cleanRouteValue(route.projectId) !== scopedProductId) return false;
     if (scopedEngagementId && cleanRouteValue(route.engagementId) !== scopedEngagementId) return false;
     return true;
-};
-const getRouteEntityKey = (prefix, id, name) => {
-    const entityId = cleanRouteValue(id);
-    if (entityId) return `${prefix}:id:${entityId}`;
-    const entityName = cleanRouteValue(name);
-    return entityName ? `${prefix}:name:${entityName.toLowerCase()}` : '';
-};
-const routeValueMatches = (selectedValue, ...candidates) => {
-    const selected = cleanRouteValue(selectedValue).toLowerCase();
-    if (!selected) return true;
-    return candidates.some(candidate => cleanRouteValue(candidate).toLowerCase() === selected);
 };
 const pruneStaleRedmineSyncRecords = (currentSyncKeys = new Set(), scope = {}) => {
     let prunedCount = 0;
@@ -1022,30 +991,15 @@ const refreshRecheckFindingsFromDefectDojo = async ({baseUrl, apiKey, records = 
         warnings
     };
 };
-const runMitigationRecheck = async ({baseUrl, apiKey, syncHistoryId = null, statusIds = {}, defectDojoBaseUrl = '', defectDojoApiKey = '', filters = {}, recheckSourceRecords = []} = {}) => {
+const runMitigationRecheck = async ({baseUrl, apiKey, syncHistoryId = null, statusIds = {}, defectDojoBaseUrl = '', defectDojoApiKey = '', filters = {}} = {}) => {
     const findings = database.isEnabled() ? await database.loadFindings() : await loadFindingsFromFileStore();
     const findingsById = new Map(findings.map(finding => [String(finding.id || finding.findingId || ''), finding]).filter(([id]) => id));
     const recheckRecords = [];
     const reviewItems = [];
     const reopened = [];
     const warnings = [];
-    const skippedNoLinkedFindings = [];
-    const skippedNoActiveLinkedFindings = [];
-    const attemptedFeedback = [];
-    const feedbackStatusId = cleanRouteValue(statusIds.feedback || config.redmineStatusFeedbackId);
-    const resolveRecordByKey = new Map();
-    const addResolveRecord = (record = {}) => {
-        if (!record.issueId || !isResolveStatus(record.status, record.statusId, statusIds, config)) return;
-        const key = `${cleanRouteValue(record.syncKey || record.ticketKey)}|${cleanRouteValue(record.issueId)}`;
-        resolveRecordByKey.set(key, {
-            ...record,
-            syncKey: cleanRouteValue(record.syncKey || record.ticketKey)
-        });
-    };
-    Object.values(redmineSyncStore.byTicket || ({})).forEach(addResolveRecord);
-    asArray(recheckSourceRecords).forEach(addResolveRecord);
-    const resolveRecords = Array.from(resolveRecordByKey.values());
-    console.log(`[SYNC_ALL_RECHECK] Resolve compacted records selected=${resolveRecords.length}; Feedback status ID=${feedbackStatusId || '(missing)'}`);
+    const inProgressStatusId = cleanRouteValue(statusIds.inProgress || config.redmineStatusInProgressId);
+    const resolveRecords = Object.values(redmineSyncStore.byTicket || ({})).filter(record => record.issueId && isResolveStatus(record.status, record.statusId, statusIds));
     const refreshResult = await refreshRecheckFindingsFromDefectDojo({
         baseUrl: defectDojoBaseUrl,
         apiKey: defectDojoApiKey,
@@ -1054,28 +1008,17 @@ const runMitigationRecheck = async ({baseUrl, apiKey, syncHistoryId = null, stat
         filters,
         syncHistoryId
     });
-    console.log(`[SYNC_ALL_RECHECK] DefectDojo findings refreshed=${refreshResult.refreshed || 0}; warnings=${refreshResult.warnings.length}`);
     warnings.push(...refreshResult.warnings);
     for (const record of resolveRecords) {
         const linkedFindings = normalizeFindingIds(record.findingIds || []).map(findingId => ({
             findingId,
             finding: findingsById.get(String(findingId))
         })).filter(item => item.finding);
-        console.log(`[SYNC_ALL_RECHECK] Issue #${record.issueId} (${record.syncKey || record.ticketKey || 'unknown-key'}) status="${record.status || ''}" statusId="${record.statusId || ''}" linkedFindingIds=${normalizeFindingIds(record.findingIds || []).join(',') || '(none)'} linkedFound=${linkedFindings.length}`);
-        if (linkedFindings.length === 0) {
-            skippedNoLinkedFindings.push(record.issueId);
-            console.warn(`[SYNC_ALL_RECHECK] Issue #${record.issueId} skipped: no linked DefectDojo findings found in local store after pull.`);
-            continue;
-        }
         const activeLinkedFindings = linkedFindings.filter(item => isStoredFindingActive(item.finding));
-        const mitigatedLinkedFindings = linkedFindings.filter(item => isStoredFindingMitigated(item.finding));
-        console.log(`[SYNC_ALL_RECHECK] Issue #${record.issueId} linked active/not-mitigated=${activeLinkedFindings.map(item => item.findingId).join(',') || '(none)'} mitigated=${mitigatedLinkedFindings.map(item => item.findingId).join(',') || '(none)'}`);
         if (activeLinkedFindings.length > 0) {
-            const activeFindingIds = normalizeFindingIds(activeLinkedFindings.map(item => item.findingId));
-            const reason = activeFindingIds.length === 1
-                ? `DefectDojo finding ${activeFindingIds[0]} is still active after the latest scan; reopening Redmine issue ${record.issueId}.`
-                : `DefectDojo findings ${activeFindingIds.join(', ')} are still active after the latest scan; reopening Redmine issue ${record.issueId}.`;
-            const addReopenFailureRecords = (failureReason, raw = {}) => {
+            const reason = `DefectDojo finding ${activeLinkedFindings[0].findingId} is still active after the latest scan; reopening Redmine issue ${record.issueId}.`;
+            if (!inProgressStatusId) {
+                warnings.push(`Could not reopen Redmine #${record.issueId}: In Progress status ID is not configured or discoverable.`);
                 activeLinkedFindings.forEach(({findingId, finding}) => {
                     const route = getAutoDefectDojoRoute(finding);
                     recheckRecords.push({
@@ -1092,67 +1035,32 @@ const runMitigationRecheck = async ({baseUrl, apiKey, syncHistoryId = null, stat
                         cveId: getFindingCveIds(finding)[0] || record.cveId || '',
                         previousStatus: record.status || 'Resolve',
                         result: 'reopen_failed',
-                        reason: failureReason,
-                        raw
+                        reason,
+                        raw: {
+                            missingStatus: 'inProgress'
+                        }
                     });
                 });
-            };
-            if (!feedbackStatusId) {
-                warnings.push(`Could not reopen Redmine #${record.issueId}: Feedback status ID is not configured or discoverable.`);
-                console.warn(`[SYNC_ALL_RECHECK] Issue #${record.issueId} cannot change to Feedback: Feedback status ID is missing.`);
-                addReopenFailureRecords(reason, {
-                    missingStatus: 'feedback'
-                });
                 continue;
             }
-            let issueStatus;
-            try {
-                attemptedFeedback.push(record.issueId);
-                console.log(`[SYNC_ALL_RECHECK] Issue #${record.issueId}: attempting Redmine status change Resolved -> Feedback (${feedbackStatusId}).`);
-                issueStatus = await updateRedmineIssueStatusAndConfirm({
-                    baseUrl,
-                    apiKey,
-                    issueId: record.issueId,
-                    statusId: feedbackStatusId,
-                    notes: reason,
-                    statusIds,
-                    expectedStatusLabel: 'Feedback',
-                    matchesExpectedStatus: status => cleanRouteValue(status.statusId) === feedbackStatusId || normalizeTicketStatus(status.status) === 'feedback'
-                });
-            } catch (error) {
-                const detail = error.response?.data || error.message;
-                const currentStatus = error.issueStatus?.status || error.issueStatus?.statusId || '';
-                warnings.push(`Could not change Redmine #${record.issueId} to Feedback: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`);
-                console.warn(`[SYNC_ALL_RECHECK] Issue #${record.issueId}: Feedback update failed. currentStatus="${currentStatus || 'unknown'}" detail=${typeof detail === 'string' ? detail : JSON.stringify(detail)}`);
-                addReopenFailureRecords(reason, {
-                    targetStatus: 'Feedback',
-                    targetStatusId: feedbackStatusId,
-                    currentStatus,
-                    error: detail,
-                    allowedStatuses: asArray(error.allowedStatuses).map(status => ({
-                        id: status.id,
-                        name: status.name,
-                        isClosed: status.is_closed
-                    }))
-                });
-                continue;
-            }
-            const nextStatusName = issueStatus.status || 'Feedback';
-            const nextStatusId = issueStatus.statusId || feedbackStatusId;
-            const issueUrl = issueStatus.issueUrl || record.issueUrl || getRedmineIssueUrl(baseUrl, {
-                id: record.issueId
+            await updateRedmineIssue({
+                baseUrl,
+                apiKey,
+                issueId: record.issueId,
+                issue: {
+                    status_id: Number.parseInt(inProgressStatusId, 10) || inProgressStatusId,
+                    notes: reason
+                }
             });
             const updatedRecord = await writeStoredRedmineSyncRecord(record.syncKey, {
                 ...record,
                 action: 'existing_open',
-                issueUrl,
-                status: nextStatusName,
-                statusId: nextStatusId,
+                status: 'In Progress',
+                statusId: inProgressStatusId,
                 isClosed: false,
                 lastCheckError: '',
                 updatedAt: new Date().toISOString()
             });
-            console.log(`[SYNC_ALL_RECHECK] Issue #${record.issueId}: middleware and Redmine status updated to "${nextStatusName}" (${nextStatusId}).`);
             reopened.push(updatedRecord);
             activeLinkedFindings.forEach(({findingId, finding}) => {
                 const route = getAutoDefectDojoRoute(finding);
@@ -1169,18 +1077,13 @@ const runMitigationRecheck = async ({baseUrl, apiKey, syncHistoryId = null, stat
                     engagementName: route.engagementName || '',
                     cveId: getFindingCveIds(finding)[0] || record.cveId || '',
                     previousStatus: record.status || 'Resolve',
-                    nextStatus: nextStatusName,
+                    nextStatus: 'In Progress',
                     result: 'reopened',
-                    reason,
-                    raw: {
-                        reopenStatus: 'feedback',
-                        reopenStatusId: feedbackStatusId
-                    }
+                    reason
                 });
             });
             continue;
         }
-        let queuedReviewForRecord = false;
         for (const {findingId, finding} of linkedFindings) {
             const route = getAutoDefectDojoRoute(finding);
             const cveIds = getFindingCveIds(finding);
@@ -1201,7 +1104,6 @@ const runMitigationRecheck = async ({baseUrl, apiKey, syncHistoryId = null, stat
             };
             if (isStoredFindingMitigated(finding)) {
                 const reason = `DefectDojo finding ${findingId} is mitigated while Redmine issue ${record.issueId} is Resolve; waiting for admin closure review.`;
-                const mitigationMessage = cleanRouteValue(finding.mitigation || finding.solution || finding.remediation || '');
                 recheckRecords.push({
                     ...baseRecord,
                     nextStatus: record.status || 'Resolve',
@@ -1234,24 +1136,12 @@ const runMitigationRecheck = async ({baseUrl, apiKey, syncHistoryId = null, stat
                     lastSyncHistoryId: syncHistoryId,
                     raw: {
                         reason,
-                        mitigationMessage,
                         ticketSubject: record.subject || '',
                         sourceFindingTitle: finding.title || finding.name || ''
                     }
                 });
-                queuedReviewForRecord = true;
             }
         }
-        if (!queuedReviewForRecord) {
-            skippedNoActiveLinkedFindings.push({
-                issueId: record.issueId,
-                findingIds: linkedFindings.map(item => String(item.findingId))
-            });
-            console.log(`[SYNC_ALL_RECHECK] Issue #${record.issueId} skipped: linked findings exist but none are active/not mitigated.`);
-        }
-    }
-    if (skippedNoLinkedFindings.length > 0) {
-        warnings.push(`Skipped ${skippedNoLinkedFindings.length} Resolve Redmine issue(s) because no linked DefectDojo findings were found in the local store: ${skippedNoLinkedFindings.join(', ')}.`);
     }
     if (database.isEnabled()) {
         await database.recordMitigationRechecks(recheckRecords);
@@ -1261,9 +1151,6 @@ const runMitigationRecheck = async ({baseUrl, apiKey, syncHistoryId = null, stat
         checked: recheckRecords.length,
         reopened: reopened.length,
         reviewQueued: reviewItems.length,
-        attemptedFeedback: attemptedFeedback.length,
-        skippedNoLinkedFindings: skippedNoLinkedFindings.length,
-        skippedNoActiveLinkedFindings: skippedNoActiveLinkedFindings.length,
         warnings,
         records: recheckRecords
     };
@@ -1280,273 +1167,6 @@ const enrichMitigationReviewItem = (item = {}) => {
         redmineStatusName: item.redmineStatusName || storedRecord.status || '',
         redmineStatusId: item.redmineStatusId || storedRecord.statusId || ''
     };
-};
-const buildRedmineStatusMapFromResolvedStatuses = (statusIds = {}) => new Map(asArray(statusIds.statuses)
-    .map(status => [cleanRouteValue(status.id), Boolean(status.is_closed)])
-    .filter(([id]) => id));
-
-const createEmptySeverityBreakdown = () => ({
-    pulled: Object.fromEntries(SEVERITY_VALUES.map(severity => [severity, 0])),
-    active: Object.fromEntries(SEVERITY_VALUES.map(severity => [severity, 0])),
-    mitigated: Object.fromEntries(SEVERITY_VALUES.map(severity => [severity, 0]))
-});
-
-const getFindingSeverityLabel = (finding = {}) => (
-    SEVERITY_VALUES.find(severity => severity.toLowerCase() === cleanRouteValue(finding.severity || 'Info').toLowerCase()) || 'Info'
-);
-
-const isPulledFindingMitigated = (finding = {}) => (
-    finding.is_mitigated === true
-    || finding.mitigated === true
-    || String(finding.is_mitigated || '').toLowerCase() === 'true'
-    || String(finding.mitigated || '').toLowerCase() === 'true'
-    || Boolean(finding.mitigated_at || finding.mitigation_confirmed || finding.mitigation_confirmed_at)
-);
-
-const isPulledFindingActive = (finding = {}) => (
-    finding.active !== false
-    && String(finding.active || '').toLowerCase() !== 'false'
-    && !isPulledFindingMitigated(finding)
-);
-
-const buildSeverityBreakdown = (findings = []) => {
-    const breakdown = createEmptySeverityBreakdown();
-    asArray(findings).forEach(finding => {
-        const severity = getFindingSeverityLabel(finding);
-        breakdown.pulled[severity] += 1;
-        if (isPulledFindingActive(finding)) breakdown.active[severity] += 1;
-        if (isPulledFindingMitigated(finding)) breakdown.mitigated[severity] += 1;
-    });
-    return breakdown;
-};
-
-const getSyncHistoryGroupKey = (route = {}) => ([
-    cleanRouteValue(route.projectId) || cleanRouteValue(route.projectName) || 'unknown-product',
-    cleanRouteValue(route.engagementId) || cleanRouteValue(route.engagementName) || 'unknown-engagement'
-].join('|'));
-
-const getSyncHistoryGroupRoute = (route = {}) => ({
-    projectId: cleanRouteValue(route.projectId),
-    projectName: cleanRouteValue(route.projectName),
-    engagementId: cleanRouteValue(route.engagementId),
-    engagementName: cleanRouteValue(route.engagementName)
-});
-
-const allocateCountByWeight = (total, groups, getWeight) => {
-    const safeTotal = Math.max(0, Number.parseInt(total, 10) || 0);
-    if (safeTotal === 0 || groups.length === 0) return new Map(groups.map(group => [group.key, 0]));
-    const weights = groups.map(group => Math.max(0, getWeight(group) || 0));
-    const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
-    if (weightTotal === 0) return new Map(groups.map(group => [group.key, 0]));
-    const allocations = groups.map((group, index) => {
-        const exact = safeTotal * weights[index] / weightTotal;
-        const value = Math.floor(exact);
-        return {
-            key: group.key,
-            value,
-            remainder: exact - value
-        };
-    });
-    let remaining = safeTotal - allocations.reduce((sum, item) => sum + item.value, 0);
-    allocations.sort((left, right) => right.remainder - left.remainder);
-    for (let index = 0; index < allocations.length && remaining > 0; index += 1) {
-        allocations[index].value += 1;
-        remaining -= 1;
-    }
-    return new Map(allocations.map(item => [item.key, item.value]));
-};
-
-const createSyncAllSplitHistoryRows = async ({
-    parentSyncHistory,
-    normalizedFilters,
-    findings = [],
-    ticketRefs = [],
-    checkResults = [],
-    priorityUpdatedTicketKeys = new Set(),
-    createdOrUpdatedTicketKeys = new Set(),
-    recheckRecords = [],
-    pullData = {},
-    redmineChangedCount = 0,
-    status = 'success',
-    warnings = [],
-    errors = [],
-    user = null
-} = {}) => {
-    if (!database.isEnabled() || !parentSyncHistory?.id || findings.length === 0) return [];
-    const groupsByKey = new Map();
-    const ensureGroup = (routeInput = {}) => {
-        const route = getSyncHistoryGroupRoute(routeInput);
-        const key = getSyncHistoryGroupKey(route);
-        if (!groupsByKey.has(key)) {
-            groupsByKey.set(key, {
-                key,
-                route,
-                findings: [],
-                ticketRefs: [],
-                checkResults: [],
-                priorityUpdatedTicketKeys: new Set(),
-                createdOrUpdatedTicketKeys: new Set(),
-                recheckRecords: []
-            });
-        }
-        return groupsByKey.get(key);
-    };
-
-    findings.forEach(finding => ensureGroup(getAutoDefectDojoRoute(finding)).findings.push(finding));
-    ticketRefs.forEach(ticket => ensureGroup(ticket.route || {}).ticketRefs.push(ticket));
-    const ticketRefByKey = new Map(ticketRefs.map(ticket => [ticket.ticketKey, ticket]));
-    checkResults.forEach(result => {
-        const ticket = ticketRefByKey.get(result.ticketKey);
-        if (ticket) ensureGroup(ticket.route || {}).checkResults.push(result);
-    });
-    priorityUpdatedTicketKeys.forEach(ticketKey => {
-        const ticket = ticketRefByKey.get(ticketKey);
-        if (ticket) ensureGroup(ticket.route || {}).priorityUpdatedTicketKeys.add(ticketKey);
-    });
-    createdOrUpdatedTicketKeys.forEach(ticketKey => {
-        const ticket = ticketRefByKey.get(ticketKey);
-        if (ticket) ensureGroup(ticket.route || {}).createdOrUpdatedTicketKeys.add(ticketKey);
-    });
-    recheckRecords.forEach(record => ensureGroup({
-        projectId: record.productId,
-        projectName: record.productName,
-        engagementId: record.engagementId,
-        engagementName: record.engagementName
-    }).recheckRecords.push(record));
-
-    const groups = Array.from(groupsByKey.values()).filter(group => (
-        group.findings.length > 0
-        || group.ticketRefs.length > 0
-        || group.recheckRecords.length > 0
-    ));
-    const findingsUpdatedByGroup = allocateCountByWeight(
-        (pullData.updated || 0) + (pullData.staleActiveUpdated || 0),
-        groups,
-        group => group.findings.length
-    );
-    const redmineChangedByGroup = allocateCountByWeight(
-        redmineChangedCount,
-        groups,
-        group => group.ticketRefs.length
-    );
-
-    const childRows = [];
-    for (const group of groups) {
-        const severityBreakdown = buildSeverityBreakdown(group.findings);
-        const childHistory = await database.createSyncHistory({
-            syncType: 'Sync All',
-            productId: group.route.projectId,
-            productName: group.route.projectName,
-            engagementId: group.route.engagementId,
-            engagementName: group.route.engagementName,
-            filters: {
-                ...normalizedFilters,
-                test__engagement__product: group.route.projectId || group.route.projectName || '',
-                test__engagement: group.route.engagementId || group.route.engagementName || '',
-                syncHistorySplitChild: true,
-                syncHistoryParentId: parentSyncHistory.id
-            },
-            severityBreakdown,
-            triggeredBy: user?.username || '',
-            triggeredRole: user?.role || ''
-        });
-        childRows.push(await database.finishSyncHistory(childHistory.id, {
-            status,
-            findingsPulled: group.findings.length,
-            ticketsPulled: group.ticketRefs.length,
-            findingsUpdated: findingsUpdatedByGroup.get(group.key) || 0,
-            ticketsUpdated: (redmineChangedByGroup.get(group.key) || 0)
-                + group.priorityUpdatedTicketKeys.size
-                + group.createdOrUpdatedTicketKeys.size
-                + group.recheckRecords.filter(record => record.result === 'reopened').length,
-            findingsMitigated: group.recheckRecords.filter(record => record.result === 'manual_review').length,
-            findingsStillActive: group.recheckRecords.filter(record => record.result === 'reopened').length,
-            severityBreakdown,
-            warnings,
-            errors
-        }));
-    }
-    await database.markSyncHistorySplitParent(parentSyncHistory.id);
-    return childRows;
-};
-
-const fetchConfirmedRedmineIssueStatus = async ({baseUrl, apiKey, issueId, statusIds = {}}) => {
-    const resolvedStatusMap = buildRedmineStatusMapFromResolvedStatuses(statusIds);
-    const statusMap = resolvedStatusMap.size > 0
-        ? resolvedStatusMap
-        : await fetchRedmineIssueStatusMap({
-            baseUrl,
-            apiKey
-        });
-
-    return fetchRedmineIssueStatus({
-        baseUrl,
-        apiKey,
-        issueId,
-        statusMap,
-        statusIds,
-        config
-    });
-};
-const fetchRedmineIssueAllowedStatuses = async ({baseUrl, apiKey, issueId}) => {
-    try {
-        const response = await axios.get(`${baseUrl}/issues/${issueId}.json?include=allowed_statuses`, {
-            headers: getRedmineHeaders(apiKey)
-        });
-        return asArray(response.data?.issue?.allowed_statuses);
-    } catch (error) {
-        console.warn(`[REDMINE] Could not fetch allowed statuses for issue ${issueId}: ${error.message}`);
-        return [];
-    }
-};
-const updateRedmineIssueStatusAndConfirm = async ({baseUrl, apiKey, issueId, statusId, notes, statusIds = {}, expectedStatusLabel = 'target status', matchesExpectedStatus}) => {
-    const targetStatusId = cleanRouteValue(statusId);
-    const allowedStatuses = await fetchRedmineIssueAllowedStatuses({
-        baseUrl,
-        apiKey,
-        issueId
-    });
-    if (allowedStatuses.length > 0) {
-        console.log(`[REDMINE_STATUS_UPDATE] Issue #${issueId}: allowed statuses are ${allowedStatuses.map(status => `${status.name || 'Status'} (${status.id})`).join(', ')}`);
-    } else {
-        console.log(`[REDMINE_STATUS_UPDATE] Issue #${issueId}: Redmine did not return allowed statuses; attempting update anyway.`);
-    }
-    if (allowedStatuses.length > 0 && !allowedStatuses.some(status => cleanRouteValue(status.id) === targetStatusId)) {
-        const allowedLabels = allowedStatuses.map(status => `${status.name || 'Status'} (${status.id})`).join(', ');
-        const error = new Error(`Redmine workflow does not allow ${expectedStatusLabel} (${targetStatusId}) from the current status. Allowed: ${allowedLabels || 'none'}.`);
-        error.status = 409;
-        error.allowedStatuses = allowedStatuses;
-        console.warn(`[REDMINE_STATUS_UPDATE] Issue #${issueId}: blocked before PUT. ${error.message}`);
-        throw error;
-    }
-    console.log(`[REDMINE_STATUS_UPDATE] Issue #${issueId}: sending PUT status_id=${targetStatusId} (${expectedStatusLabel}).`);
-    await updateRedmineIssue({
-        baseUrl,
-        apiKey,
-        issueId,
-        issue: {
-            status_id: Number.parseInt(targetStatusId, 10) || targetStatusId,
-            notes
-        }
-    });
-
-    const issueStatus = await fetchConfirmedRedmineIssueStatus({
-        baseUrl,
-        apiKey,
-        issueId,
-        statusIds
-    });
-    console.log(`[REDMINE_STATUS_UPDATE] Issue #${issueId}: Redmine returned status "${issueStatus.status || ''}" (${issueStatus.statusId || ''}) after PUT.`);
-
-    if (matchesExpectedStatus && !matchesExpectedStatus(issueStatus)) {
-        const currentStatus = issueStatus.status || issueStatus.statusId || 'unknown';
-        const error = new Error(`Redmine did not report issue ${issueId} as ${expectedStatusLabel} after update. Current status is ${currentStatus}.`);
-        error.status = 409;
-        error.issueStatus = issueStatus;
-        throw error;
-    }
-
-    return issueStatus;
 };
 const updateClosedRedmineSyncRecordsForIssue = async ({issueId, ticketKey = '', statusId = '', statusName = 'Closed', issueUrl = ''} = {}) => {
     const targetIssueId = cleanRouteValue(issueId);
@@ -1594,7 +1214,7 @@ const checkRedmineTicketRefsForDashboard = async ({baseUrl, apiKey, configuredPr
     let redmineErrorCount = 0;
     console.log(`[${logPrefix}] Checking ${ticketRefs.length} compacted tickets (concurrency ${REDMINE_CHECK_CONCURRENCY})`);
     await runWithConcurrency(ticketRefs, REDMINE_CHECK_CONCURRENCY, async ticket => {
-        const knownIssueId = getKnownRedmineIssueId(ticket, redmineSyncStore);
+        const knownIssueId = getKnownRedmineIssueId(ticket);
         if (!knownIssueId) {
             ticketsNeedingSearch.push(ticket);
             return;
@@ -1606,8 +1226,7 @@ const checkRedmineTicketRefsForDashboard = async ({baseUrl, apiKey, configuredPr
                 apiKey,
                 issueId: knownIssueId,
                 statusMap,
-                statusIds,
-                config
+                statusIds
             });
             resultsByTicketKey.set(ticket.ticketKey, buildTicketStatusFromIssue({
                 ticket,
@@ -1879,8 +1498,7 @@ const refreshStoredRedmineSyncStatuses = async () => {
         const baseUrl = redmineUrl.replace(/\/$/, '');
         const statusIds = await resolveRedmineStatusIds({
             baseUrl,
-            apiKey,
-            config
+            apiKey
         });
         const {stats} = await checkRedmineTicketRefsForDashboard({
             baseUrl,
@@ -2126,10 +1744,10 @@ app.post('/api/config', requireAdmin, async (req, res) => {
     }
 });
 app.get('/api/logs', (req, res) => {
-    res.json(getLogs());
+    res.json(globalLogs);
 });
 app.delete('/api/logs', (req, res) => {
-    clearLogs();
+    globalLogs = [];
     res.json({
         message: 'Logs cleared'
     });
@@ -2173,30 +1791,25 @@ app.get('/api/dashboard/summary', async (req, res) => {
         const findings = await loadFindingsForUser(req.user);
         const scopedFindings = findings.filter(finding => {
             const route = getAutoDefectDojoRoute(finding);
-            if (productId && !routeValueMatches(productId, route.projectId, route.projectName, getRouteEntityKey('product', route.projectId, route.projectName))) return false;
-            if (engagementId && !routeValueMatches(engagementId, route.engagementId, route.engagementName, getRouteEntityKey('engagement', route.engagementId, route.engagementName))) return false;
+            if (productId && route.projectId !== productId) return false;
+            if (engagementId && route.engagementId !== engagementId) return false;
             return true;
         });
         const products = new Map();
         const engagements = new Map();
         findings.forEach(finding => {
             const route = getAutoDefectDojoRoute(finding);
-            const productKey = getRouteEntityKey('product', route.projectId, route.projectName);
-            const engagementKey = getRouteEntityKey('engagement', route.engagementId, route.engagementName);
             if (route.projectId || route.projectName) {
-                products.set(route.projectId || productKey || route.projectName, {
+                products.set(route.projectId || route.projectName, {
                     id: route.projectId || '',
-                    key: productKey,
                     name: route.projectName || route.projectId || 'Unknown product'
                 });
             }
-            if ((!productId || routeValueMatches(productId, route.projectId, route.projectName, productKey)) && (route.engagementId || route.engagementName)) {
-                engagements.set(route.engagementId || engagementKey || route.engagementName, {
+            if ((!productId || route.projectId === productId) && (route.engagementId || route.engagementName)) {
+                engagements.set(route.engagementId || route.engagementName, {
                     id: route.engagementId || '',
-                    key: engagementKey,
                     name: route.engagementName || route.engagementId || 'Unknown engagement',
-                    productId: route.projectId || '',
-                    productKey
+                    productId: route.projectId || ''
                 });
             }
         });
@@ -2204,15 +1817,14 @@ app.get('/api/dashboard/summary', async (req, res) => {
         const ticketCount = predicate => ticketValues.filter(predicate).length;
         res.json({
             defectDojo: {
-                activeFindings: scopedFindings.filter(finding => isStoredFindingActive(finding) && !isStoredFindingMitigated(finding)).length,
+                activeFindings: scopedFindings.filter(isStoredFindingActive).length,
                 mitigatedFindings: scopedFindings.filter(isStoredFindingMitigated).length
             },
             redmine: {
                 ticketNew: ticketCount(ticket => normalizeTicketStatus(ticket.status) === 'new'),
-                ticketInProgress: ticketCount(ticket => isInProgressStatus(ticket.status, ticket.statusId, {}, config)),
-                ticketFeedback: ticketCount(ticket => normalizeTicketStatus(ticket.status) === 'feedback'),
-                ticketResolve: ticketCount(ticket => isResolveStatus(ticket.status, ticket.statusId, {}, config)),
-                ticketClosed: ticketCount(ticket => Boolean(ticket.isClosed) || isClosedStatus(ticket.status, ticket.statusId, {}, config))
+                ticketInProgress: ticketCount(ticket => isInProgressStatus(ticket.status, ticket.statusId)),
+                ticketResolve: ticketCount(ticket => isResolveStatus(ticket.status, ticket.statusId)),
+                ticketClosed: ticketCount(ticket => Boolean(ticket.isClosed) || isClosedStatus(ticket.status, ticket.statusId))
             },
             filters: {
                 products: Array.from(products.values()),
@@ -2227,7 +1839,7 @@ app.get('/api/dashboard/summary', async (req, res) => {
         });
     }
 });
-app.get('/api/sync-history', requireAdmin, async (req, res) => {
+app.get('/api/sync-history', async (req, res) => {
     try {
         if (!database.isEnabled()) return res.json([]);
         res.json(await database.listSyncHistory(req.query));
@@ -2239,7 +1851,7 @@ app.get('/api/sync-history', requireAdmin, async (req, res) => {
         });
     }
 });
-app.get('/api/sync-history/:id', requireAdmin, async (req, res) => {
+app.get('/api/sync-history/:id', async (req, res) => {
     try {
         if (!database.isEnabled()) return res.status(404).json({
             error: 'Sync history is database-backed and PostgreSQL is not enabled'
@@ -2270,14 +1882,7 @@ app.get('/api/compacted-cves', async (req, res) => {
             }));
         }
         const findings = await loadFindingsForUser(req.user);
-        const groups = buildBackendCompactedRedmineTicketRefs(findings).filter(group => {
-            const route = group.route || {};
-            const productKey = getRouteEntityKey('product', route.projectId, route.projectName);
-            const engagementKey = getRouteEntityKey('engagement', route.engagementId, route.engagementName);
-            if (productId && !routeValueMatches(productId, route.projectId, route.projectName, productKey)) return false;
-            if (engagementId && !routeValueMatches(engagementId, route.engagementId, route.engagementName, engagementKey)) return false;
-            return true;
-        }).map(group => {
+        const groups = buildBackendCompactedRedmineTicketRefs(findings).filter(group => (!productId || group.route.projectId === productId) && (!engagementId || group.route.engagementId === engagementId)).map(group => {
             const storedSync = redmineSyncStore.byTicket[group.ticketKey] || ({});
             return {
                 ...group,
@@ -2349,8 +1954,7 @@ app.post('/api/admin/mitigation-queue/:reviewKey/actions', requireAdmin, async (
             const baseUrl = redmineUrl.replace(/\/$/, '');
             const statusIds = redmineUrl && apiKey ? await resolveRedmineStatusIds({
                 baseUrl,
-                apiKey,
-                config
+                apiKey
             }) : {};
             const closedStatusId = cleanRouteValue(statusIds.closed || config.redmineStatusClosedId);
             if (!redmineUrl || !apiKey || !closedStatusId) {
@@ -2379,10 +1983,9 @@ app.post('/api/admin/mitigation-queue/:reviewKey/actions', requireAdmin, async (
                 apiKey,
                 issueId: item.issueId,
                 statusMap,
-                statusIds,
-                config
+                statusIds
             });
-            const closeConfirmed = cleanRouteValue(issueStatus.statusId) === closedStatusId || issueStatus.isClosed || isClosedStatus(issueStatus.status, issueStatus.statusId, statusIds, config);
+            const closeConfirmed = cleanRouteValue(issueStatus.statusId) === closedStatusId || issueStatus.isClosed || isClosedStatus(issueStatus.status, issueStatus.statusId, statusIds);
             if (!closeConfirmed) {
                 return res.status(409).json({
                     error: `Redmine did not report the issue as closed after update. Current status is ${issueStatus.status || issueStatus.statusId || 'unknown'}.`
@@ -2449,8 +2052,7 @@ app.post('/api/redmine/issues/status', requireAdmin, async (req, res) => {
         const baseUrl = redmineUrl.replace(/\/$/, '');
         const statusIds = await resolveRedmineStatusIds({
             baseUrl,
-            apiKey,
-            config
+            apiKey
         });
         const statusMap = await fetchRedmineIssueStatusMap({
             baseUrl,
@@ -2464,8 +2066,7 @@ app.post('/api/redmine/issues/status', requireAdmin, async (req, res) => {
                     apiKey,
                     issueId: ref.issueId,
                     statusMap,
-                    statusIds,
-                    config
+                    statusIds
                 });
                 return {
                     ...status,
@@ -2531,8 +2132,7 @@ app.post('/api/redmine/issues/check', requireAdmin, async (req, res) => {
         const baseUrl = redmineUrl.replace(/\/$/, '');
         const statusIds = await resolveRedmineStatusIds({
             baseUrl,
-            apiKey,
-            config
+            apiKey
         });
         if (database.isEnabled()) {
             syncHistory = await database.createSyncHistory({
@@ -2557,7 +2157,7 @@ app.post('/api/redmine/issues/check', requireAdmin, async (req, res) => {
         const ticketsNeedingSearch = [];
         console.log(`[REDMINE] Checking ${ticketRefs.length} compacted tickets (concurrency ${REDMINE_CHECK_CONCURRENCY})`);
         await runWithConcurrency(ticketRefs, REDMINE_CHECK_CONCURRENCY, async ticket => {
-            const knownIssueId = getKnownRedmineIssueId(ticket, redmineSyncStore);
+            const knownIssueId = getKnownRedmineIssueId(ticket);
             if (!knownIssueId) {
                 ticketsNeedingSearch.push(ticket);
                 return;
@@ -2568,8 +2168,7 @@ app.post('/api/redmine/issues/check', requireAdmin, async (req, res) => {
                     apiKey,
                     issueId: knownIssueId,
                     statusMap,
-                    statusIds,
-                    config
+                    statusIds
                 });
                 resultsByTicketKey.set(ticket.ticketKey, buildTicketStatusFromIssue({
                     ticket,
@@ -2786,7 +2385,7 @@ app.post('/api/redmine/issues', requireAdmin, async (req, res) => {
     const subject = String(issue.subject || '').trim();
     const description = String(issue.description || '').trim();
     const severity = String(issue.severity || '').trim();
-    const priorityId = String(redmine.priorityId || getRedminePriorityIdForSeverity(severity, config) || '').trim();
+    const priorityId = String(redmine.priorityId || getRedminePriorityIdForSeverity(severity) || '').trim();
     const syncKey = String(issue.syncKey || '').trim();
     const findingIds = normalizeFindingIds(issue.findingIds || []);
     const legacySyncKeys = asArray(issue.legacySyncKeys || issue.legacyTicketKeys).map(cleanRouteValue).filter(Boolean);
@@ -2811,7 +2410,7 @@ app.post('/api/redmine/issues', requireAdmin, async (req, res) => {
             issueId: issue.issueId,
             legacySyncKeys,
             findingIds
-        }, redmineSyncStore);
+        });
         if (knownIssueId) {
             try {
                 const statusMap = await fetchRedmineIssueStatusMap({
@@ -2822,8 +2421,7 @@ app.post('/api/redmine/issues', requireAdmin, async (req, res) => {
                     baseUrl,
                     apiKey,
                     issueId: knownIssueId,
-                    statusMap,
-                    config
+                    statusMap
                 });
                 const issueUrl = issueStatus.issueUrl;
                 if (!issueStatus.isClosed) {
@@ -3072,36 +2670,237 @@ app.post('/api/redmine/issues', requireAdmin, async (req, res) => {
         });
     }
 });
-const runDefectDojoPull = async ({
-    url,
-    apiKey,
-    filters,
-    user = null,
-    createHistory = false,
-    syncHistoryId = null,
-    finishHistory = createHistory,
-    broadcastEvent = true,
-    includeFindings = false
-} = {}) => {
+app.post('/api/sync-all', requireAdmin, async (req, res) => {
+    const {url, apiKey, filters, redmine = {}} = req.body;
+    const defectDojoUrl = String(url || config.defectDojoUrl || '').trim();
+    const defectDojoApiKey = String(apiKey || config.defectDojoApiKey || '').trim();
+    const normalizedFilters = normalizePullFilters(filters || config.pullFilters || ({}));
+    const redmineUrl = String(redmine.url || config.redmineUrl || '').trim();
+    const redmineApiKey = String(redmine.apiKey || config.redmineApiKey || '').trim();
+    const configuredProjectId = cleanRouteValue(redmine.projectId || config.redmineProjectId);
+    const trackerId = cleanRouteValue(redmine.trackerId || config.redmineTrackerId);
+    const requestedProductId = getEntityId(normalizedFilters.test__engagement__product);
+    const requestedEngagementId = getEntityId(normalizedFilters.test__engagement);
+    let syncHistory = null;
+    const warnings = [];
+    const errors = [];
+    if (!defectDojoUrl || !defectDojoApiKey) {
+        return res.status(400).json({
+            error: 'DefectDojo URL and API Key are required'
+        });
+    }
+    if (!redmineUrl || !redmineApiKey) {
+        return res.status(400).json({
+            error: 'Redmine URL and API Key are required'
+        });
+    }
+    try {
+        if (database.isEnabled()) {
+            syncHistory = await database.createSyncHistory({
+                syncType: 'Sync All',
+                productId: requestedProductId,
+                engagementId: requestedEngagementId,
+                filters: normalizedFilters,
+                triggeredBy: req.user?.username || '',
+                triggeredRole: req.user?.role || ''
+            });
+        }
+        const localBaseUrl = `http://127.0.0.1:${PORT}`;
+        const pullResponse = await axios.post(`${localBaseUrl}/api/pull`, {
+            url: defectDojoUrl,
+            apiKey: defectDojoApiKey,
+            filters: normalizedFilters
+        }, {
+            headers: {
+                Authorization: req.headers.authorization || ''
+            },
+            timeout: 0
+        });
+        const pullData = pullResponse.data || ({});
+        const baseUrl = redmineUrl.replace(/\/$/, '');
+        const statusIds = await resolveRedmineStatusIds({
+            baseUrl,
+            apiKey: redmineApiKey
+        });
+        let ticketRefs = await loadBackendRedmineCheckTicketRefs();
+        ticketRefs = mergeStoredRedmineSyncTicketRefs(ticketRefs, {
+            productId: requestedProductId,
+            engagementId: requestedEngagementId
+        });
+        ticketRefs = ticketRefs.filter(ticket => {
+            if (requestedProductId && ticket.route?.projectId !== requestedProductId) return false;
+            if (requestedEngagementId && ticket.route?.engagementId !== requestedEngagementId) return false;
+            return true;
+        });
+        const ticketRefByKey = new Map(ticketRefs.map(ticket => [ticket.ticketKey, ticket]));
+        const {results, stats} = await checkRedmineTicketRefsForDashboard({
+            baseUrl,
+            apiKey: redmineApiKey,
+            configuredProjectId,
+            trackerId,
+            ticketRefs,
+            logPrefix: 'SYNC_ALL',
+            persist: true,
+            statusIds,
+            pruneScope: {
+                productId: requestedProductId,
+                engagementId: requestedEngagementId
+            }
+        });
+        let createdOrUpdated = 0;
+        let priorityUpdated = 0;
+        const statusByTicketKey = new Map(results.map(result => [result.ticketKey, result]));
+        const ticketsToUpdatePriority = ticketRefs.filter(ticket => {
+            const status = statusByTicketKey.get(ticket.ticketKey);
+            const priorityId = getRedminePriorityIdForSeverity(ticket.severity || '');
+            return status?.action === 'existing_open' && status.issueId && priorityId && getRedmineIssuePriorityId(status.issue) !== priorityId;
+        });
+        const ticketsToCreate = ticketRefs.filter(ticket => statusByTicketKey.get(ticket.ticketKey)?.action === 'not_found');
+        await runWithConcurrency(ticketsToUpdatePriority, REDMINE_CHECK_CONCURRENCY, async ticket => {
+            const status = statusByTicketKey.get(ticket.ticketKey);
+            const priorityId = getRedminePriorityIdForSeverity(ticket.severity || '');
+            try {
+                const changed = await updateOpenRedmineIssuePriorityIfNeeded({
+                    baseUrl,
+                    apiKey: redmineApiKey,
+                    issue: status.issue,
+                    issueId: status.issueId,
+                    priorityId,
+                    severity: ticket.severity || ''
+                });
+                if (changed) priorityUpdated += 1;
+            } catch (error) {
+                const detail = error.response?.data || error.message;
+                errors.push(detail);
+                console.warn(`[SYNC_ALL] Could not update Redmine ticket priority ${ticket.ticketKey}: ${JSON.stringify(detail)}`);
+            }
+        }, {
+            onProgress: createProgressLogger('Sync All Redmine ticket priorities updated', ticketsToUpdatePriority.length, 'SYNC_ALL')
+        });
+        await runWithConcurrency(ticketsToCreate, REDMINE_CHECK_CONCURRENCY, async ticket => {
+            const detailedTicket = ticketRefByKey.get(ticket.ticketKey) || ticket;
+            const description = detailedTicket.superTicketMarkdown || buildAutoSuperTicketMarkdown({
+                ...detailedTicket,
+                defectDojoProjectId: detailedTicket.defectDojoProjectId || detailedTicket.route?.projectId || '',
+                defectDojoProjectName: detailedTicket.defectDojoProjectName || detailedTicket.route?.projectName || '',
+                defectDojoEngagementId: detailedTicket.defectDojoEngagementId || detailedTicket.route?.engagementId || '',
+                defectDojoEngagementName: detailedTicket.defectDojoEngagementName || detailedTicket.route?.engagementName || ''
+            });
+            try {
+                const severity = detailedTicket.severity || ticket.severity || '';
+                await axios.post(`${localBaseUrl}/api/redmine/issues`, {
+                    redmine: {
+                        url: redmineUrl,
+                        apiKey: redmineApiKey,
+                        projectId: configuredProjectId,
+                        trackerId,
+                        priorityId: getRedminePriorityIdForSeverity(severity)
+                    },
+                    issue: {
+                        subject: detailedTicket.title || ticket.title || detailedTicket.subject || ticket.subject,
+                        description,
+                        severity,
+                        syncKey: ticket.syncKey,
+                        legacySyncKeys: ticket.legacySyncKeys || [],
+                        findingIds: ticket.findingIds,
+                        route: ticket.route,
+                        cveId: ticket.cveId
+                    }
+                }, {
+                    headers: {
+                        Authorization: req.headers.authorization || ''
+                    },
+                    timeout: 0
+                });
+                createdOrUpdated += 1;
+            } catch (error) {
+                const detail = error.response?.data || error.message;
+                errors.push(detail);
+                console.warn(`[SYNC_ALL] Could not create Redmine ticket ${ticket.ticketKey}: ${JSON.stringify(detail)}`);
+            }
+        }, {
+            onProgress: createProgressLogger('Sync All Redmine tickets created', ticketsToCreate.length, 'SYNC_ALL')
+        });
+        const recheck = await runMitigationRecheck({
+            baseUrl,
+            apiKey: redmineApiKey,
+            syncHistoryId: syncHistory?.id || null,
+            statusIds,
+            defectDojoBaseUrl: defectDojoUrl,
+            defectDojoApiKey,
+            filters: normalizedFilters
+        });
+        warnings.push(...recheck.warnings);
+        if (syncHistory && database.isEnabled()) {
+            syncHistory = await database.finishSyncHistory(syncHistory.id, {
+                status: errors.length > 0 ? 'partial' : 'success',
+                findingsPulled: pullData.count || 0,
+                ticketsPulled: stats.checkedCount || 0,
+                findingsUpdated: (pullData.updated || 0) + (pullData.staleActiveUpdated || 0),
+                ticketsUpdated: (stats.changedCount || 0) + createdOrUpdated + priorityUpdated + recheck.reopened,
+                findingsMitigated: recheck.reviewQueued,
+                findingsStillActive: recheck.reopened,
+                warnings,
+                errors
+            });
+        }
+        broadcastDashboardSync('sync-all-complete');
+        res.json({
+            message: 'Sync All complete',
+            syncHistory,
+            pull: pullData,
+            redmine: {
+                checked: stats.checkedCount || 0,
+                changed: stats.changedCount || 0,
+                priorityUpdated,
+                createdOrUpdated,
+                failed: errors.length
+            },
+            mitigationRecheck: recheck
+        });
+    } catch (error) {
+        console.error('Error during Sync All:', error.message);
+        if (syncHistory && database.isEnabled()) {
+            try {
+                syncHistory = await database.finishSyncHistory(syncHistory.id, {
+                    status: 'failed',
+                    errors: [error.response?.data || error.message]
+                });
+            } catch (historyError) {
+                console.warn(`Could not finish failed Sync All history: ${historyError.message}`);
+            }
+        }
+        res.status(error.response?.status || 500).json({
+            error: 'Sync All failed',
+            details: error.response?.data || error.message,
+            syncHistory
+        });
+    }
+});
+app.post('/api/pull', requireAdmin, async (req, res) => {
+    const {url, apiKey, filters} = req.body;
     let syncHistory = null;
     const syncWarnings = [];
-    let historyId = syncHistoryId || null;
+    if (!url || !apiKey) {
+        return res.status(400).json({
+            error: 'URL and API Key are required'
+        });
+    }
     try {
         let baseUrl = url.trim();
         baseUrl = baseUrl.replace(/\/$/, '').replace(/\/api\/v2$/, '');
         const normalizedFilters = normalizePullFilters(filters);
         const requestedProductId = getEntityId(normalizedFilters.test__engagement__product);
         const requestedEngagementId = getEntityId(normalizedFilters.test__engagement);
-        if (createHistory && database.isEnabled()) {
+        if (database.isEnabled()) {
             syncHistory = await database.createSyncHistory({
                 syncType: 'DefectDojo Pull',
                 productId: requestedProductId,
                 engagementId: requestedEngagementId,
                 filters: normalizedFilters,
-                triggeredBy: user?.username || '',
-                triggeredRole: user?.role || ''
+                triggeredBy: req.user?.username || '',
+                triggeredRole: req.user?.role || ''
             });
-            historyId = syncHistory.id;
         }
         const selectedSeverities = normalizedFilters.severity;
         const shouldFilterBySeverity = selectedSeverities.length > 0 && selectedSeverities.length < SEVERITY_VALUES.length;
@@ -3166,7 +2965,6 @@ const runDefectDojoPull = async ({
         if (rawFindingCount !== allFindings.length) {
             console.log(`[PULL] Removed ${rawFindingCount - allFindings.length} duplicate finding records before endpoint resolution`);
         }
-        const severityBreakdown = buildSeverityBreakdown(allFindings);
         await enrichFindingsWithDefectDojoContext({
             baseUrl,
             apiKey,
@@ -3300,14 +3098,14 @@ const runDefectDojoPull = async ({
         }
         console.log(`[PULL] Saving ${allFindings.length} findings to ${database.isEnabled() ? 'PostgreSQL' : 'JSON storage'}`);
         const storageResult = await saveFindingsToStore(allFindings, {
-            syncHistoryId: historyId
+            syncHistoryId: syncHistory?.id || null
         });
         let staleActiveResult = {
             updated: 0
         };
-        if (database.isEnabled() && historyId && shouldMarkUnseenActiveFindingsInactive(normalizedFilters)) {
+        if (database.isEnabled() && syncHistory?.id && shouldMarkUnseenActiveFindingsInactive(normalizedFilters)) {
             staleActiveResult = await database.markUnseenActiveFindingsInactiveForSync({
-                syncHistoryId: historyId,
+                syncHistoryId: syncHistory.id,
                 productId: requestedProductId,
                 engagementId: requestedEngagementId,
                 severities: normalizedFilters.severity
@@ -3319,32 +3117,32 @@ const runDefectDojoPull = async ({
         }
         emptyFindingsCache();
         await restartScanPathWatcher();
-        if (broadcastEvent) {
-            broadcastDashboardSync('defectdojo-pull-complete');
-        }
+        broadcastDashboardSync('defectdojo-pull-complete');
         console.log(`[PULL] Pull complete: saved ${allFindings.length} findings`);
-        if (finishHistory && syncHistory && database.isEnabled()) {
+        if (syncHistory && database.isEnabled()) {
             syncHistory = await database.finishSyncHistory(syncHistory.id, {
                 status: syncWarnings.length > 0 ? 'partial' : 'success',
                 findingsPulled: allFindings.length,
                 findingsUpdated: storageResult.updated || 0,
                 findingsMitigated: allFindings.filter(finding => finding.is_mitigated === true || finding.mitigated === true || Boolean(finding.mitigated_at || finding.mitigation_confirmed || finding.mitigation_confirmed_at)).length,
                 findingsStillActive: allFindings.filter(finding => finding.active !== false && finding.is_mitigated !== true && finding.mitigated !== true && !finding.mitigated_at && !finding.mitigation_confirmed && !finding.mitigation_confirmed_at).length,
-                severityBreakdown,
                 warnings: syncWarnings
             });
         }
-        return {
+        res.json({
             message: `Successfully pulled ${allFindings.length} findings`,
             ...storageResult,
             staleActiveUpdated: staleActiveResult.updated || 0,
-            severityBreakdown,
             syncHistory,
-            count: allFindings.length,
-            findings: includeFindings ? allFindings : undefined
-        };
+            count: allFindings.length
+        });
     } catch (error) {
-        if (finishHistory && syncHistory && database.isEnabled()) {
+        console.error('Error pulling from DefectDojo:', error.message);
+        if (error.response) {
+            console.error('Response data:', error.response.data);
+            console.error('Response status:', error.response.status);
+        }
+        if (syncHistory && database.isEnabled()) {
             try {
                 syncHistory = await database.finishSyncHistory(syncHistory.id, {
                     status: 'failed',
@@ -3354,296 +3152,10 @@ const runDefectDojoPull = async ({
                 console.warn(`Could not finish failed sync history: ${historyError.message}`);
             }
         }
-        error.syncHistory = syncHistory;
-        throw error;
-    }
-};
-
-app.post('/api/sync-all', requireAdmin, async (req, res) => {
-    const {url, apiKey, filters, redmine = {}} = req.body;
-    const defectDojoUrl = String(url || config.defectDojoUrl || '').trim();
-    const defectDojoApiKey = String(apiKey || config.defectDojoApiKey || '').trim();
-    const normalizedFilters = normalizePullFilters(filters || config.pullFilters || ({}));
-    const redmineUrl = String(redmine.url || config.redmineUrl || '').trim();
-    const redmineApiKey = String(redmine.apiKey || config.redmineApiKey || '').trim();
-    const configuredProjectId = cleanRouteValue(redmine.projectId || config.redmineProjectId);
-    const trackerId = cleanRouteValue(redmine.trackerId || config.redmineTrackerId);
-    const requestedProductId = getEntityId(normalizedFilters.test__engagement__product);
-    const requestedEngagementId = getEntityId(normalizedFilters.test__engagement);
-    const shouldSplitSyncHistory = !requestedProductId && !requestedEngagementId;
-    let syncHistory = null;
-    const warnings = [];
-    const errors = [];
-    if (!defectDojoUrl || !defectDojoApiKey) {
-        return res.status(400).json({
-            error: 'DefectDojo URL and API Key are required'
-        });
-    }
-    if (!redmineUrl || !redmineApiKey) {
-        return res.status(400).json({
-            error: 'Redmine URL and API Key are required'
-        });
-    }
-    try {
-        if (database.isEnabled()) {
-            syncHistory = await database.createSyncHistory({
-                syncType: 'Sync All',
-                productId: requestedProductId,
-                engagementId: requestedEngagementId,
-                filters: normalizedFilters,
-                triggeredBy: req.user?.username || '',
-                triggeredRole: req.user?.role || ''
-            });
-        }
-        const localBaseUrl = `http://127.0.0.1:${PORT}`;
-        const pullData = await runDefectDojoPull({
-            url: defectDojoUrl,
-            apiKey: defectDojoApiKey,
-            filters: normalizedFilters,
-            user: req.user,
-            syncHistoryId: syncHistory?.id || null,
-            finishHistory: false,
-            broadcastEvent: false,
-            includeFindings: shouldSplitSyncHistory
-        });
-        const baseUrl = redmineUrl.replace(/\/$/, '');
-        const statusIds = await resolveRedmineStatusIds({
-            baseUrl,
-            apiKey: redmineApiKey,
-            config
-        });
-        let ticketRefs = await loadBackendRedmineCheckTicketRefs();
-        ticketRefs = mergeStoredRedmineSyncTicketRefs(ticketRefs, {
-            productId: requestedProductId,
-            engagementId: requestedEngagementId
-        });
-        ticketRefs = ticketRefs.filter(ticket => {
-            if (requestedProductId && ticket.route?.projectId !== requestedProductId) return false;
-            if (requestedEngagementId && ticket.route?.engagementId !== requestedEngagementId) return false;
-            return true;
-        });
-        const ticketRefByKey = new Map(ticketRefs.map(ticket => [ticket.ticketKey, ticket]));
-        const {results, stats} = await checkRedmineTicketRefsForDashboard({
-            baseUrl,
-            apiKey: redmineApiKey,
-            configuredProjectId,
-            trackerId,
-            ticketRefs,
-            logPrefix: 'SYNC_ALL',
-            persist: true,
-            statusIds,
-            pruneScope: {
-                productId: requestedProductId,
-                engagementId: requestedEngagementId
-            }
-        });
-        let createdOrUpdated = 0;
-        let priorityUpdated = 0;
-        const createdOrUpdatedTicketKeys = new Set();
-        const priorityUpdatedTicketKeys = new Set();
-        const statusByTicketKey = new Map(results.map(result => [result.ticketKey, result]));
-        const ticketsToUpdatePriority = ticketRefs.filter(ticket => {
-            const status = statusByTicketKey.get(ticket.ticketKey);
-            const priorityId = getRedminePriorityIdForSeverity(ticket.severity || '', config);
-            return status?.action === 'existing_open' && status.issueId && priorityId && getRedmineIssuePriorityId(status.issue) !== priorityId;
-        });
-        const ticketsToCreate = ticketRefs.filter(ticket => statusByTicketKey.get(ticket.ticketKey)?.action === 'not_found');
-        await runWithConcurrency(ticketsToUpdatePriority, REDMINE_CHECK_CONCURRENCY, async ticket => {
-            const status = statusByTicketKey.get(ticket.ticketKey);
-            const priorityId = getRedminePriorityIdForSeverity(ticket.severity || '', config);
-            try {
-                const changed = await updateOpenRedmineIssuePriorityIfNeeded({
-                    baseUrl,
-                    apiKey: redmineApiKey,
-                    issue: status.issue,
-                    issueId: status.issueId,
-                    priorityId,
-                    severity: ticket.severity || ''
-                });
-                if (changed) priorityUpdated += 1;
-                if (changed) priorityUpdatedTicketKeys.add(ticket.ticketKey);
-            } catch (error) {
-                const detail = error.response?.data || error.message;
-                errors.push(detail);
-                console.warn(`[SYNC_ALL] Could not update Redmine ticket priority ${ticket.ticketKey}: ${JSON.stringify(detail)}`);
-            }
-        }, {
-            onProgress: createProgressLogger('Sync All Redmine ticket priorities updated', ticketsToUpdatePriority.length, 'SYNC_ALL')
-        });
-        await runWithConcurrency(ticketsToCreate, REDMINE_CHECK_CONCURRENCY, async ticket => {
-            const detailedTicket = ticketRefByKey.get(ticket.ticketKey) || ticket;
-            const description = detailedTicket.superTicketMarkdown || buildAutoSuperTicketMarkdown({
-                ...detailedTicket,
-                defectDojoProjectId: detailedTicket.defectDojoProjectId || detailedTicket.route?.projectId || '',
-                defectDojoProjectName: detailedTicket.defectDojoProjectName || detailedTicket.route?.projectName || '',
-                defectDojoEngagementId: detailedTicket.defectDojoEngagementId || detailedTicket.route?.engagementId || '',
-                defectDojoEngagementName: detailedTicket.defectDojoEngagementName || detailedTicket.route?.engagementName || ''
-            });
-            try {
-                const severity = detailedTicket.severity || ticket.severity || '';
-                await axios.post(`${localBaseUrl}/api/redmine/issues`, {
-                    redmine: {
-                        url: redmineUrl,
-                        apiKey: redmineApiKey,
-                        projectId: configuredProjectId,
-                        trackerId,
-                        priorityId: getRedminePriorityIdForSeverity(severity, config)
-                    },
-                    issue: {
-                        subject: detailedTicket.title || ticket.title || detailedTicket.subject || ticket.subject,
-                        description,
-                        severity,
-                        syncKey: ticket.syncKey,
-                        legacySyncKeys: ticket.legacySyncKeys || [],
-                        findingIds: ticket.findingIds,
-                        route: ticket.route,
-                        cveId: ticket.cveId
-                    }
-                }, {
-                    headers: {
-                        Authorization: req.headers.authorization || ''
-                    },
-                    timeout: 0
-                });
-                createdOrUpdated += 1;
-                createdOrUpdatedTicketKeys.add(ticket.ticketKey);
-            } catch (error) {
-                const detail = error.response?.data || error.message;
-                errors.push(detail);
-                console.warn(`[SYNC_ALL] Could not create Redmine ticket ${ticket.ticketKey}: ${JSON.stringify(detail)}`);
-            }
-        }, {
-            onProgress: createProgressLogger('Sync All Redmine tickets created', ticketsToCreate.length, 'SYNC_ALL')
-        });
-        const recheckSourceRecords = ticketRefs.map(ticket => {
-            const status = statusByTicketKey.get(ticket.ticketKey);
-            if (!status?.issueId) return null;
-            return {
-                ...(redmineSyncStore.byTicket?.[ticket.syncKey || ticket.ticketKey] || {}),
-                syncKey: ticket.syncKey || ticket.ticketKey,
-                ticketKey: ticket.ticketKey,
-                issueId: status.issueId,
-                issueUrl: status.issueUrl,
-                status: status.status || status.issue?.status?.name || '',
-                statusId: status.statusId || status.issue?.status?.id || '',
-                findingIds: ticket.findingIds,
-                legacySyncKeys: ticket.legacySyncKeys || [],
-                route: ticket.route || ({}),
-                subject: ticket.subject || ticket.title || '',
-                cveId: ticket.cveId || ''
-            };
-        }).filter(Boolean);
-        const recheck = await runMitigationRecheck({
-            baseUrl,
-            apiKey: redmineApiKey,
-            syncHistoryId: syncHistory?.id || null,
-            statusIds,
-            defectDojoBaseUrl: defectDojoUrl,
-            defectDojoApiKey,
-            filters: normalizedFilters,
-            recheckSourceRecords
-        });
-        warnings.push(...recheck.warnings);
-        const finalStatus = errors.length > 0 ? 'partial' : 'success';
-        let splitSyncHistories = [];
-        if (syncHistory && database.isEnabled()) {
-            syncHistory = await database.finishSyncHistory(syncHistory.id, {
-                status: finalStatus,
-                findingsPulled: pullData.count || 0,
-                ticketsPulled: stats.checkedCount || 0,
-                findingsUpdated: (pullData.updated || 0) + (pullData.staleActiveUpdated || 0),
-                ticketsUpdated: (stats.changedCount || 0) + createdOrUpdated + priorityUpdated + recheck.reopened,
-                findingsMitigated: recheck.reviewQueued,
-                findingsStillActive: recheck.reopened,
-                severityBreakdown: pullData.severityBreakdown || {},
-                warnings,
-                errors
-            });
-            if (shouldSplitSyncHistory) {
-                splitSyncHistories = await createSyncAllSplitHistoryRows({
-                    parentSyncHistory: syncHistory,
-                    normalizedFilters,
-                    findings: pullData.findings || [],
-                    ticketRefs,
-                    checkResults: results,
-                    priorityUpdatedTicketKeys,
-                    createdOrUpdatedTicketKeys,
-                    recheckRecords: recheck.records || [],
-                    pullData,
-                    redmineChangedCount: stats.changedCount || 0,
-                    status: finalStatus,
-                    warnings,
-                    errors,
-                    user: req.user
-                });
-            }
-        }
-        const pullResponseData = {
-            ...pullData
-        };
-        delete pullResponseData.findings;
-        broadcastDashboardSync('sync-all-complete');
-        res.json({
-            message: 'Sync All complete',
-            syncHistory,
-            syncHistories: splitSyncHistories,
-            pull: pullResponseData,
-            redmine: {
-                checked: stats.checkedCount || 0,
-                changed: stats.changedCount || 0,
-                priorityUpdated,
-                createdOrUpdated,
-                failed: errors.length
-            },
-            mitigationRecheck: recheck
-        });
-    } catch (error) {
-        console.error('Error during Sync All:', error.message);
-        if (syncHistory && database.isEnabled()) {
-            try {
-                syncHistory = await database.finishSyncHistory(syncHistory.id, {
-                    status: 'failed',
-                    errors: [error.response?.data || error.message]
-                });
-            } catch (historyError) {
-                console.warn(`Could not finish failed Sync All history: ${historyError.message}`);
-            }
-        }
-        res.status(error.response?.status || 500).json({
-            error: 'Sync All failed',
-            details: error.response?.data || error.message,
-            syncHistory
-        });
-    }
-});
-app.post('/api/pull', requireAdmin, async (req, res) => {
-    const {url, apiKey, filters} = req.body;
-    if (!url || !apiKey) {
-        return res.status(400).json({
-            error: 'URL and API Key are required'
-        });
-    }
-    try {
-        const pullData = await runDefectDojoPull({
-            url,
-            apiKey,
-            filters,
-            user: req.user,
-            createHistory: true,
-            finishHistory: true,
-            broadcastEvent: true
-        });
-        res.json(pullData);
-    } catch (error) {
-        console.error('Error pulling from DefectDojo:', error.message);
-        if (error.response) {
-            console.error('Response data:', error.response.data);
-            console.error('Response status:', error.response.status);
-        }
         res.status(500).json({
             error: 'Failed to pull from DefectDojo',
             details: error.response?.data || error.message,
-            syncHistory: error.syncHistory || null
+            syncHistory
         });
     }
 });
@@ -3708,12 +3220,6 @@ const startServer = async () => {
         await loadRedmineSyncStore();
         await importFileFindingsToPostgresIfEmpty();
         configureStaticClient();
-        // Global error handler for Express 5
-        app.use((err, req, res, next) => {
-            console.error('[EXPRESS ERROR]', req.method, req.path, err.message, err.stack);
-            if (res.headersSent) return next(err);
-            res.status(500).json({ error: err.message });
-        });
         app.listen(PORT, () => {
             console.log(`Backend server running at http://localhost:${PORT}`);
             console.log(`Storage mode: ${database.isEnabled() ? 'postgresql' : 'json'}`);

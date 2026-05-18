@@ -1,0 +1,1238 @@
+// Finding compaction and Redmine ticket generation.
+
+const { asArray, asFindingIdArray, cleanRouteValue } = require('./utils.cjs');
+
+const AUTO_UPGRADE_TARGET_RE = /upgrade\s+to\s+(.+?)\s+(?:version\s+)?([0-9][0-9a-z.-]*)\s*(?:or\s+later)?\.?/i;
+const AUTO_TITLE_VERSION_RE = /^(.+?)\s+.*?(?:<|version)\s+([0-9][0-9a-z.-]*)/i;
+const AUTO_LESS_THAN_VERSION_RE = /<\s*([0-9][0-9a-z.-]*)/i;
+
+const normalizeAutoText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+const normalizeAutoGroupText = (value) => (
+    normalizeAutoText(value)
+        .toLowerCase()
+        .replace(AUTO_UPGRADE_TARGET_RE, (_match, software) => `upgrade to ${normalizeAutoText(software).replace(/[.:;,-]+$/g, '').toLowerCase()} version <version> or later`)
+        .replace(/\bversion\s+[0-9][0-9a-z.-]*/gi, 'version <version>')
+);
+
+const AUTO_SEVERITY_RANK = {
+    None: 0,
+    Info: 0,
+    Informational: 0,
+    Low: 1,
+    Medium: 2,
+    High: 3,
+    Critical: 4
+};
+
+const highestSeverity = (current, next) => (
+    (AUTO_SEVERITY_RANK[next] || 0) > (AUTO_SEVERITY_RANK[current] || 0) ? next : current
+);
+
+const isStoredFindingMitigated = (finding = {}) => (
+    finding.is_mitigated === true
+    || finding.mitigated === true
+    || String(finding.is_mitigated || '').toLowerCase() === 'true'
+    || String(finding.mitigated || '').toLowerCase() === 'true'
+    || Boolean(finding.mitigated_at || finding.mitigation_confirmed || finding.mitigation_confirmed_at)
+);
+
+const isStoredFindingActive = (finding = {}) => {
+    if (finding.active === false || String(finding.active || '').toLowerCase() === 'false') return false;
+    return !isStoredFindingMitigated(finding);
+};
+
+const cleanAutoBlockText = (value = '') => (
+    String(value || '')
+        .replace(/\r\n/g, '\n')
+        .split('\n')
+        .map(line => line.trimEnd())
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+);
+const compactAutoDefectDojoText = (value = '') => (
+    cleanAutoBlockText(value)
+        .replace(/\busing the following request\s*:\s*https?:\/\/\S+/i, 'using a request to the affected endpoint')
+        .replace(/\s*This produced the following truncated output[\s\S]*$/i, '\n\nEvidence output omitted. See DefectDojo finding for raw truncated output.')
+);
+const getAutoDescriptionText = (finding) => compactAutoDefectDojoText(finding.description || '');
+const getAutoImpactText = (finding) => compactAutoDefectDojoText(finding.impact || '');
+const getAutoMitigationText = (finding) => normalizeAutoText(finding.mitigation || finding.solution || finding.remediation || '');
+
+const getAutoStrictFindingKey = (finding) => ([
+    'strict',
+    normalizeAutoGroupText(finding.title || finding.name),
+    normalizeAutoGroupText(getAutoMitigationText(finding)),
+    normalizeAutoGroupText(getAutoDescriptionText(finding)),
+    normalizeAutoGroupText(getAutoImpactText(finding))
+].join('|'));
+
+const parseAutoUpgradeText = (value) => {
+    const match = normalizeAutoText(value).match(AUTO_UPGRADE_TARGET_RE);
+    if (!match) return null;
+
+    return {
+        software: normalizeAutoText(match[1]).replace(/[.:;,-]+$/g, '').trim(),
+        version: match[2].replace(/\.$/, '')
+    };
+};
+
+const parseAutoUpgradeTarget = (finding) => {
+    const sources = [getAutoMitigationText(finding), finding.title, finding.name].filter(Boolean);
+    for (const source of sources) {
+        const target = parseAutoUpgradeText(source);
+        if (target) return target;
+    }
+
+    const titleMatch = normalizeAutoText(finding.title || finding.name).match(AUTO_TITLE_VERSION_RE);
+    if (!titleMatch) return null;
+
+    return {
+        software: normalizeAutoText(titleMatch[1]).replace(/[.:;,-]+$/g, '').trim(),
+        version: titleMatch[2].replace(/\.$/, '')
+    };
+};
+
+const getAutoLegacyCompactGroupKey = (finding) => {
+    const target = parseAutoUpgradeTarget(finding);
+    const mitigationText = getAutoMitigationText(finding);
+    if (target) return `upgrade|${normalizeAutoGroupText(target.software)}`;
+
+    return [
+        'finding',
+        normalizeAutoGroupText(finding.title || finding.name),
+        normalizeAutoGroupText(mitigationText),
+        normalizeAutoGroupText(getAutoDescriptionText(finding)),
+        normalizeAutoGroupText(getAutoImpactText(finding))
+    ].join('|');
+};
+
+const getAutoKnownNoCveFamily = (finding = {}) => {
+    const title = normalizeAutoGroupText(finding.title || finding.name);
+    const hasSslOrTls = /\b(?:ssl|tls)\b/i.test(title);
+    const hasCertificate = /\bcert(?:ificate)?s?\b/i.test(title);
+    const hasTrustSignal = /cannot be trusted|not trusted|untrusted|self[-\s]?signed|invalid chain|certificate chain|expired|hostname|common[-\s]?name|name mismatch|unknown ca|unrecognized ca/i.test(title);
+    const isProtocolOrCipher = /\b(?:protocol|cipher|sslv2|sslv3|tlsv1|sweet32|beast|poodle)\b/i.test(title);
+
+    if (hasSslOrTls && hasCertificate && hasTrustSignal && !isProtocolOrCipher) {
+        return {
+            key: 'ssl-certificate-trust',
+            title: 'SSL Certificate Trust Issues'
+        };
+    }
+
+    return null;
+};
+
+const tokenizeAutoVersion = (value) => (
+    String(value || '0')
+        .split(/[._+-]/)
+        .map(part => {
+            const numeric = Number.parseInt(part, 10);
+            return Number.isNaN(numeric) ? part.toLowerCase() : numeric;
+        })
+);
+
+const compareAutoVersions = (a, b) => {
+    const left = tokenizeAutoVersion(a);
+    const right = tokenizeAutoVersion(b);
+    const maxLength = Math.max(left.length, right.length);
+
+    for (let i = 0; i < maxLength; i += 1) {
+        const leftPart = left[i] ?? 0;
+        const rightPart = right[i] ?? 0;
+        if (typeof leftPart === 'number' && typeof rightPart === 'number') {
+            if (leftPart !== rightPart) return leftPart > rightPart ? 1 : -1;
+            continue;
+        }
+
+        const comparison = String(leftPart).localeCompare(String(rightPart), undefined, { numeric: true });
+        if (comparison !== 0) return comparison;
+    }
+
+    return 0;
+};
+
+const firstAutoRouteValue = (...values) => {
+    for (const value of values) {
+        if (value && typeof value === 'object') continue;
+        const cleaned = normalizeAutoText(value);
+        const urlIdMatch = cleaned.match(/\/(\d+)\/?$/);
+        if (urlIdMatch) return urlIdMatch[1];
+        if (cleaned) return cleaned;
+    }
+    return '';
+};
+
+const firstAutoRouteName = (...values) => {
+    for (const value of values) {
+        if (value && typeof value === 'object') continue;
+        const cleaned = normalizeAutoText(value);
+        if (cleaned && !/^\d+$/.test(cleaned)) return cleaned;
+    }
+    return '';
+};
+
+const getAutoDefectDojoRoute = (finding) => {
+    const explicitRoute = finding.defectdojo_route && typeof finding.defectdojo_route === 'object' ? finding.defectdojo_route : {};
+    const test = finding.test && typeof finding.test === 'object' ? finding.test : {};
+    const engagement = finding.engagement && typeof finding.engagement === 'object'
+        ? finding.engagement
+        : (test.engagement && typeof test.engagement === 'object' ? test.engagement : {});
+    const product = finding.product && typeof finding.product === 'object'
+        ? finding.product
+        : (engagement.product && typeof engagement.product === 'object' ? engagement.product : {});
+
+    return {
+        projectId: firstAutoRouteValue(finding.product_id, explicitRoute.projectId, finding.product, product.id, finding.test__engagement__product, engagement.product_id, test.product_id),
+        projectName: firstAutoRouteName(finding.product_name, explicitRoute.projectName, product.name, finding.product, engagement.product_name, test.product_name),
+        engagementId: firstAutoRouteValue(finding.engagement_id, explicitRoute.engagementId, finding.engagement, engagement.id, finding.test__engagement, test.engagement_id),
+        engagementName: firstAutoRouteName(finding.engagement_name, explicitRoute.engagementName, engagement.name, finding.engagement, test.engagement_name)
+    };
+};
+
+const stableAutoHash = (value) => {
+    const text = String(value || '');
+    let h1 = 0xdeadbeef;
+    let h2 = 0x41c6ce57;
+
+    for (let i = 0; i < text.length; i += 1) {
+        const ch = text.charCodeAt(i);
+        h1 = Math.imul(h1 ^ ch, 2654435761);
+        h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+};
+
+const sortAutoStrings = (values) => asArray(values).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+
+const sortAutoFindingIds = (ids = []) => (
+    sortAutoStrings(new Set(asFindingIdArray(ids).map(id => normalizeAutoText(id)).filter(Boolean)))
+        .map(id => (/^\d+$/.test(id) ? Number.parseInt(id, 10) : id))
+);
+
+const collectAutoCveIds = (finding = {}) => {
+    const ids = new Set();
+    const pushId = (value) => {
+        if (value && typeof value === 'object') {
+            pushId(value.vulnerability_id || value.name || value.id);
+            return;
+        }
+        const cleaned = normalizeAutoText(value);
+        if (cleaned && cleaned.toLowerCase() !== 'none' && cleaned.toLowerCase() !== 'n/a') {
+            ids.add(cleaned);
+        }
+    };
+
+    if (Array.isArray(finding.vulnerability_ids)) finding.vulnerability_ids.forEach(pushId);
+    if (Array.isArray(finding.cves)) finding.cves.forEach(pushId);
+    if (Array.isArray(finding.cve_ids)) finding.cve_ids.forEach(pushId);
+    pushId(finding.cve || finding.CVE);
+    return sortAutoStrings(ids);
+};
+
+const resolveAutoCompactionFamily = (finding = {}) => {
+    const cveIds = collectAutoCveIds(finding);
+    const upgradeTarget = parseAutoUpgradeTarget(finding);
+
+    if (upgradeTarget) {
+        const familyKey = `upgrade|${normalizeAutoGroupText(upgradeTarget.software)}`;
+        return {
+            cveIds,
+            familyKey,
+            familyTitle: getAutoSoftwareFamilyTitle(upgradeTarget.software, [finding.title || finding.name || '']) || `${upgradeTarget.software} Vulnerabilities`,
+            softwareFamily: upgradeTarget.software,
+            reason: 'upgrade-family',
+            isSoftwareFamily: true
+        };
+    }
+
+    const knownFamily = cveIds.length === 0 ? getAutoKnownNoCveFamily(finding) : null;
+    if (knownFamily) {
+        return {
+            cveIds,
+            familyKey: `known|${knownFamily.key}`,
+            familyTitle: knownFamily.title,
+            softwareFamily: '',
+            reason: 'known-no-cve-family',
+            isSoftwareFamily: false
+        };
+    }
+
+    if (cveIds.length > 0) {
+        return {
+            cveIds,
+            familyKey: `cve|${cveIds.join(',')}`,
+            familyTitle: '',
+            softwareFamily: '',
+            reason: 'same-cve',
+            isSoftwareFamily: false
+        };
+    }
+
+    return {
+        cveIds,
+        familyKey: getAutoStrictFindingKey(finding),
+        familyTitle: '',
+        softwareFamily: '',
+        reason: 'strict-fingerprint',
+        isSoftwareFamily: false
+    };
+};
+
+const AUTO_SOURCE_EVIDENCE_RE = /\b(?:URL|URI)\s*:\s*https?:\/\/\S+(?:\s+\([^)]*\))?(?:\s+(?:Installed|Detected|Current|Fixed|Affected) version\s*:\s*\S+)*|\bVersion source\s*:\s*\S+(?:\s+(?!(?:Installed|Detected|Current|Fixed|Affected) version\s*:)\S+)*(?:\s+(?:Installed|Detected|Current|Fixed|Affected) version\s*:\s*\S+)*/gi;
+
+const cleanAutoTextSourceBody = (text = '') => (
+    compactAutoDefectDojoText(text)
+        .replace(AUTO_SOURCE_EVIDENCE_RE, '')
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+);
+
+const extractAutoTextSourceEvidenceLines = (text = '') => {
+    const evidenceLines = new Set();
+    compactAutoDefectDojoText(text).replace(AUTO_SOURCE_EVIDENCE_RE, match => {
+        const cleaned = normalizeAutoText(match);
+        if (cleaned) evidenceLines.add(cleaned);
+        return match;
+    });
+    return Array.from(evidenceLines);
+};
+
+const normalizeAutoTextSourceKey = (text = '') => (
+    [
+        cleanAutoTextSourceBody(text),
+        extractAutoTextSourceEvidenceLines(text)
+            .map(line => line
+                .replace(/\bURL\s*:\s*https?:\/\/\S+/gi, 'URL: <endpoint>')
+                .replace(/\bhttps?:\/\/[^\s)]+/gi, '<url>')
+                .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, '<host>')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .toLowerCase())
+            .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+            .join('|')
+    ]
+        .filter(Boolean)
+        .join('|evidence|')
+        .toLowerCase()
+);
+
+const getAutoCompactionDetailKey = (finding = {}) => ([
+    'detail',
+    normalizeAutoTextSourceKey(finding.description || getAutoDescriptionText(finding)),
+    normalizeAutoTextSourceKey(finding.impact || getAutoImpactText(finding))
+].join('|'));
+
+const buildAutoFindingFingerprint = (finding = {}, route = getAutoDefectDojoRoute(finding), pullFilters = {}) => {
+    const family = resolveAutoCompactionFamily(finding);
+    const cveIds = family.cveIds;
+    const cveSignature = cveIds.join(',');
+    const detailKey = getAutoCompactionDetailKey(finding);
+    const productKey = route.projectId || route.projectName || pullFilters.test__engagement__product || '';
+    const engagementKey = route.engagementId || route.engagementName || pullFilters.test__engagement || '';
+
+    return {
+        cveIds,
+        cveSignature,
+        compactFamilyKey: family.familyKey,
+        compactFamilyTitle: family.familyTitle,
+        compactReason: family.reason,
+        softwareFamily: family.softwareFamily,
+        isSoftwareFamily: family.isSoftwareFamily,
+        groupKey: [
+            family.familyKey,
+            detailKey,
+            `route`,
+            normalizeAutoGroupText(productKey),
+            normalizeAutoGroupText(engagementKey)
+        ].join('|')
+    };
+};
+
+const buildAutoLegacyFindingGroupKey = (finding = {}, route = getAutoDefectDojoRoute(finding), pullFilters = {}) => {
+    const productKey = route.projectId || route.projectName || pullFilters.test__engagement__product || '';
+    const engagementKey = route.engagementId || route.engagementName || pullFilters.test__engagement || '';
+
+    return [
+        getAutoLegacyCompactGroupKey(finding),
+        'route',
+        normalizeAutoGroupText(productKey),
+        normalizeAutoGroupText(engagementKey)
+    ].join('|');
+};
+
+const buildAutoCompactedSyncKey = ({ groupKey, productIds = [], engagementIds = [] }) => {
+    const source = [
+        `group:${groupKey}`,
+        `products:${sortAutoStrings(asArray(productIds).map(id => normalizeAutoText(id)).filter(Boolean)).join(',')}`,
+        `engagements:${sortAutoStrings(asArray(engagementIds).map(id => normalizeAutoText(id)).filter(Boolean)).join(',')}`
+    ].join('|');
+
+    return `dd-compact-${stableAutoHash(source)}`;
+};
+
+const buildAutoCompactedLegacySyncKey = ({ groupKey, findingIds = [], productIds = [], engagementIds = [] }) => {
+    const source = [
+        `group:${groupKey}`,
+        `findings:${sortAutoStrings(asFindingIdArray(findingIds).map(id => normalizeAutoText(id)).filter(Boolean)).join(',')}`,
+        `products:${sortAutoStrings(asArray(productIds).map(id => normalizeAutoText(id)).filter(Boolean)).join(',')}`,
+        `engagements:${sortAutoStrings(asArray(engagementIds).map(id => normalizeAutoText(id)).filter(Boolean)).join(',')}`
+    ].join('|');
+
+    return `dd-compact-${stableAutoHash(source)}`;
+};
+
+const extractAutoTitleVersion = (title) => {
+    const text = normalizeAutoText(title);
+    const lessThanMatch = text.match(AUTO_LESS_THAN_VERSION_RE);
+    if (lessThanMatch) return lessThanMatch[1].replace(/\.$/, '');
+
+    const target = parseAutoUpgradeText(text);
+    if (target) return target.version;
+
+    const versionMatch = text.match(/\bversion\s+([0-9][0-9a-z.-]*)/i);
+    return versionMatch ? versionMatch[1].replace(/\.$/, '') : null;
+};
+
+const chooseAutoDisplayTitle = (titles, fallbackTitle) => {
+    const cleanedTitles = sortAutoStrings(titles).map(title => normalizeAutoText(title)).filter(Boolean);
+    if (cleanedTitles.length === 0) return normalizeAutoText(fallbackTitle || 'Untitled finding');
+
+    return cleanedTitles.reduce((best, candidate) => {
+        const bestVersion = extractAutoTitleVersion(best);
+        const candidateVersion = extractAutoTitleVersion(candidate);
+        if (candidateVersion && (!bestVersion || compareAutoVersions(candidateVersion, bestVersion) > 0)) return candidate;
+        if (!candidateVersion && !bestVersion && candidate.length > best.length) return candidate;
+        return best;
+    }, cleanedTitles[0]);
+};
+
+const getAutoSoftwareFamilyTitle = (softwareFamily = '', titles = []) => {
+    const software = normalizeAutoText(softwareFamily);
+    if (!software) return '';
+    const hasMultipleVulnerabilities = sortAutoStrings(titles)
+        .some(title => /multiple vulnerabilities/i.test(String(title || '')));
+    return `${software} ${hasMultipleVulnerabilities ? 'Multiple Vulnerabilities' : 'Vulnerabilities'}`;
+};
+
+const parseAutoTitleUpgradeTarget = (value = '') => {
+    const titleMatch = normalizeAutoText(value).match(AUTO_TITLE_VERSION_RE);
+    if (!titleMatch) return null;
+    return {
+        software: normalizeAutoText(titleMatch[1]).replace(/[.:;,-]+$/g, '').trim(),
+        version: titleMatch[2].replace(/\.$/, '')
+    };
+};
+
+const collectAutoTicketUpgradeTargets = (ticket = {}) => {
+    const candidates = [
+        ticket.title,
+        ticket.subject,
+        ...(asArray(ticket.allTitles)),
+        ...(asArray(ticket.allMitigations)),
+        ...(asArray(ticket.sourceGroups).flatMap(sourceGroup => [
+            sourceGroup.title,
+            ...(asArray(sourceGroup.mitigations))
+        ]))
+    ];
+
+    return candidates
+        .map(candidate => parseAutoUpgradeText(candidate) || parseAutoTitleUpgradeTarget(candidate))
+        .filter(target => target?.software && target?.version)
+        .sort((left, right) => compareAutoVersions(right.version, left.version));
+};
+
+const getAutoTicketUpgradeTarget = (ticket = {}) => collectAutoTicketUpgradeTargets(ticket)[0] || null;
+
+const buildAutoActionRequiredSubject = (ticket = {}) => {
+    return normalizeAutoText(ticket.title || chooseAutoDisplayTitle(ticket.allTitles || [], ticket.subject || 'Untitled finding'));
+};
+
+const addAutoTextSource = (sourceMap, text, findingId) => {
+    const cleanedText = cleanAutoBlockText(text);
+    if (!cleanedText) return;
+    const bodyText = cleanAutoTextSourceBody(cleanedText);
+    const evidenceLines = extractAutoTextSourceEvidenceLines(cleanedText);
+    const sourceKey = normalizeAutoTextSourceKey(cleanedText);
+    if (!sourceMap.has(sourceKey)) sourceMap.set(sourceKey, { text: bodyText, findingIds: new Set(), evidenceLines: new Set() });
+    evidenceLines.forEach(line => sourceMap.get(sourceKey).evidenceLines.add(line));
+    const cleanedFindingId = normalizeAutoText(findingId);
+    if (cleanedFindingId) sourceMap.get(sourceKey).findingIds.add(cleanedFindingId);
+};
+
+const getAutoEndpointParts = (endpoint) => {
+    if (endpoint && typeof endpoint === 'object') {
+        const host = normalizeAutoText(endpoint.host || endpoint.hostname || endpoint.fqdn || endpoint.ip || endpoint.address || '');
+        return {
+            protocol: normalizeAutoText(endpoint.protocol || ''),
+            host,
+            port: normalizeAutoText(endpoint.port || '')
+        };
+    }
+    return {
+        protocol: '',
+        host: normalizeAutoText(endpoint),
+        port: ''
+    };
+};
+
+const getAutoEndpointLabel = (endpoint) => {
+    const parts = getAutoEndpointParts(endpoint);
+    if (!parts.host) return 'Unknown endpoint';
+    return `${parts.protocol ? `${parts.protocol}://` : ''}${parts.host}${parts.port ? `:${parts.port}` : ''}`;
+};
+
+const getAutoEndpointHost = (endpoint) => {
+    const parts = getAutoEndpointParts(endpoint);
+    return parts.host || 'Unknown host';
+};
+
+const groupAutoEndpointDetailsByCves = (details) => {
+    const groups = new Map();
+
+    details.forEach(detail => {
+        const signature = detail.cves.length > 0 ? detail.cves.join('|') : 'None';
+        if (!groups.has(signature)) {
+            groups.set(signature, {
+                cves: detail.cves,
+                endpoints: []
+            });
+        }
+        groups.get(signature).endpoints.push(detail);
+    });
+
+    return Array.from(groups.values())
+        .map(group => ({
+            ...group,
+            endpoints: group.endpoints.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
+        }))
+        .sort((a, b) => {
+            const firstA = a.endpoints[0]?.label || '';
+            const firstB = b.endpoints[0]?.label || '';
+            return firstA.localeCompare(firstB, undefined, { numeric: true });
+        });
+};
+
+const sortAutoSourceGroupsByTitleVersion = (groups = []) => (
+    groups.sort((a, b) => {
+        const versionA = extractAutoTitleVersion(a.title);
+        const versionB = extractAutoTitleVersion(b.title);
+        if (versionA && versionB) return compareAutoVersions(versionB, versionA);
+        if (versionA) return -1;
+        if (versionB) return 1;
+        return String(a.title || '').localeCompare(String(b.title || ''), undefined, { numeric: true });
+    })
+);
+
+const finalizeAutoEndpointDetails = (endpointDetailMap) => (
+    Array.from(endpointDetailMap.values())
+        .map(detail => ({
+            endpoint: detail.endpoint,
+            label: detail.label,
+            host: detail.host,
+            severity: detail.severity,
+            cves: sortAutoStrings(detail.cves),
+            mitigations: sortAutoStrings(detail.mitigations),
+            findingIds: sortAutoFindingIds(detail.findingIds)
+        }))
+        .sort((a, b) => (
+            a.host.localeCompare(b.host, undefined, { numeric: true })
+            || a.label.localeCompare(b.label, undefined, { numeric: true })
+        ))
+);
+
+const sortAutoTextSources = (sourceMap) => (
+    Array.from(sourceMap.values())
+        .map(source => ({
+            text: source.text,
+            findingIds: sortAutoFindingIds(source.findingIds),
+            evidenceLines: sortAutoStrings(source.evidenceLines || [])
+        }))
+        .filter(source => source.text || source.evidenceLines.length > 0)
+        .sort((a, b) => (a.text || a.evidenceLines.join(' ')).localeCompare(b.text || b.evidenceLines.join(' '), undefined, { numeric: true }))
+);
+
+const finalizeAutoSourceGroups = (sourceGroupsMap) => (
+    sortAutoSourceGroupsByTitleVersion(Array.from(sourceGroupsMap.values()).map(sourceGroup => {
+        const activeCount = sourceGroup.activeCount || 0;
+        const mitigatedCount = sourceGroup.mitigatedCount || 0;
+        return {
+            title: sourceGroup.title,
+            findingIds: sortAutoFindingIds(sourceGroup.findingIds),
+            severity: sourceGroup.severity || 'Info',
+            cveIds: sortAutoStrings(sourceGroup.cveIds),
+            endpointDetails: finalizeAutoEndpointDetails(sourceGroup.endpointDetailMap),
+            descriptionSources: sortAutoTextSources(sourceGroup.descriptionsMap),
+            impactSources: sortAutoTextSources(sourceGroup.impactsMap),
+            mitigations: sortAutoStrings(sourceGroup.mitigations),
+            activeCount,
+            mitigatedCount,
+            currentStatus: activeCount > 0 && mitigatedCount > 0
+                ? 'mixed'
+                : activeCount > 0
+                    ? 'active'
+                    : 'mitigated'
+        };
+    }))
+);
+
+const formatAutoTextSourceLabel = (source, index) => {
+    const findingIds = source.findingIds || [];
+    const idLabel = findingIds.length === 0
+        ? ''
+        : ` (DefectDojo Finding IDs: ${findingIds.join(', ')})`;
+    return `Source ${index + 1}${idLabel}`;
+};
+
+const formatAutoEvidenceLine = (value = '') => {
+    const text = normalizeAutoText(value);
+    if (!text) return '';
+
+    const lines = [];
+    const urlMatch = text.match(/\b(URL|URI)\s*:\s*(https?:\/\/\S+)(\s+\([^)]*\))?/i);
+    if (urlMatch) {
+        lines.push(`${urlMatch[1].toUpperCase()}: ${urlMatch[2]}${urlMatch[3] || ''}`);
+    }
+    const versionSourceMatch = text.match(/\bVersion source\s*:\s*(.*?)(?=\s+(?:Installed|Detected|Current|Fixed|Affected) version\s*:|$)/i);
+    if (versionSourceMatch) {
+        lines.push(`Version source : ${normalizeAutoText(versionSourceMatch[1])}`);
+    }
+
+    const versionRe = /\b(Installed|Detected|Current|Fixed|Affected) version\s*:\s*([^\s]+)/gi;
+    let versionMatch = versionRe.exec(text);
+    while (versionMatch) {
+        const label = `${versionMatch[1][0].toUpperCase()}${versionMatch[1].slice(1).toLowerCase()} version`;
+        lines.push(`${label.padEnd(18, ' ')}: ${versionMatch[2]}`);
+        versionMatch = versionRe.exec(text);
+    }
+
+    return lines.length > 0 ? lines.join('\n') : text;
+};
+
+const formatAutoSourceGroupAssets = (endpointDetails = []) => {
+    const details = Array.isArray(endpointDetails) ? endpointDetails : [];
+    if (details.length === 0) return 'None';
+
+    const endpointsByHost = new Map();
+    details.forEach(detail => {
+        const host = detail.host || getAutoEndpointHost(detail.endpoint) || 'Unknown host';
+        if (!endpointsByHost.has(host)) endpointsByHost.set(host, []);
+        endpointsByHost.get(host).push(detail);
+    });
+
+    return Array.from(endpointsByHost.entries())
+        .sort(([hostA], [hostB]) => hostA.localeCompare(hostB, undefined, { numeric: true }))
+        .map(([host, hostDetails]) => {
+            const endpointLines = hostDetails
+                .sort((a, b) => String(a.label || '').localeCompare(String(b.label || ''), undefined, { numeric: true }))
+                .map(detail => `  - ${detail.label || getAutoEndpointLabel(detail.endpoint)} (Severity: ${detail.severity || 'Info'})`)
+                .join('\n');
+            return `**Host:** ${host}\n${endpointLines}`;
+        })
+        .join('\n\n');
+};
+
+const formatAutoSourceFindingAssets = (source = {}, endpointDetails = []) => {
+    const sourceFindingIds = new Set(sortAutoFindingIds(source.findingIds || []).map(id => String(id)));
+    if (sourceFindingIds.size === 0) return '';
+
+    const scopedDetails = asArray(endpointDetails).filter(detail => (
+        asArray(detail.findingIds).some(findingId => sourceFindingIds.has(String(findingId)))
+    ));
+    if (scopedDetails.length === 0) return '';
+
+    return `Affected IP:\n${formatAutoSourceGroupAssets(scopedDetails)}`;
+};
+
+const getAutoEndpointPort = (detail = {}) => {
+    const parts = getAutoEndpointParts(detail.endpoint);
+    if (parts.port) return parts.port;
+    const label = normalizeAutoText(detail.label || '');
+    const match = label.match(/:(\d+)(?:\/|\s|$)?/);
+    return match ? match[1] : '';
+};
+
+const formatAutoAffectedAssetsAndPorts = (endpointDetails = []) => {
+    const hosts = new Map();
+    asArray(endpointDetails).forEach(detail => {
+        const host = normalizeAutoText(detail.host || getAutoEndpointHost(detail.endpoint) || 'Unknown host');
+        if (!hosts.has(host)) hosts.set(host, { ports: new Set(), labels: new Set() });
+        const port = getAutoEndpointPort(detail);
+        if (port) hosts.get(host).ports.add(port);
+        const label = normalizeAutoText(detail.label || getAutoEndpointLabel(detail.endpoint));
+        if (label) hosts.get(host).labels.add(label);
+    });
+
+    if (hosts.size === 0) return 'None';
+
+    return Array.from(hosts.entries())
+        .sort(([hostA], [hostB]) => hostA.localeCompare(hostB, undefined, { numeric: true }))
+        .map(([host, detail]) => {
+            const ports = sortAutoStrings(detail.ports);
+            if (ports.length > 0) return `**Host:** ${host}\n\n**Affected Ports:** ${ports.join(', ')}`;
+            return `**Host:** ${host}\n\n**Affected Endpoints:** ${sortAutoStrings(detail.labels).join(', ') || 'N/A'}`;
+        })
+        .join('\n\n');
+};
+
+const formatAutoTicketTextSection = (title, values) => {
+    const items = values
+        .map(value => (typeof value === 'string' ? { text: value, findingIds: [] } : value))
+        .map(value => ({
+            text: cleanAutoBlockText(value?.text || ''),
+            findingIds: sortAutoFindingIds(value?.findingIds || [])
+        }))
+        .filter(value => value.text);
+
+    if (items.length === 0) return '';
+    if (items.length === 1) return `\n\n**${title}:**\n${items[0].text}`;
+
+    return `\n\n**${title}s:**\n${items.map((item, index) => `${formatAutoTextSourceLabel(item, index)}:\n${item.text}`).join('\n\n')}`;
+};
+
+const formatAutoRouteValue = (name, id) => {
+    if (name && id) return `${name} (ID: ${id})`;
+    return name || id || 'N/A';
+};
+
+const formatAutoDefectDojoContext = (ticket) => {
+    const project = formatAutoRouteValue(ticket.defectDojoProjectName, ticket.defectDojoProjectId);
+    const engagement = formatAutoRouteValue(ticket.defectDojoEngagementName, ticket.defectDojoEngagementId);
+
+    if (project === 'N/A' && engagement === 'N/A') return '';
+    return `\n\n**DefectDojo Context:**\n- Project: ${project}\n- Engagement: ${engagement}`;
+};
+
+const buildAutoSourceTitlesBlock = (titles = []) => {
+    const uniqueTitles = sortAutoStrings(titles).filter(Boolean);
+    if (uniqueTitles.length === 0) return '';
+    return `\n\n**Source Titles:**\n${uniqueTitles.map(title => `- ${title}`).join('\n')}`;
+};
+
+const buildAutoCveBlock = (cveIds = []) => {
+    const uniqueCves = sortAutoStrings(cveIds).filter(Boolean);
+    if (uniqueCves.length === 0) return '';
+    return `\n\n**CVEs:**\n${uniqueCves.join(', ')}`;
+};
+
+const formatAutoSourceGroupTextBlock = (title, values = [], endpointDetails = []) => {
+    const escapeText = (text = '') => (
+        cleanAutoBlockText(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+    );
+    const items = values
+        .map(value => (typeof value === 'string' ? { text: value, findingIds: [] } : value))
+        .map(value => ({
+            text: escapeText(value?.text || ''),
+            findingIds: sortAutoFindingIds(value?.findingIds || []),
+            evidenceLines: sortAutoStrings(value?.evidenceLines || []).map(line => escapeText(formatAutoEvidenceLine(line)))
+        }))
+        .filter(value => value.text || value.evidenceLines.length > 0);
+
+    const formatItem = (item) => [
+        items.length > 1 ? formatAutoSourceFindingAssets(item, endpointDetails) : '',
+        item.text,
+        item.evidenceLines.length > 0 ? item.evidenceLines.join('\n') : ''
+    ].filter(Boolean).join('\n');
+    if (items.length === 0) return '';
+    if (items.length === 1) return `\n\n**${title}:**\n${formatItem(items[0])}`;
+
+    return `\n\n**${title}:**\n${items.map((item, index) => `${formatAutoTextSourceLabel(item, index)}:\n${formatItem(item)}`).join('\n\n')}`;
+};
+
+const normalizeAutoTextSource = (source = {}) => ({
+    text: source.text || '',
+    findingIds: sortAutoFindingIds(source.findingIds || []),
+    evidenceLines: sortAutoStrings(source.evidenceLines || []),
+    endpointDetails: asArray(source.endpointDetails)
+});
+
+const collectAutoAppendixSources = (sourceGroups = [], sourceKey = 'descriptionSources') => {
+    const sourcesByKey = new Map();
+
+    asArray(sourceGroups).forEach(sourceGroup => {
+        asArray(sourceGroup[sourceKey]).forEach(source => {
+            const sourceItem = normalizeAutoTextSource({
+                ...source,
+                endpointDetails: sourceGroup.endpointDetails || []
+            });
+            if (!sourceItem.text && sourceItem.evidenceLines.length === 0) return;
+            const key = [
+                sourceItem.text,
+                ...sourceItem.evidenceLines.map(line => line
+                    .replace(/\bURL\s*:\s*https?:\/\/\S+/gi, 'URL: <endpoint>')
+                    .replace(/\bhttps?:\/\/[^\s)]+/gi, '<url>')
+                    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, '<host>')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .toLowerCase())
+            ].join('|');
+            if (!sourcesByKey.has(key)) {
+                sourcesByKey.set(key, {
+                    text: sourceItem.text,
+                    findingIds: new Set(),
+                    evidenceLines: new Set(),
+                    endpointDetails: []
+                });
+            }
+            const target = sourcesByKey.get(key);
+            sourceItem.findingIds.forEach(findingId => target.findingIds.add(String(findingId)));
+            sourceItem.evidenceLines.forEach(line => target.evidenceLines.add(line));
+            target.endpointDetails.push(...sourceItem.endpointDetails);
+        });
+    });
+
+    return Array.from(sourcesByKey.values()).map(source => normalizeAutoTextSource(source));
+};
+
+const formatAutoQuoteBlock = (value = '') => (
+    cleanAutoBlockText(value)
+        .split('\n')
+        .map(line => `> ${line}`)
+        .join('\n')
+);
+
+const formatAutoAppendixTextBlock = (title, sources = []) => {
+    const items = asArray(sources)
+        .map(source => normalizeAutoTextSource(source))
+        .filter(source => source.text || source.evidenceLines.length > 0);
+    if (items.length === 0) return '';
+
+    const escapeText = (text = '') => (
+        cleanAutoBlockText(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+    );
+    const formatItem = (item, includeAssets) => [
+        includeAssets ? formatAutoSourceFindingAssets(item, item.endpointDetails) : '',
+        escapeText(item.text || ''),
+        ...item.evidenceLines.map(line => escapeText(formatAutoEvidenceLine(line)))
+    ].filter(Boolean).join('\n');
+
+    if (items.length === 1) {
+        return `\n\n**${title}:**\n${formatAutoQuoteBlock(formatItem(items[0], false))}`;
+    }
+
+    return `\n\n**${title}:**\n${items.map((item, index) => `${formatAutoTextSourceLabel(item, index)}:\n${formatItem(item, true)}`).join('\n\n')}`;
+};
+
+const buildAutoSourceGroupSection = (sourceGroup = {}) => {
+    const title = normalizeAutoText(sourceGroup.title || 'Untitled finding');
+    const findingIds = sortAutoFindingIds(sourceGroup.findingIds || []);
+    const idLabel = findingIds.length > 0
+        ? ` (DefectDojo Finding IDs: ${findingIds.join(', ')})`
+        : '';
+    const cveIds = sortAutoStrings(asArray(sourceGroup.cveIds).map(cve => cve?.vulnerability_id || cve).filter(Boolean));
+    const mitigationItems = sortAutoStrings(asArray(sourceGroup.mitigations));
+    const mitigationBlock = mitigationItems.length > 0
+        ? `\n\nMitigation:\n${mitigationItems.map(item => `- ${item}`).join('\n')}`
+        : '';
+    const descriptionSources = asArray(sourceGroup.descriptionSources).filter(source => source?.text || source?.evidenceLines?.length > 0);
+    const impactSources = asArray(sourceGroup.impactSources).filter(source => source?.text || source?.evidenceLines?.length > 0);
+    const hasScopedTextSources = descriptionSources.length > 1 || impactSources.length > 1;
+    const assetsBlock = hasScopedTextSources
+        ? ''
+        : `Affected Assets:\n${formatAutoSourceGroupAssets(sourceGroup.endpointDetails)}\n\n`;
+
+    return `${title}${idLabel}:\n${assetsBlock}CVEs: ${cveIds.length > 0 ? cveIds.join(', ') : 'None'}${formatAutoSourceGroupTextBlock('Description', descriptionSources, sourceGroup.endpointDetails)}${formatAutoSourceGroupTextBlock('Impact', impactSources, sourceGroup.endpointDetails)}${mitigationBlock}`;
+};
+
+const buildAutoSourceGroupsBlock = (ticket) => {
+    const sourceGroups = Array.isArray(ticket.sourceGroups)
+        ? ticket.sourceGroups.filter(sourceGroup => sourceGroup && sourceGroup.title)
+        : [];
+    if (sourceGroups.length === 0) return '';
+
+    const listTitle = normalizeAutoText(ticket.title || ticket.subject || 'Compacted Vulnerabilities');
+    return `\n\nList of ${listTitle}:\n\n${sourceGroups.map(buildAutoSourceGroupSection).join('\n\n')}`;
+};
+
+const buildAutoActionRequiredMarkdown = (ticket) => {
+    const target = getAutoTicketUpgradeTarget(ticket);
+    const targetMitigation = target
+        ? `Upgrade to ${target.software} version ${target.version} or later.`
+        : sortAutoStrings(ticket.allMitigations || [])[0] || 'Review the affected finding and apply the recommended remediation.';
+    const sourceGroups = asArray(ticket.sourceGroups).filter(sourceGroup => sourceGroup && sourceGroup.title);
+    const cveIds = sortAutoStrings([
+        ...(asArray(ticket.cveIds)),
+        ...(asArray(ticket.allCVEs).map(cve => cve?.vulnerability_id || cve?.name || cve?.id || cve))
+    ]);
+    const descriptionSources = collectAutoAppendixSources(sourceGroups, 'descriptionSources');
+    const impactSources = collectAutoAppendixSources(sourceGroups, 'impactSources');
+    const cveBlock = cveIds.length > 0 ? cveIds.join(', ') : 'None';
+    const defectDojoContextBlock = formatAutoDefectDojoContext(ticket);
+
+    return `Vulnerability Overview:\nThe endpoints listed below are running outdated software and require patching.${defectDojoContextBlock}\n\n**Target Mitigation:**\n${targetMitigation}\n\n**Affected Assets & Ports:**\n\n${formatAutoAffectedAssetsAndPorts(ticket.endpointDetails || [])}\n\n**Appendix:** Vulnerability Details\n**Associated CVEs:** ${cveBlock}${formatAutoAppendixTextBlock('DefectDojo Description', descriptionSources)}${formatAutoAppendixTextBlock('Impact', impactSources)}`;
+};
+
+const buildAutoSuperTicketMarkdown = (ticket) => {
+    if (asArray(ticket.sourceGroups).length > 0 || getAutoTicketUpgradeTarget(ticket)) {
+        return buildAutoActionRequiredMarkdown(ticket);
+    }
+
+    const defectDojoContextBlock = formatAutoDefectDojoContext(ticket);
+    const sourceGroupsBlock = buildAutoSourceGroupsBlock(ticket);
+    if (sourceGroupsBlock) {
+        return `**Vulnerability Overview:**\nThe targeted software is out of date and affected by one or more vulnerabilities. Please apply the mitigation to the endpoints listed below.${defectDojoContextBlock}${sourceGroupsBlock}`;
+    }
+
+    const endpointsByHost = new Map();
+
+    (ticket.endpointDetails || []).forEach(detail => {
+        if (!endpointsByHost.has(detail.host)) endpointsByHost.set(detail.host, []);
+        endpointsByHost.get(detail.host).push(detail);
+    });
+
+    const hostBlocks = Array.from(endpointsByHost.entries())
+        .sort(([hostA], [hostB]) => hostA.localeCompare(hostB, undefined, { numeric: true }))
+        .map(([host, details]) => {
+            const endpointLines = groupAutoEndpointDetailsByCves(details)
+                .map(group => {
+                    const endpoints = group.endpoints
+                        .map(detail => `  - ${detail.label} (Severity: ${detail.severity})`)
+                        .join('\n');
+                    const cves = group.cves.length > 0 ? group.cves.join(', ') : 'None';
+                    return `${endpoints}\n    CVEs: ${cves}`;
+                })
+                .join('\n');
+            return `**Host:** ${host}\n${endpointLines}`;
+        })
+        .join('\n\n');
+
+    const mitigationBlock = ticket.allMitigations?.length > 0
+        ? `\n\n**${ticket.allMitigations.length === 1 ? 'Mitigation' : 'Mitigations'}:**\n${ticket.allMitigations.map(item => `- ${item}`).join('\n')}`
+        : '';
+    const sourceTitlesBlock = buildAutoSourceTitlesBlock(ticket.allTitles || []);
+    const cveBlock = buildAutoCveBlock((ticket.allCVEs || []).map(item => item?.vulnerability_id || item).filter(Boolean));
+    const descriptionBlock = formatAutoTicketTextSection('Description', ticket.allDescriptionSources || ticket.allDescriptions || []);
+    const impactBlock = formatAutoTicketTextSection('Impact', ticket.allImpactSources || ticket.allImpacts || []);
+
+    return `**Vulnerability Overview:**\nThe targeted software is out of date and affected by one or more vulnerabilities. Please apply the mitigation to the endpoints listed below.${defectDojoContextBlock}${sourceTitlesBlock}${cveBlock}${descriptionBlock}${impactBlock}${mitigationBlock}\n\n**Affected Assets & Details:**\n\n${hostBlocks}`;
+};
+
+const buildBackendCompactedRedmineTicketRefs = (findings = [], { pullFilters = {}, getKnownRedmineIssueId } = {}) => {
+    const groups = new Map();
+
+    findings.forEach(finding => {
+        const route = getAutoDefectDojoRoute(finding);
+        const fingerprint = buildAutoFindingFingerprint(finding, route, pullFilters);
+        const groupKey = fingerprint.groupKey;
+
+        if (!groups.has(groupKey)) {
+            groups.set(groupKey, {
+                groupKey,
+                compactFamilyKeys: new Set(),
+                compactFamilyTitles: new Set(),
+                compactReasons: new Set(),
+                legacySyncSourceMap: new Map(),
+                softwareFamilies: new Set(),
+                cveIds: new Set(),
+                originalIds: [],
+                titles: new Set(),
+                mitigations: new Set(),
+                descriptionsMap: new Map(),
+                impactsMap: new Map(),
+                endpointDetailMap: new Map(),
+                sourceGroupsMap: new Map(),
+                allEndpointsMap: new Map(),
+                severity: finding.severity || 'Info',
+                findingStates: [],
+                activeCount: 0,
+                mitigatedCount: 0,
+                productIds: new Set(),
+                productNames: new Set(),
+                engagementIds: new Set(),
+                engagementNames: new Set()
+            });
+        }
+
+        const group = groups.get(groupKey);
+        group.originalIds.push(finding.id);
+        group.severity = highestSeverity(group.severity, finding.severity || 'Info');
+        if (fingerprint.compactFamilyKey) group.compactFamilyKeys.add(fingerprint.compactFamilyKey);
+        if (fingerprint.compactFamilyTitle) group.compactFamilyTitles.add(fingerprint.compactFamilyTitle);
+        if (fingerprint.compactReason) group.compactReasons.add(fingerprint.compactReason);
+        if (fingerprint.softwareFamily) group.softwareFamilies.add(fingerprint.softwareFamily);
+        const legacyGroupKey = buildAutoLegacyFindingGroupKey(finding, route, pullFilters);
+        if (!group.legacySyncSourceMap.has(legacyGroupKey)) group.legacySyncSourceMap.set(legacyGroupKey, new Set());
+        group.legacySyncSourceMap.get(legacyGroupKey).add(finding.id);
+        fingerprint.cveIds.forEach(cveId => group.cveIds.add(cveId));
+        const title = normalizeAutoText(finding.title || finding.name || 'Untitled finding');
+        group.titles.add(title);
+        const mitigation = getAutoMitigationText(finding);
+        if (mitigation) group.mitigations.add(mitigation);
+        const description = getAutoDescriptionText(finding);
+        const rawDescription = finding.description || description;
+        addAutoTextSource(group.descriptionsMap, rawDescription, finding.id);
+        const impact = getAutoImpactText(finding);
+        const rawImpact = finding.impact || impact;
+        addAutoTextSource(group.impactsMap, rawImpact, finding.id);
+        if (!group.sourceGroupsMap.has(title)) {
+            group.sourceGroupsMap.set(title, {
+                title,
+                findingIds: [],
+                severity: finding.severity || 'Info',
+                cveIds: new Set(),
+                endpointDetailMap: new Map(),
+                descriptionsMap: new Map(),
+                impactsMap: new Map(),
+                mitigations: new Set(),
+                activeCount: 0,
+                mitigatedCount: 0
+            });
+        }
+        const sourceGroup = group.sourceGroupsMap.get(title);
+        sourceGroup.findingIds.push(finding.id);
+        sourceGroup.severity = highestSeverity(sourceGroup.severity, finding.severity || 'Info');
+        fingerprint.cveIds.forEach(cveId => sourceGroup.cveIds.add(cveId));
+        if (mitigation) sourceGroup.mitigations.add(mitigation);
+        addAutoTextSource(sourceGroup.descriptionsMap, rawDescription, finding.id);
+        addAutoTextSource(sourceGroup.impactsMap, rawImpact, finding.id);
+        const endpoints = Array.isArray(finding.endpoints) && finding.endpoints.length > 0
+            ? finding.endpoints
+            : [{ host: 'Unknown host' }];
+        endpoints.forEach(endpoint => {
+            const endpointKey = getAutoEndpointLabel(endpoint);
+            group.allEndpointsMap.set(endpointKey, endpoint);
+            if (!group.endpointDetailMap.has(endpointKey)) {
+                group.endpointDetailMap.set(endpointKey, {
+                    endpoint,
+                    label: endpointKey,
+                    host: getAutoEndpointHost(endpoint),
+                    severity: finding.severity || 'Info',
+                    cves: new Set(),
+                    mitigations: new Set(),
+                    findingIds: []
+                });
+            }
+            const detail = group.endpointDetailMap.get(endpointKey);
+            detail.severity = highestSeverity(detail.severity, finding.severity || 'Info');
+            detail.findingIds.push(finding.id);
+            fingerprint.cveIds.forEach(cveId => detail.cves.add(cveId));
+            if (mitigation) detail.mitigations.add(mitigation);
+
+            if (!sourceGroup.endpointDetailMap.has(endpointKey)) {
+                sourceGroup.endpointDetailMap.set(endpointKey, {
+                    endpoint,
+                    label: endpointKey,
+                    host: getAutoEndpointHost(endpoint),
+                    severity: finding.severity || 'Info',
+                    cves: new Set(),
+                    mitigations: new Set(),
+                    findingIds: []
+                });
+            }
+            const sourceDetail = sourceGroup.endpointDetailMap.get(endpointKey);
+            sourceDetail.severity = highestSeverity(sourceDetail.severity, finding.severity || 'Info');
+            sourceDetail.findingIds.push(finding.id);
+            fingerprint.cveIds.forEach(cveId => sourceDetail.cves.add(cveId));
+            if (mitigation) sourceDetail.mitigations.add(mitigation);
+        });
+        const mitigatedState = isStoredFindingMitigated(finding);
+        if (mitigatedState) {
+            group.mitigatedCount += 1;
+            sourceGroup.mitigatedCount += 1;
+        } else if (isStoredFindingActive(finding)) {
+            group.activeCount += 1;
+            sourceGroup.activeCount += 1;
+        }
+        group.findingStates.push({
+            findingId: finding.id,
+            title,
+            severity: finding.severity || 'Info',
+            mitigated: mitigatedState,
+            active: isStoredFindingActive(finding),
+            endpoint: endpoints.map(getAutoEndpointLabel).join(', '),
+            cveIds: fingerprint.cveIds,
+            mitigationConfirmedAt: finding.mitigation_confirmed_at || finding.mitigation_confirmed || finding.mitigated_at || null
+        });
+        if (route.projectId) group.productIds.add(route.projectId);
+        if (route.projectName) group.productNames.add(route.projectName);
+        if (route.engagementId) group.engagementIds.add(route.engagementId);
+        if (route.engagementName) group.engagementNames.add(route.engagementName);
+    });
+
+    return Array.from(groups.values()).map(group => {
+        const findingIds = sortAutoFindingIds(group.originalIds);
+        const productIds = sortAutoStrings(group.productIds);
+        const productNames = sortAutoStrings(group.productNames);
+        const engagementIds = sortAutoStrings(group.engagementIds);
+        const engagementNames = sortAutoStrings(group.engagementNames);
+        const cveIds = sortAutoStrings(group.cveIds);
+        const allTitles = sortAutoStrings(group.titles);
+        const softwareFamily = sortAutoStrings(group.softwareFamilies)[0] || '';
+        const pullProjectId = normalizeAutoText(pullFilters.test__engagement__product || '');
+        const pullEngagementId = normalizeAutoText(pullFilters.test__engagement || '');
+
+        if (productIds.length === 0 && pullProjectId) productIds.push(pullProjectId);
+        if (engagementIds.length === 0 && pullEngagementId) engagementIds.push(pullEngagementId);
+
+        const syncKey = buildAutoCompactedSyncKey({
+            groupKey: group.groupKey,
+            productIds,
+            engagementIds
+        });
+        const legacySyncKeys = Array.from(new Set([
+            buildAutoCompactedLegacySyncKey({
+                groupKey: group.groupKey,
+                findingIds,
+                productIds,
+                engagementIds
+            }),
+            ...Array.from(group.legacySyncSourceMap.entries()).map(([legacyGroupKey, legacyFindingIds]) => (
+                buildAutoCompactedLegacySyncKey({
+                    groupKey: legacyGroupKey,
+                    findingIds: sortAutoFindingIds(legacyFindingIds),
+                    productIds,
+                    engagementIds
+                })
+            ))
+        ].filter(key => key && key !== syncKey)));
+
+        const allDescriptionSources = sortAutoTextSources(group.descriptionsMap);
+        const allImpactSources = sortAutoTextSources(group.impactsMap);
+        const endpointDetails = finalizeAutoEndpointDetails(group.endpointDetailMap);
+        const sourceGroups = finalizeAutoSourceGroups(group.sourceGroupsMap);
+        const compactFamilyTitle = sortAutoStrings(group.compactFamilyTitles)[0] || '';
+        const compactFamilyKey = sortAutoStrings(group.compactFamilyKeys)[0] || group.groupKey;
+        const compactReason = sortAutoStrings(group.compactReasons)[0] || 'strict-fingerprint';
+        const title = chooseAutoDisplayTitle(allTitles, compactFamilyTitle || getAutoSoftwareFamilyTitle(softwareFamily, allTitles) || 'Untitled finding');
+        const currentStatus = group.activeCount > 0 && group.mitigatedCount > 0
+            ? 'mixed'
+            : group.activeCount > 0
+                ? 'active'
+                : 'mitigated';
+        const ticket = {
+            ticketKey: syncKey,
+            subject: title,
+            title,
+            syncKey,
+            legacySyncKeys,
+            issueId: getKnownRedmineIssueId ? getKnownRedmineIssueId({ ticketKey: syncKey, syncKey, legacySyncKeys, findingIds }) : null,
+            compactFamilyKey,
+            compactFamilyTitle,
+            compactReason,
+            findingIds,
+            findingCount: findingIds.length,
+            cveId: cveIds.join(','),
+            cveIds,
+            allTitles,
+            allCVEs: cveIds.map(vulnerability_id => ({ vulnerability_id })),
+            allMitigations: sortAutoStrings(group.mitigations),
+            allDescriptions: allDescriptionSources.map(source => source.text),
+            allImpacts: allImpactSources.map(source => source.text),
+            allDescriptionSources,
+            allImpactSources,
+            sourceGroups,
+            endpointDetails,
+            allEndpoints: Array.from(group.allEndpointsMap.values()),
+            severity: group.severity || 'Info',
+            originalIds: findingIds,
+            softwareFamily,
+            findingStates: group.findingStates,
+            activeCount: group.activeCount,
+            mitigatedCount: group.mitigatedCount,
+            currentStatus,
+            defectDojoProjectId: productIds[0] || '',
+            defectDojoProjectName: productNames[0] || '',
+            defectDojoEngagementId: engagementIds[0] || '',
+            defectDojoEngagementName: engagementNames[0] || '',
+            route: {
+                projectId: productIds[0] || '',
+                projectName: productNames[0] || '',
+                engagementId: engagementIds[0] || '',
+                engagementName: engagementNames[0] || ''
+            }
+        };
+        ticket.redmineSubject = buildAutoActionRequiredSubject(ticket);
+        ticket.subject = ticket.redmineSubject;
+        ticket.superTicketMarkdown = buildAutoSuperTicketMarkdown(ticket);
+
+        return ticket;
+    });
+};
+
+module.exports = {
+    AUTO_UPGRADE_TARGET_RE,
+    AUTO_TITLE_VERSION_RE,
+    AUTO_LESS_THAN_VERSION_RE,
+    AUTO_SEVERITY_RANK,
+    normalizeAutoText,
+    normalizeAutoGroupText,
+    highestSeverity,
+    isStoredFindingMitigated,
+    isStoredFindingActive,
+    cleanAutoBlockText,
+    compactAutoDefectDojoText,
+    getAutoDescriptionText,
+    getAutoImpactText,
+    getAutoMitigationText,
+    getAutoStrictFindingKey,
+    parseAutoUpgradeText,
+    parseAutoUpgradeTarget,
+    getAutoLegacyCompactGroupKey,
+    getAutoKnownNoCveFamily,
+    tokenizeAutoVersion,
+    compareAutoVersions,
+    firstAutoRouteValue,
+    firstAutoRouteName,
+    getAutoDefectDojoRoute,
+    stableAutoHash,
+    sortAutoStrings,
+    sortAutoFindingIds,
+    collectAutoCveIds,
+    resolveAutoCompactionFamily,
+    extractAutoTextSourceEvidenceLines,
+    normalizeAutoTextSourceKey,
+    getAutoCompactionDetailKey,
+    buildAutoFindingFingerprint,
+    buildAutoLegacyFindingGroupKey,
+    buildAutoCompactedSyncKey,
+    buildAutoCompactedLegacySyncKey,
+    extractAutoTitleVersion,
+    chooseAutoDisplayTitle,
+    getAutoSoftwareFamilyTitle,
+    parseAutoTitleUpgradeTarget,
+    collectAutoTicketUpgradeTargets,
+    getAutoTicketUpgradeTarget,
+    buildAutoActionRequiredSubject,
+    addAutoTextSource,
+    getAutoEndpointParts,
+    getAutoEndpointLabel,
+    getAutoEndpointHost,
+    groupAutoEndpointDetailsByCves,
+    sortAutoSourceGroupsByTitleVersion,
+    finalizeAutoEndpointDetails,
+    sortAutoTextSources,
+    finalizeAutoSourceGroups,
+    formatAutoTextSourceLabel,
+    formatAutoEvidenceLine,
+    formatAutoSourceGroupAssets,
+    formatAutoSourceFindingAssets,
+    getAutoEndpointPort,
+    formatAutoAffectedAssetsAndPorts,
+    formatAutoTicketTextSection,
+    formatAutoRouteValue,
+    formatAutoDefectDojoContext,
+    buildAutoSourceTitlesBlock,
+    buildAutoCveBlock,
+    formatAutoSourceGroupTextBlock,
+    normalizeAutoTextSource,
+    collectAutoAppendixSources,
+    formatAutoQuoteBlock,
+    formatAutoAppendixTextBlock,
+    buildAutoSourceGroupSection,
+    buildAutoSourceGroupsBlock,
+    buildAutoActionRequiredMarkdown,
+    buildAutoSuperTicketMarkdown,
+    buildBackendCompactedRedmineTicketRefs
+};
