@@ -3698,9 +3698,10 @@ function App() {
         },
         {
           label: 'Mitigation Review',
-          icon: ShieldCheck,
+          icon: Bell,
           active: currentHash === '#mitigation-review',
           badge: mitigationReviewPendingCount,
+          notification: mitigationReviewPendingCount > 0,
           onClick: () => {
             setMitigationReviewToast(null);
             setHashRoute('#mitigation-review');
@@ -3739,10 +3740,10 @@ function App() {
               <button
                 key={item.label}
                 type="button"
-                className={`sidebar-nav-item ${item.active ? 'active' : ''}`}
+                className={`sidebar-nav-item ${item.active ? 'active' : ''} ${item.notification ? 'notification' : ''}`}
                 onClick={item.onClick}
                 aria-current={item.active ? 'page' : undefined}
-                title={item.label}
+                title={item.badge > 0 ? `${item.label}: ${item.badge} pending` : item.label}
               >
                 <Icon size={18} />
                 <span>{item.label}</span>
@@ -3757,24 +3758,6 @@ function App() {
         </nav>
 
         <div className="sidebar-footer">
-          {user?.role === 'admin' && mitigationReviewPendingCount > 0 && currentHash !== '#mitigation-review' && (
-            <button
-              type="button"
-              className="sidebar-nav-item sidebar-notification-bell"
-              onClick={() => {
-                setMitigationReviewToast(null);
-                setHashRoute('#mitigation-review');
-              }}
-              title={`${mitigationReviewPendingCount} mitigation review${mitigationReviewPendingCount !== 1 ? 's' : ''} awaiting closure`}
-              aria-label={`${mitigationReviewPendingCount} mitigation review${mitigationReviewPendingCount !== 1 ? 's' : ''} awaiting closure. Open mitigation review.`}
-            >
-              <Bell size={18} />
-              <span>Review Queue</span>
-              <strong className="sidebar-nav-badge" aria-hidden="true">
-                {mitigationReviewPendingCount > 99 ? '99+' : mitigationReviewPendingCount}
-              </strong>
-            </button>
-          )}
           <div className="sidebar-theme-row">
             <span>Theme</span>
             <ThemeToggle />
