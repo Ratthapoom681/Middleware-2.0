@@ -13,6 +13,10 @@ const {
 const {
     findTicketForGroup
 } = require('../backend/database.cjs').__test;
+const {
+    buildBackendCompactedRedmineTicketRefs,
+    collectAutoCweIds
+} = require('../backend/compaction.cjs');
 const redmineClient = require('../backend/redmine-client.cjs');
 
 test('groups compacted findings into upgrade-family super tickets without splitting per CVE', () => {
@@ -38,6 +42,55 @@ test('groups compacted findings into upgrade-family super tickets without splitt
     assert.equal(rawGroup.currentStatus, 'active');
     assert.deepEqual(rawGroup.findingIds, ['4', '5']);
     assert.equal(groups.length, 3);
+});
+
+test('backend compaction carries CWE metadata without using CWE as ticket identity', () => {
+    assert.deepEqual(collectAutoCweIds({ cwe: 79 }), ['CWE-79']);
+    assert.deepEqual(collectAutoCweIds({ cwes: [{ id: 'CWE-89: SQL Injection' }, { cwe_id: 79 }] }), ['CWE-79', 'CWE-89']);
+
+    const groups = buildBackendCompactedRedmineTicketRefs([
+        {
+            id: 7001,
+            title: 'Reflected XSS in login form',
+            severity: 'Medium',
+            cwe: 79,
+            description: 'Login parameter is reflected.',
+            impact: 'Browser script execution.',
+            endpoints: [{ protocol: 'https', host: 'app.example.test', port: 443 }],
+            active: true
+        },
+        {
+            id: 7002,
+            title: 'Stored XSS in profile page',
+            severity: 'Medium',
+            cwe: 'CWE-79',
+            description: 'Profile name is stored unsafely.',
+            impact: 'Browser script execution from stored content.',
+            endpoints: [{ protocol: 'https', host: 'app.example.test', port: 443 }],
+            active: true
+        },
+        {
+            id: 7003,
+            title: 'OpenSSL issue with CWE and CVE',
+            severity: 'High',
+            cve_ids: ['CVE-2026-7003'],
+            cwe_id: 'CWE-20',
+            description: 'Input validation issue.',
+            impact: 'Service impact.',
+            endpoints: [{ protocol: 'tcp', host: '10.0.0.7', port: 443 }],
+            active: true
+        }
+    ]);
+
+    const xssGroups = groups.filter(group => group.cweIds.includes('CWE-79'));
+    assert.equal(xssGroups.length, 2);
+    assert.ok(xssGroups.every(group => group.cveIds.length === 0));
+    assert.ok(xssGroups.every(group => group.allCWEs.some(cwe => cwe.weakness_id === 'CWE-79')));
+
+    const cveGroup = groups.find(group => group.cveId === 'CVE-2026-7003');
+    assert.deepEqual(cveGroup.cweIds, ['CWE-20']);
+    assert.match(cveGroup.superTicketMarkdown, /\*\*Associated CVEs:\*\* CVE-2026-7003/);
+    assert.match(cveGroup.superTicketMarkdown, /\*\*Associated CWEs:\*\* CWE-20/);
 });
 
 test('groups php multiple-vulnerability titles across versions into one software-family ticket', () => {

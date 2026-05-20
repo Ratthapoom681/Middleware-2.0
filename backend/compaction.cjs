@@ -235,6 +235,33 @@ const collectAutoCveIds = (finding = {}) => {
     return sortAutoStrings(ids);
 };
 
+const normalizeAutoCweId = (value) => {
+    if (value && typeof value === 'object') {
+        return normalizeAutoCweId(value.cwe_id || value.cweId || value.weakness_id || value.weaknessId || value.vulnerability_id || value.name || value.id);
+    }
+    const cleaned = normalizeAutoText(value);
+    if (!cleaned || ['none', 'n/a'].includes(cleaned.toLowerCase())) return '';
+    const cweMatch = cleaned.match(/\bCWE[-_\s]?(\d+)\b/i);
+    if (cweMatch) return `CWE-${cweMatch[1]}`;
+    if (/^\d+$/.test(cleaned)) return `CWE-${cleaned}`;
+    return '';
+};
+
+const collectAutoCweIds = (finding = {}) => {
+    const ids = new Set();
+    const pushId = (value) => {
+        const normalized = normalizeAutoCweId(value);
+        if (normalized) ids.add(normalized);
+    };
+
+    if (Array.isArray(finding.cwes)) finding.cwes.forEach(pushId);
+    else pushId(finding.cwes);
+    if (Array.isArray(finding.cwe_ids)) finding.cwe_ids.forEach(pushId);
+    else pushId(finding.cwe_ids);
+    pushId(finding.cwe || finding.CWE || finding.cwe_id);
+    return sortAutoStrings(ids);
+};
+
 const resolveAutoCompactionFamily = (finding = {}) => {
     const cveIds = collectAutoCveIds(finding);
     const upgradeTarget = parseAutoUpgradeTarget(finding);
@@ -501,15 +528,18 @@ const groupAutoEndpointDetailsByCves = (details) => {
         if (!groups.has(signature)) {
             groups.set(signature, {
                 cves: detail.cves,
+                cwes: new Set(),
                 endpoints: []
             });
         }
+        asArray(detail.cwes).forEach(cwe => groups.get(signature).cwes.add(cwe));
         groups.get(signature).endpoints.push(detail);
     });
 
     return Array.from(groups.values())
         .map(group => ({
             ...group,
+            cwes: sortAutoStrings(group.cwes),
             endpoints: group.endpoints.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
         }))
         .sort((a, b) => {
@@ -538,6 +568,7 @@ const finalizeAutoEndpointDetails = (endpointDetailMap) => (
             host: detail.host,
             severity: detail.severity,
             cves: sortAutoStrings(detail.cves),
+            cwes: sortAutoStrings(detail.cwes),
             mitigations: sortAutoStrings(detail.mitigations),
             findingIds: sortAutoFindingIds(detail.findingIds)
         }))
@@ -567,6 +598,7 @@ const finalizeAutoSourceGroups = (sourceGroupsMap) => (
             findingIds: sortAutoFindingIds(sourceGroup.findingIds),
             severity: sourceGroup.severity || 'Info',
             cveIds: sortAutoStrings(sourceGroup.cveIds),
+            cweIds: sortAutoStrings(sourceGroup.cweIds),
             endpointDetails: finalizeAutoEndpointDetails(sourceGroup.endpointDetailMap),
             descriptionSources: sortAutoTextSources(sourceGroup.descriptionsMap),
             impactSources: sortAutoTextSources(sourceGroup.impactsMap),
@@ -721,6 +753,12 @@ const buildAutoCveBlock = (cveIds = []) => {
     return `\n\n**CVEs:**\n${uniqueCves.join(', ')}`;
 };
 
+const buildAutoCweBlock = (cweIds = []) => {
+    const uniqueCwes = sortAutoStrings(cweIds).filter(Boolean);
+    if (uniqueCwes.length === 0) return '';
+    return `\n\n**CWEs:**\n${uniqueCwes.join(', ')}`;
+};
+
 const formatAutoSourceGroupTextBlock = (title, values = [], endpointDetails = []) => {
     const escapeText = (text = '') => (
         cleanAutoBlockText(text)
@@ -832,6 +870,7 @@ const buildAutoSourceGroupSection = (sourceGroup = {}) => {
         ? ` (DefectDojo Finding IDs: ${findingIds.join(', ')})`
         : '';
     const cveIds = sortAutoStrings(asArray(sourceGroup.cveIds).map(cve => cve?.vulnerability_id || cve).filter(Boolean));
+    const cweIds = sortAutoStrings(asArray(sourceGroup.cweIds).map(cwe => cwe?.weakness_id || cwe?.cwe_id || cwe?.name || cwe?.id || cwe).filter(Boolean));
     const mitigationItems = sortAutoStrings(asArray(sourceGroup.mitigations));
     const mitigationBlock = mitigationItems.length > 0
         ? `\n\nMitigation:\n${mitigationItems.map(item => `- ${item}`).join('\n')}`
@@ -843,7 +882,7 @@ const buildAutoSourceGroupSection = (sourceGroup = {}) => {
         ? ''
         : `Affected Assets:\n${formatAutoSourceGroupAssets(sourceGroup.endpointDetails)}\n\n`;
 
-    return `${title}${idLabel}:\n${assetsBlock}CVEs: ${cveIds.length > 0 ? cveIds.join(', ') : 'None'}${formatAutoSourceGroupTextBlock('Description', descriptionSources, sourceGroup.endpointDetails)}${formatAutoSourceGroupTextBlock('Impact', impactSources, sourceGroup.endpointDetails)}${mitigationBlock}`;
+    return `${title}${idLabel}:\n${assetsBlock}CVEs: ${cveIds.length > 0 ? cveIds.join(', ') : 'None'}\nCWEs: ${cweIds.length > 0 ? cweIds.join(', ') : 'None'}${formatAutoSourceGroupTextBlock('Description', descriptionSources, sourceGroup.endpointDetails)}${formatAutoSourceGroupTextBlock('Impact', impactSources, sourceGroup.endpointDetails)}${mitigationBlock}`;
 };
 
 const buildAutoSourceGroupsBlock = (ticket) => {
@@ -866,12 +905,17 @@ const buildAutoActionRequiredMarkdown = (ticket) => {
         ...(asArray(ticket.cveIds)),
         ...(asArray(ticket.allCVEs).map(cve => cve?.vulnerability_id || cve?.name || cve?.id || cve))
     ]);
+    const cweIds = sortAutoStrings([
+        ...(asArray(ticket.cweIds)),
+        ...(asArray(ticket.allCWEs).map(cwe => cwe?.weakness_id || cwe?.cwe_id || cwe?.name || cwe?.id || cwe))
+    ]);
     const descriptionSources = collectAutoAppendixSources(sourceGroups, 'descriptionSources');
     const impactSources = collectAutoAppendixSources(sourceGroups, 'impactSources');
     const cveBlock = cveIds.length > 0 ? cveIds.join(', ') : 'None';
+    const cweBlock = cweIds.length > 0 ? `\n**Associated CWEs:** ${cweIds.join(', ')}` : '';
     const defectDojoContextBlock = formatAutoDefectDojoContext(ticket);
 
-    return `Vulnerability Overview:\nThe endpoints listed below are running outdated software and require patching.${defectDojoContextBlock}\n\n**Target Mitigation:**\n${targetMitigation}\n\n**Affected Assets & Ports:**\n\n${formatAutoAffectedAssetsAndPorts(ticket.endpointDetails || [])}\n\n**Appendix:** Vulnerability Details\n**Associated CVEs:** ${cveBlock}${formatAutoAppendixTextBlock('DefectDojo Description', descriptionSources)}${formatAutoAppendixTextBlock('Impact', impactSources)}`;
+    return `Vulnerability Overview:\nThe endpoints listed below are running outdated software and require patching.${defectDojoContextBlock}\n\n**Target Mitigation:**\n${targetMitigation}\n\n**Affected Assets & Ports:**\n\n${formatAutoAffectedAssetsAndPorts(ticket.endpointDetails || [])}\n\n**Appendix:** Vulnerability Details\n**Associated CVEs:** ${cveBlock}${cweBlock}${formatAutoAppendixTextBlock('DefectDojo Description', descriptionSources)}${formatAutoAppendixTextBlock('Impact', impactSources)}`;
 };
 
 const buildAutoSuperTicketMarkdown = (ticket) => {
@@ -901,7 +945,8 @@ const buildAutoSuperTicketMarkdown = (ticket) => {
                         .map(detail => `  - ${detail.label} (Severity: ${detail.severity})`)
                         .join('\n');
                     const cves = group.cves.length > 0 ? group.cves.join(', ') : 'None';
-                    return `${endpoints}\n    CVEs: ${cves}`;
+                    const cwes = group.cwes.length > 0 ? group.cwes.join(', ') : 'None';
+                    return `${endpoints}\n    CVEs: ${cves}\n    CWEs: ${cwes}`;
                 })
                 .join('\n');
             return `**Host:** ${host}\n${endpointLines}`;
@@ -913,10 +958,11 @@ const buildAutoSuperTicketMarkdown = (ticket) => {
         : '';
     const sourceTitlesBlock = buildAutoSourceTitlesBlock(ticket.allTitles || []);
     const cveBlock = buildAutoCveBlock((ticket.allCVEs || []).map(item => item?.vulnerability_id || item).filter(Boolean));
+    const cweBlock = buildAutoCweBlock((ticket.allCWEs || []).map(item => item?.weakness_id || item?.cwe_id || item).filter(Boolean));
     const descriptionBlock = formatAutoTicketTextSection('Description', ticket.allDescriptionSources || ticket.allDescriptions || []);
     const impactBlock = formatAutoTicketTextSection('Impact', ticket.allImpactSources || ticket.allImpacts || []);
 
-    return `**Vulnerability Overview:**\nThe targeted software is out of date and affected by one or more vulnerabilities. Please apply the mitigation to the endpoints listed below.${defectDojoContextBlock}${sourceTitlesBlock}${cveBlock}${descriptionBlock}${impactBlock}${mitigationBlock}\n\n**Affected Assets & Details:**\n\n${hostBlocks}`;
+    return `**Vulnerability Overview:**\nThe targeted software is out of date and affected by one or more vulnerabilities. Please apply the mitigation to the endpoints listed below.${defectDojoContextBlock}${sourceTitlesBlock}${cveBlock}${cweBlock}${descriptionBlock}${impactBlock}${mitigationBlock}\n\n**Affected Assets & Details:**\n\n${hostBlocks}`;
 };
 
 const buildBackendCompactedRedmineTicketRefs = (findings = [], { pullFilters = {}, getKnownRedmineIssueId } = {}) => {
@@ -936,6 +982,7 @@ const buildBackendCompactedRedmineTicketRefs = (findings = [], { pullFilters = {
                 legacySyncSourceMap: new Map(),
                 softwareFamilies: new Set(),
                 cveIds: new Set(),
+                cweIds: new Set(),
                 originalIds: [],
                 titles: new Set(),
                 mitigations: new Set(),
@@ -956,6 +1003,7 @@ const buildBackendCompactedRedmineTicketRefs = (findings = [], { pullFilters = {
         }
 
         const group = groups.get(groupKey);
+        const cweIds = collectAutoCweIds(finding);
         group.originalIds.push(finding.id);
         group.severity = highestSeverity(group.severity, finding.severity || 'Info');
         if (fingerprint.compactFamilyKey) group.compactFamilyKeys.add(fingerprint.compactFamilyKey);
@@ -966,6 +1014,7 @@ const buildBackendCompactedRedmineTicketRefs = (findings = [], { pullFilters = {
         if (!group.legacySyncSourceMap.has(legacyGroupKey)) group.legacySyncSourceMap.set(legacyGroupKey, new Set());
         group.legacySyncSourceMap.get(legacyGroupKey).add(finding.id);
         fingerprint.cveIds.forEach(cveId => group.cveIds.add(cveId));
+        cweIds.forEach(cweId => group.cweIds.add(cweId));
         const title = normalizeAutoText(finding.title || finding.name || 'Untitled finding');
         group.titles.add(title);
         const mitigation = getAutoMitigationText(finding);
@@ -982,6 +1031,7 @@ const buildBackendCompactedRedmineTicketRefs = (findings = [], { pullFilters = {
                 findingIds: [],
                 severity: finding.severity || 'Info',
                 cveIds: new Set(),
+                cweIds: new Set(),
                 endpointDetailMap: new Map(),
                 descriptionsMap: new Map(),
                 impactsMap: new Map(),
@@ -994,6 +1044,7 @@ const buildBackendCompactedRedmineTicketRefs = (findings = [], { pullFilters = {
         sourceGroup.findingIds.push(finding.id);
         sourceGroup.severity = highestSeverity(sourceGroup.severity, finding.severity || 'Info');
         fingerprint.cveIds.forEach(cveId => sourceGroup.cveIds.add(cveId));
+        cweIds.forEach(cweId => sourceGroup.cweIds.add(cweId));
         if (mitigation) sourceGroup.mitigations.add(mitigation);
         addAutoTextSource(sourceGroup.descriptionsMap, rawDescription, finding.id);
         addAutoTextSource(sourceGroup.impactsMap, rawImpact, finding.id);
@@ -1010,6 +1061,7 @@ const buildBackendCompactedRedmineTicketRefs = (findings = [], { pullFilters = {
                     host: getAutoEndpointHost(endpoint),
                     severity: finding.severity || 'Info',
                     cves: new Set(),
+                    cwes: new Set(),
                     mitigations: new Set(),
                     findingIds: []
                 });
@@ -1018,6 +1070,7 @@ const buildBackendCompactedRedmineTicketRefs = (findings = [], { pullFilters = {
             detail.severity = highestSeverity(detail.severity, finding.severity || 'Info');
             detail.findingIds.push(finding.id);
             fingerprint.cveIds.forEach(cveId => detail.cves.add(cveId));
+            cweIds.forEach(cweId => detail.cwes.add(cweId));
             if (mitigation) detail.mitigations.add(mitigation);
 
             if (!sourceGroup.endpointDetailMap.has(endpointKey)) {
@@ -1027,6 +1080,7 @@ const buildBackendCompactedRedmineTicketRefs = (findings = [], { pullFilters = {
                     host: getAutoEndpointHost(endpoint),
                     severity: finding.severity || 'Info',
                     cves: new Set(),
+                    cwes: new Set(),
                     mitigations: new Set(),
                     findingIds: []
                 });
@@ -1035,6 +1089,7 @@ const buildBackendCompactedRedmineTicketRefs = (findings = [], { pullFilters = {
             sourceDetail.severity = highestSeverity(sourceDetail.severity, finding.severity || 'Info');
             sourceDetail.findingIds.push(finding.id);
             fingerprint.cveIds.forEach(cveId => sourceDetail.cves.add(cveId));
+            cweIds.forEach(cweId => sourceDetail.cwes.add(cweId));
             if (mitigation) sourceDetail.mitigations.add(mitigation);
         });
         const mitigatedState = isStoredFindingMitigated(finding);
@@ -1053,6 +1108,7 @@ const buildBackendCompactedRedmineTicketRefs = (findings = [], { pullFilters = {
             active: isStoredFindingActive(finding),
             endpoint: endpoints.map(getAutoEndpointLabel).join(', '),
             cveIds: fingerprint.cveIds,
+            cweIds,
             mitigationConfirmedAt: finding.mitigation_confirmed_at || finding.mitigation_confirmed || finding.mitigated_at || null
         });
         if (route.projectId) group.productIds.add(route.projectId);
@@ -1068,6 +1124,7 @@ const buildBackendCompactedRedmineTicketRefs = (findings = [], { pullFilters = {
         const engagementIds = sortAutoStrings(group.engagementIds);
         const engagementNames = sortAutoStrings(group.engagementNames);
         const cveIds = sortAutoStrings(group.cveIds);
+        const cweIds = sortAutoStrings(group.cweIds);
         const allTitles = sortAutoStrings(group.titles);
         const softwareFamily = sortAutoStrings(group.softwareFamilies)[0] || '';
         const pullProjectId = normalizeAutoText(pullFilters.test__engagement__product || '');
@@ -1125,8 +1182,10 @@ const buildBackendCompactedRedmineTicketRefs = (findings = [], { pullFilters = {
             findingCount: findingIds.length,
             cveId: cveIds.join(','),
             cveIds,
+            cweIds,
             allTitles,
             allCVEs: cveIds.map(vulnerability_id => ({ vulnerability_id })),
+            allCWEs: cweIds.map(weakness_id => ({ weakness_id })),
             allMitigations: sortAutoStrings(group.mitigations),
             allDescriptions: allDescriptionSources.map(source => source.text),
             allImpacts: allImpactSources.map(source => source.text),
@@ -1190,6 +1249,8 @@ module.exports = {
     sortAutoStrings,
     sortAutoFindingIds,
     collectAutoCveIds,
+    normalizeAutoCweId,
+    collectAutoCweIds,
     resolveAutoCompactionFamily,
     extractAutoTextSourceEvidenceLines,
     normalizeAutoTextSourceKey,
@@ -1225,6 +1286,7 @@ module.exports = {
     formatAutoDefectDojoContext,
     buildAutoSourceTitlesBlock,
     buildAutoCveBlock,
+    buildAutoCweBlock,
     formatAutoSourceGroupTextBlock,
     normalizeAutoTextSource,
     collectAutoAppendixSources,

@@ -13,7 +13,8 @@ import {
   ShieldCheck,
   Search,
   ChevronDown,
-  Check
+  Check,
+  Bell
 } from 'lucide-react';
 import { AUTH_EXPIRED_EVENT, apiFetch, getCurrentUser, openDashboardSyncStream, removeAuthToken, removeCurrentUser } from '../services/api';
 import Login from '../features/auth/Login';
@@ -683,6 +684,33 @@ const collectVulnerabilityIds = (finding) => {
   return sortStrings(ids);
 };
 
+const normalizeWeaknessId = (value) => {
+  if (value && typeof value === 'object') {
+    return normalizeWeaknessId(value.cwe_id || value.cweId || value.weakness_id || value.weaknessId || value.vulnerability_id || value.name || value.id);
+  }
+  const cleaned = cleanText(value);
+  if (!cleaned || ['none', 'n/a'].includes(cleaned.toLowerCase())) return '';
+  const cweMatch = cleaned.match(/\bCWE[-_\s]?(\d+)\b/i);
+  if (cweMatch) return `CWE-${cweMatch[1]}`;
+  if (/^\d+$/.test(cleaned)) return `CWE-${cleaned}`;
+  return '';
+};
+
+const collectWeaknessIds = (finding = {}) => {
+  const ids = new Set();
+  const pushId = (value) => {
+    const normalized = normalizeWeaknessId(value);
+    if (normalized) ids.add(normalized);
+  };
+
+  if (Array.isArray(finding.cwes)) finding.cwes.forEach(pushId);
+  else pushId(finding.cwes);
+  if (Array.isArray(finding.cwe_ids)) finding.cwe_ids.forEach(pushId);
+  else pushId(finding.cwe_ids);
+  pushId(finding.cwe || finding.CWE || finding.cwe_id);
+  return sortStrings(ids);
+};
+
 const resolveCompactFamily = (finding) => {
   const cves = collectVulnerabilityIds(finding);
   const target = parseUpgradeTarget(finding);
@@ -1204,16 +1232,19 @@ const groupEndpointDetailsByCves = (details) => {
     if (!groups.has(signature)) {
       groups.set(signature, {
         cves: detail.cves,
+        cwes: new Set(),
         endpoints: [],
       });
     }
 
+    asArray(detail.cwes).forEach(cwe => groups.get(signature).cwes.add(cwe));
     groups.get(signature).endpoints.push(detail);
   });
 
   return Array.from(groups.values())
     .map(group => ({
       ...group,
+      cwes: sortStrings(group.cwes),
       endpoints: group.endpoints.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })),
     }))
     .sort((a, b) => {
@@ -1242,6 +1273,7 @@ const finalizeEndpointDetails = (endpointDetailMap) => (
       host: detail.host,
       severity: detail.severity,
       cves: sortStrings(detail.cves),
+      cwes: sortStrings(detail.cwes),
       mitigations: sortStrings(detail.mitigations),
       findingIds: sortFindingIds(detail.findingIds),
     }))
@@ -1260,6 +1292,7 @@ const finalizeSourceGroups = (sourceGroupsMap) => (
       findingIds: sortFindingIds(sourceGroup.findingIds),
       severity: sourceGroup.severity || 'Info',
       cveIds: sortStrings(sourceGroup.cveIds),
+      cweIds: sortStrings(sourceGroup.cweIds),
       endpointDetails: finalizeEndpointDetails(sourceGroup.endpointDetailMap),
       descriptionSources: sortTextSources(sourceGroup.descriptionsMap),
       impactSources: sortTextSources(sourceGroup.impactsMap),
@@ -1516,6 +1549,7 @@ const buildSourceGroupSection = (sourceGroup = {}) => {
     ? ` (DefectDojo Finding IDs: ${findingIds.join(', ')})`
     : '';
   const cveIds = sortStrings(asArray(sourceGroup.cveIds).map(cve => cve?.vulnerability_id || cve).filter(Boolean));
+  const cweIds = sortStrings(asArray(sourceGroup.cweIds).map(cwe => cwe?.weakness_id || cwe?.cwe_id || cwe?.name || cwe?.id || cwe).filter(Boolean));
   const mitigations = sortStrings(asArray(sourceGroup.mitigations));
   const mitigationBlock = mitigations.length > 0
     ? `\n\nMitigation:\n${mitigations.map(item => `- ${item}`).join('\n')}`
@@ -1527,7 +1561,7 @@ const buildSourceGroupSection = (sourceGroup = {}) => {
     ? ''
     : `Affected Assets:\n${formatSourceGroupAssets(sourceGroup.endpointDetails)}\n\n`;
 
-  return `${title}${idLabel}:\n${assetsBlock}CVEs: ${cveIds.length > 0 ? cveIds.join(', ') : 'None'}${formatSourceGroupTextBlock('Description', descriptionSources, sourceGroup.endpointDetails)}${formatSourceGroupTextBlock('Impact', impactSources, sourceGroup.endpointDetails)}${mitigationBlock}`;
+  return `${title}${idLabel}:\n${assetsBlock}CVEs: ${cveIds.length > 0 ? cveIds.join(', ') : 'None'}\nCWEs: ${cweIds.length > 0 ? cweIds.join(', ') : 'None'}${formatSourceGroupTextBlock('Description', descriptionSources, sourceGroup.endpointDetails)}${formatSourceGroupTextBlock('Impact', impactSources, sourceGroup.endpointDetails)}${mitigationBlock}`;
 };
 
 const buildSourceGroupsBlock = (ticket) => {
@@ -1550,12 +1584,17 @@ const buildActionRequiredMarkdown = (ticket) => {
     ...(asArray(ticket.cveIds)),
     ...(asArray(ticket.allCVEs).map(cve => cve?.vulnerability_id || cve?.name || cve?.id || cve)),
   ]);
+  const cweIds = sortStrings([
+    ...(asArray(ticket.cweIds)),
+    ...(asArray(ticket.allCWEs).map(cwe => cwe?.weakness_id || cwe?.cwe_id || cwe?.name || cwe?.id || cwe)),
+  ]);
   const descriptionSources = collectAppendixSources(sourceGroups, 'descriptionSources');
   const impactSources = collectAppendixSources(sourceGroups, 'impactSources');
   const cveBlock = cveIds.length > 0 ? cveIds.join(', ') : 'None';
+  const cweBlock = cweIds.length > 0 ? `\n**Associated CWEs:** ${cweIds.join(', ')}` : '';
   const defectDojoContextBlock = formatDefectDojoContext(ticket);
 
-  return `Vulnerability Overview:\nThe endpoints listed below are running outdated software and require patching.${defectDojoContextBlock}\n\n**Target Mitigation:**\n${targetMitigation}\n\n**Affected Assets & Ports:**\n\n${formatAffectedAssetsAndPorts(ticket.endpointDetails || [])}\n\n**Appendix:** Vulnerability Details\n**Associated CVEs:** ${cveBlock}${formatAppendixTextBlock('DefectDojo Description', descriptionSources)}${formatAppendixTextBlock('Impact', impactSources)}`;
+  return `Vulnerability Overview:\nThe endpoints listed below are running outdated software and require patching.${defectDojoContextBlock}\n\n**Target Mitigation:**\n${targetMitigation}\n\n**Affected Assets & Ports:**\n\n${formatAffectedAssetsAndPorts(ticket.endpointDetails || [])}\n\n**Appendix:** Vulnerability Details\n**Associated CVEs:** ${cveBlock}${cweBlock}${formatAppendixTextBlock('DefectDojo Description', descriptionSources)}${formatAppendixTextBlock('Impact', impactSources)}`;
 };
 
 const buildSuperTicketMarkdown = (ticket) => {
@@ -1585,7 +1624,8 @@ const buildSuperTicketMarkdown = (ticket) => {
             .map(detail => `  - ${detail.label} (Severity: ${detail.severity})`)
             .join('\n');
           const cves = group.cves.length > 0 ? group.cves.join(', ') : 'None';
-          return `${endpoints}\n    CVEs: ${cves}`;
+          const cwes = group.cwes.length > 0 ? group.cwes.join(', ') : 'None';
+          return `${endpoints}\n    CVEs: ${cves}\n    CWEs: ${cwes}`;
         })
         .join('\n');
 
@@ -1603,6 +1643,12 @@ const buildSuperTicketMarkdown = (ticket) => {
   const cveBlock = allCveIds.length > 0
     ? `\n\n**CVEs:**\n${allCveIds.join(', ')}`
     : '';
+  const allCweIds = Array.isArray(ticket.allCWEs)
+    ? ticket.allCWEs.map(item => item?.weakness_id || item?.cwe_id || item?.name || item?.id || item).filter(Boolean)
+    : [];
+  const cweBlock = allCweIds.length > 0
+    ? `\n\n**CWEs:**\n${allCweIds.join(', ')}`
+    : '';
   const mitigationBlock = ticket.allMitigations.length > 0
     ? `\n\n**${ticket.allMitigations.length === 1 ? 'Mitigation' : 'Mitigations'}:**\n${ticket.allMitigations.map(item => `- ${item}`).join('\n')}`
     : '';
@@ -1610,7 +1656,7 @@ const buildSuperTicketMarkdown = (ticket) => {
   const descriptionBlock = formatTicketTextSection('Description', ticket.allDescriptionSources || ticket.allDescriptions || []);
   const impactBlock = formatTicketTextSection('Impact', ticket.allImpactSources || ticket.allImpacts || []);
 
-  return `**Vulnerability Overview:**\nThe targeted software is out of date and affected by one or more vulnerabilities. Please apply the mitigation to the endpoints listed below.${defectDojoContextBlock}${sourceTitlesBlock}${cveBlock}${descriptionBlock}${impactBlock}${mitigationBlock}\n\n**Affected Assets & Details:**\n\n${hostBlocks}`;
+  return `**Vulnerability Overview:**\nThe targeted software is out of date and affected by one or more vulnerabilities. Please apply the mitigation to the endpoints listed below.${defectDojoContextBlock}${sourceTitlesBlock}${cveBlock}${cweBlock}${descriptionBlock}${impactBlock}${mitigationBlock}\n\n**Affected Assets & Details:**\n\n${hostBlocks}`;
 };
 
 const normalizeBackendCveGroupForDisplay = (group) => {
@@ -1620,6 +1666,12 @@ const normalizeBackendCveGroupForDisplay = (group) => {
   const cveIds = backendCves.length > 0
     ? backendCves
     : (Array.isArray(group.cveIds) ? group.cveIds.filter(Boolean) : []);
+  const backendCwes = Array.isArray(group.allCWEs)
+    ? group.allCWEs.map(item => item?.weakness_id || item?.cwe_id || item?.name || item?.id || item).filter(Boolean)
+    : [];
+  const cweIds = backendCwes.length > 0
+    ? backendCwes
+    : (Array.isArray(group.cweIds) ? group.cweIds.filter(Boolean) : []);
   const cveLabel = cveIds.length > 0 ? cveIds.join(', ') : (group.cveId || 'No CVE');
   const findingStates = Array.isArray(group.findingStates) ? group.findingStates : [];
   const endpointDetails = Array.isArray(group.endpointDetails) && group.endpointDetails.length > 0
@@ -1630,6 +1682,7 @@ const normalizeBackendCveGroupForDisplay = (group) => {
       host: state.endpoint || 'Unknown endpoint',
       severity: state.severity || group.severity || 'Info',
       cves: state.cveIds?.length > 0 ? state.cveIds : (cveIds.length > 0 ? cveIds : (group.cveId ? [group.cveId] : [])),
+      cwes: state.cweIds?.length > 0 ? state.cweIds : cweIds,
       mitigations: state.mitigated ? ['Mitigated in DefectDojo'] : [],
       findingIds: [state.findingId],
       mitigated: Boolean(state.mitigated),
@@ -1659,6 +1712,8 @@ const normalizeBackendCveGroupForDisplay = (group) => {
     allCVEs: cveIds.length > 0
       ? cveIds.map(vulnerability_id => ({ vulnerability_id }))
       : (group.cveId ? [{ vulnerability_id: group.cveId }] : []),
+    allCWEs: cweIds.map(weakness_id => ({ weakness_id })),
+    cweIds,
     allMitigations: Array.isArray(group.allMitigations) ? group.allMitigations : findingStates.filter(state => state.mitigated).map(state => `Finding ${state.findingId} mitigated`),
     allDescriptionSources: group.allDescriptionSources,
     allImpactSources: group.allImpactSources,
@@ -1695,6 +1750,8 @@ const normalizeBackendCveGroupForDisplay = (group) => {
     allCVEs: cveIds.length > 0
       ? cveIds.map(vulnerability_id => ({ vulnerability_id }))
       : (group.cveId ? [{ vulnerability_id: group.cveId }] : []),
+    allCWEs: cweIds.map(weakness_id => ({ weakness_id })),
+    cweIds,
     allMitigations: displayTicket.allMitigations,
     allDescriptions: displayTicket.allDescriptions,
     allImpacts: displayTicket.allImpacts,
@@ -1743,6 +1800,7 @@ function App() {
   const [redmineSyncByTicket, setRedmineSyncByTicket] = useState({});
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [scopeSearch, setScopeSearch] = useState('');
+  const [compactedSearch, setCompactedSearch] = useState('');
   const [isScopePending, startScopeTransition] = useTransition();
   const scopeMenuRef = useRef(null);
 
@@ -2073,13 +2131,15 @@ function App() {
     }
   };
 
-  const getTicketActionId = (finding) => finding.compactedSyncKey || finding.compactGroupId || finding.id || finding.title;
+  const getTicketActionId = useCallback((finding) => (
+    finding.compactedSyncKey || finding.compactGroupId || finding.id || finding.title
+  ), []);
 
-  const getRedmineSyncTimestamp = (sync) => (
+  const getRedmineSyncTimestamp = useCallback((sync) => (
     Date.parse(sync?.updatedAt || sync?.checkedAt || '') || 0
-  );
+  ), []);
 
-  const chooseDashboardRedmineSync = (localSync, serverSync) => {
+  const chooseDashboardRedmineSync = useCallback((localSync, serverSync) => {
     if (!localSync) return serverSync || null;
     if (!serverSync) return localSync;
 
@@ -2089,7 +2149,7 @@ function App() {
       return serverSync;
     }
     return localSync;
-  };
+  }, [getRedmineSyncTimestamp]);
 
   const getStoredRedmineSync = (finding) => {
     const candidateKeys = [
@@ -2475,6 +2535,7 @@ function App() {
       const key = fingerprint.groupKey;
       const target = parseUpgradeTarget(f);
       const cves = fingerprint.cves;
+      const cwes = collectWeaknessIds(f);
       const mitigation = getMitigationText(f);
       const description = getDescriptionText(f);
       const impact = getImpactText(f);
@@ -2497,6 +2558,7 @@ function App() {
           softwareFamilies: new Set(),
           allEndpointsMap: new Map(),
           allCVEsSet: new Set(),
+          allCWEsSet: new Set(),
           allMitigationsSet: new Set(),
           allDescriptionsMap: new Map(),
           allImpactsMap: new Map(),
@@ -2538,6 +2600,7 @@ function App() {
       const sourceTitle = cleanText(f.title || f.name || 'Untitled finding');
       group.allTitlesSet.add(sourceTitle);
       cves.forEach(cve => group.allCVEsSet.add(cve));
+      cwes.forEach(cwe => group.allCWEsSet.add(cwe));
       if (mitigation) group.allMitigationsSet.add(mitigation);
       addTextSource(group.allDescriptionsMap, rawDescription || description, f.id);
       addTextSource(group.allImpactsMap, rawImpact || impact, f.id);
@@ -2547,6 +2610,7 @@ function App() {
           findingIds: [],
           severity: f.severity || 'Info',
           cveIds: new Set(),
+          cweIds: new Set(),
           endpointDetailMap: new Map(),
           descriptionsMap: new Map(),
           impactsMap: new Map(),
@@ -2559,6 +2623,7 @@ function App() {
       sourceGroup.findingIds.push(f.id);
       sourceGroup.severity = highestSeverity(sourceGroup.severity, f.severity || 'Info');
       cves.forEach(cve => sourceGroup.cveIds.add(cve));
+      cwes.forEach(cwe => sourceGroup.cweIds.add(cwe));
       if (mitigation) sourceGroup.mitigations.add(mitigation);
       addTextSource(sourceGroup.descriptionsMap, rawDescription || description, f.id);
       addTextSource(sourceGroup.impactsMap, rawImpact || impact, f.id);
@@ -2582,6 +2647,7 @@ function App() {
             host: endpointHost(endpoint),
             severity: f.severity || 'Info',
             cves: new Set(),
+            cwes: new Set(),
             mitigations: new Set(),
             findingIds: [],
           });
@@ -2591,6 +2657,7 @@ function App() {
         detail.severity = highestSeverity(detail.severity, f.severity || 'Info');
         detail.findingIds.push(f.id);
         cves.forEach(cve => detail.cves.add(cve));
+        cwes.forEach(cwe => detail.cwes.add(cwe));
         if (mitigation) detail.mitigations.add(mitigation);
 
         if (!sourceGroup.endpointDetailMap.has(keyForEndpoint)) {
@@ -2600,6 +2667,7 @@ function App() {
             host: endpointHost(endpoint),
             severity: f.severity || 'Info',
             cves: new Set(),
+            cwes: new Set(),
             mitigations: new Set(),
             findingIds: [],
           });
@@ -2609,6 +2677,7 @@ function App() {
         sourceDetail.severity = highestSeverity(sourceDetail.severity, f.severity || 'Info');
         sourceDetail.findingIds.push(f.id);
         cves.forEach(cve => sourceDetail.cves.add(cve));
+        cwes.forEach(cwe => sourceDetail.cwes.add(cwe));
         if (mitigation) sourceDetail.mitigations.add(mitigation);
       });
 
@@ -2628,6 +2697,7 @@ function App() {
         active: f.active !== false && !mitigatedState,
         endpoint: endpoints.map(endpointLabel).join(', '),
         cveIds: cves,
+        cweIds: cwes,
         date: dateCandidate?.label || '',
         mitigationConfirmedAt: f.mitigation_confirmed_at || f.mitigation_confirmed || f.mitigated_at || null,
       });
@@ -2700,6 +2770,8 @@ function App() {
         impact: allImpacts[0] || group.impact,
         allEndpoints: Array.from(group.allEndpointsMap.values()),
         allCVEs: sortStrings(group.allCVEsSet).map(vulnerability_id => ({ vulnerability_id })),
+        allCWEs: sortStrings(group.allCWEsSet).map(weakness_id => ({ weakness_id })),
+        cweIds: sortStrings(group.allCWEsSet),
         allMitigations,
         allDescriptions,
         allImpacts,
@@ -2726,6 +2798,7 @@ function App() {
       delete compactedTicket.allEndpointsMap;
       delete compactedTicket.softwareFamilies;
       delete compactedTicket.allCVEsSet;
+      delete compactedTicket.allCWEsSet;
       delete compactedTicket.allMitigationsSet;
       delete compactedTicket.allDescriptionsMap;
       delete compactedTicket.allImpactsMap;
@@ -2750,14 +2823,14 @@ function App() {
     });
   }, [config]);
 
-  const getFindingRedmineSync = (finding) => {
+  const getFindingRedmineSync = useCallback((finding) => {
     const candidateKeys = [
       getTicketActionId(finding),
       ...(Array.isArray(finding.legacySyncKeys) ? finding.legacySyncKeys : []),
     ].filter(Boolean);
     const localSync = candidateKeys.map(key => redmineSyncByTicket[key]).find(Boolean);
     return chooseDashboardRedmineSync(localSync, finding.serverRedmineSync);
-  };
+  }, [chooseDashboardRedmineSync, getTicketActionId, redmineSyncByTicket]);
 
   const getFindingIdentity = (finding, fallback = '') => {
     const identityParts = [
@@ -2793,11 +2866,13 @@ function App() {
   };
 
   const getFindingCveCount = (finding) => finding.allCVEs?.length || 0;
+  const getFindingCweCount = (finding) => finding.allCWEs?.length || finding.cweIds?.length || 0;
 
   const renderFindingRow = (finding, idx) => {
     const findingRedmineSync = getFindingRedmineSync(finding);
     const endpointCount = finding.allEndpoints?.length || 0;
     const cveCount = getFindingCveCount(finding);
+    const cweCount = getFindingCweCount(finding);
     const sourceFindingCount = getCompactedFindingCount(finding);
     const selected = isSelectedFinding(finding, idx);
 
@@ -2830,6 +2905,7 @@ function App() {
         <span>{formatCountLabel(sourceFindingCount, 'finding')}</span>
         <span>{formatCountLabel(endpointCount, 'endpoint')}</span>
         <span>{formatCountLabel(cveCount, 'CVE')}</span>
+        <span>{formatCountLabel(cweCount, 'CWE')}</span>
         <span>{finding.date || 'No date'}</span>
         {findingRedmineSync && (
           <span className={getRedmineSyncBadgeClass(findingRedmineSync)}>
@@ -2881,6 +2957,7 @@ function App() {
     const findingRedmineSync = getFindingRedmineSync(selectedFinding);
     const endpoints = selectedFinding.allEndpoints || [];
     const cves = selectedFinding.allCVEs || [];
+    const cwes = selectedFinding.allCWEs || (selectedFinding.cweIds || []).map(weakness_id => ({ weakness_id }));
     const mitigations = selectedFinding.allMitigations || [];
     const sourceFindingCount = getCompactedFindingCount(selectedFinding);
     const isAdmin = user?.role === 'admin';
@@ -2973,7 +3050,9 @@ function App() {
                       <span className="endpoint-detail-target">{detail.label}</span>
                     </div>
                     <span className="endpoint-detail-cves">
-                      CVEs: {detail.cves.length > 0 ? detail.cves.join(', ') : 'None'}
+                      CVEs: {detail.cves?.length > 0 ? detail.cves.join(', ') : 'None'}
+                      <br />
+                      CWEs: {detail.cwes?.length > 0 ? detail.cwes.join(', ') : 'None'}
                     </span>
                   </div>
                 ))}
@@ -2987,6 +3066,15 @@ function App() {
               {cves.length > 0 ? cves.map((v, i) => (
                 <span key={i} className="cve-tag">{typeof v === 'string' ? v : v.vulnerability_id}</span>
               )) : <p className="detail-empty-text">No CVEs listed.</p>}
+            </div>
+          </section>
+
+          <section className="detail-section">
+            <h3>CWEs</h3>
+            <div className="meta-value-list">
+              {cwes.length > 0 ? cwes.map((v, i) => (
+                <span key={i} className="cve-tag">{typeof v === 'string' ? v : v.weakness_id || v.cwe_id || v.name || v.id}</span>
+              )) : <p className="detail-empty-text">No CWEs listed.</p>}
             </div>
           </section>
 
@@ -3044,7 +3132,51 @@ function App() {
     if (!selectedProductId && !selectedEngagementId && activeFilter === 'All') return allCompactedFindings;
     return getCompactedFindings(filteredFindings);
   }, [activeFilter, allCompactedFindings, filteredFindings, getCompactedFindings, selectedEngagementId, selectedProductId]);
-  const displayFindings = compactedCveFindings ?? fallbackCompactedFindings;
+  const baseDisplayFindings = compactedCveFindings ?? fallbackCompactedFindings;
+  const compactedSearchTokens = useMemo(() => (
+    cleanText(compactedSearch).toLowerCase().split(/\s+/).filter(Boolean)
+  ), [compactedSearch]);
+  const displayFindings = useMemo(() => {
+    if (compactedSearchTokens.length === 0) return baseDisplayFindings;
+
+    return baseDisplayFindings.filter(finding => {
+      const route = getDefectDojoRoute(finding);
+      const redmineSync = getFindingRedmineSync(finding);
+      const searchableValues = [
+        finding.title,
+        finding.subject,
+        finding.redmineSubject,
+        finding.severity,
+        finding.date,
+        route.projectId,
+        route.projectName,
+        route.engagementId,
+        route.engagementName,
+        finding.defectDojoProjectId,
+        finding.defectDojoProjectName,
+        finding.defectDojoEngagementId,
+        finding.defectDojoEngagementName,
+        finding.compactedSyncKey,
+        finding.compactGroupId,
+        finding.groupKey,
+        redmineSync?.issueId,
+        redmineSync?.status,
+        redmineSync?.projectName,
+        getRedmineSyncLabel(redmineSync),
+        ...(finding.allCVEs || []).map(cve => cve?.vulnerability_id || cve?.name || cve?.id || cve),
+        ...(finding.allCWEs || []).map(cwe => cwe?.weakness_id || cwe?.cwe_id || cwe?.name || cwe?.id || cwe),
+        ...(finding.cweIds || []),
+        ...(finding.allMitigations || []),
+        ...(finding.allDescriptions || []),
+        ...(finding.allImpacts || []),
+        ...(finding.allTitles || []),
+        ...(finding.allEndpoints || []).map(endpointLabel),
+      ];
+      const haystack = searchableValues.map(cleanText).filter(Boolean).join(' ').toLowerCase();
+      return compactedSearchTokens.every(token => haystack.includes(token));
+    });
+  }, [baseDisplayFindings, compactedSearchTokens, getFindingRedmineSync]);
+  const compactedSearchActive = compactedSearchTokens.length > 0;
   const compactedFindingsForStats = allCompactedFindings;
   const compactedFindingsForSeverity = useMemo(() => {
     if (!selectedProductId && !selectedEngagementId) return allCompactedFindings;
@@ -3625,6 +3757,24 @@ function App() {
         </nav>
 
         <div className="sidebar-footer">
+          {user?.role === 'admin' && mitigationReviewPendingCount > 0 && currentHash !== '#mitigation-review' && (
+            <button
+              type="button"
+              className="sidebar-nav-item sidebar-notification-bell"
+              onClick={() => {
+                setMitigationReviewToast(null);
+                setHashRoute('#mitigation-review');
+              }}
+              title={`${mitigationReviewPendingCount} mitigation review${mitigationReviewPendingCount !== 1 ? 's' : ''} awaiting closure`}
+              aria-label={`${mitigationReviewPendingCount} mitigation review${mitigationReviewPendingCount !== 1 ? 's' : ''} awaiting closure. Open mitigation review.`}
+            >
+              <Bell size={18} />
+              <span>Review Queue</span>
+              <strong className="sidebar-nav-badge" aria-hidden="true">
+                {mitigationReviewPendingCount > 99 ? '99+' : mitigationReviewPendingCount}
+              </strong>
+            </button>
+          )}
           <div className="sidebar-theme-row">
             <span>Theme</span>
             <ThemeToggle />
@@ -3804,7 +3954,32 @@ function App() {
               <h2 id="compacted-findings-title">Ticket Review</h2>
             </div>
             <div className="compacted-header-actions">
-              <span className="compacted-count">{displayFindings.length} compacted row{displayFindings.length !== 1 ? 's' : ''} shown</span>
+              <label className="compacted-search">
+                <span className="sr-only">Search compacted findings</span>
+                <Search size={15} aria-hidden="true" />
+                <input
+                  type="search"
+                  value={compactedSearch}
+                  onChange={(event) => setCompactedSearch(event.target.value)}
+                  placeholder="Search title, CVE, endpoint, Redmine..."
+                />
+                {compactedSearchActive && (
+                  <button
+                    type="button"
+                    className="compact-search-clear"
+                    onClick={() => setCompactedSearch('')}
+                    aria-label="Clear compacted findings search"
+                    title="Clear search"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </label>
+              <span className="compacted-count">
+                {compactedSearchActive
+                  ? `${displayFindings.length} of ${baseDisplayFindings.length} compacted row${baseDisplayFindings.length !== 1 ? 's' : ''} shown`
+                  : `${displayFindings.length} compacted row${displayFindings.length !== 1 ? 's' : ''} shown`}
+              </span>
               {renderScopeMenu()}
             </div>
           </div>
@@ -3854,7 +4029,11 @@ function App() {
                   <div className="empty-state" role="status">
                     <Info size={48} className="empty-state-icon" />
                     <h2>No matching findings</h2>
-                    <p>No findings found for the selected filter.</p>
+                    <p>
+                      {compactedSearchActive
+                        ? 'No compacted findings match the current search.'
+                        : 'No findings found for the selected filter.'}
+                    </p>
                   </div>
                 )}
                       </div>

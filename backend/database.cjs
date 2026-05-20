@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { collectAutoCweIds } = require('./compaction.cjs');
 
 const TABLES = {
     schemaMigrations: 'defectdojo_viewer_schema_migrations',
@@ -1579,6 +1580,7 @@ const listCompactedCveFindings = async ({
                 compactReasons: new Set(),
                 legacySyncSourceMap: new Map(),
                 cveIds: new Set(),
+                cweIds: new Set(),
                 softwareFamilies: new Set(),
                 titles: new Set(),
                 mitigations: new Set(),
@@ -1611,6 +1613,7 @@ const listCompactedCveFindings = async ({
         const title = finding.title || finding.name || 'Untitled finding';
         const sourceTitle = normalizeText(title) || 'Untitled finding';
         const mitigation = getCompactMitigationText(finding);
+        const cweIds = collectAutoCweIds(finding);
         const description = finding.description || '';
         const impact = finding.impact || '';
         const productIdValue = finding.product_id || finding.defectdojo_route?.projectId || '';
@@ -1629,6 +1632,7 @@ const listCompactedCveFindings = async ({
         group.lastSeenSync = finding.last_seen_sync_id || group.lastSeenSync;
         if (fingerprint.softwareFamily) group.softwareFamilies.add(fingerprint.softwareFamily);
         fingerprint.cveIds.forEach(cveId => group.cveIds.add(cveId));
+        cweIds.forEach(cweId => group.cweIds.add(cweId));
         group.titles.add(normalizeText(title));
         if (mitigation) group.mitigations.add(mitigation);
         addTextSource(group.descriptionsMap, description, finding.id);
@@ -1639,6 +1643,7 @@ const listCompactedCveFindings = async ({
                 findingIds: [],
                 severity: finding.severity || 'Info',
                 cveIds: new Set(),
+                cweIds: new Set(),
                 endpointDetailsMap: new Map(),
                 descriptionsMap: new Map(),
                 impactsMap: new Map(),
@@ -1651,6 +1656,7 @@ const listCompactedCveFindings = async ({
         sourceGroup.findingIds.push(finding.id);
         sourceGroup.severity = highestSeverity(sourceGroup.severity, finding.severity || 'Info');
         fingerprint.cveIds.forEach(cveId => sourceGroup.cveIds.add(cveId));
+        cweIds.forEach(cweId => sourceGroup.cweIds.add(cweId));
         if (mitigation) sourceGroup.mitigations.add(mitigation);
         addTextSource(sourceGroup.descriptionsMap, description, finding.id);
         addTextSource(sourceGroup.impactsMap, impact, finding.id);
@@ -1673,6 +1679,7 @@ const listCompactedCveFindings = async ({
                     host: getEndpointHost(endpoint),
                     severity: finding.severity || 'Info',
                     cves: new Set(),
+                    cwes: new Set(),
                     mitigations: new Set(),
                     findingIds: []
                 });
@@ -1681,6 +1688,7 @@ const listCompactedCveFindings = async ({
             detail.severity = highestSeverity(detail.severity, finding.severity || 'Info');
             detail.findingIds.push(finding.id);
             fingerprint.cveIds.forEach(cveId => detail.cves.add(cveId));
+            cweIds.forEach(cweId => detail.cwes.add(cweId));
             if (mitigation) detail.mitigations.add(mitigation);
 
             if (!sourceGroup.endpointDetailsMap.has(endpointKey)) {
@@ -1690,6 +1698,7 @@ const listCompactedCveFindings = async ({
                     host: getEndpointHost(endpoint),
                     severity: finding.severity || 'Info',
                     cves: new Set(),
+                    cwes: new Set(),
                     mitigations: new Set(),
                     findingIds: []
                 });
@@ -1698,6 +1707,7 @@ const listCompactedCveFindings = async ({
             sourceDetail.severity = highestSeverity(sourceDetail.severity, finding.severity || 'Info');
             sourceDetail.findingIds.push(finding.id);
             fingerprint.cveIds.forEach(cveId => sourceDetail.cves.add(cveId));
+            cweIds.forEach(cweId => sourceDetail.cwes.add(cweId));
             if (mitigation) sourceDetail.mitigations.add(mitigation);
         });
 
@@ -1717,6 +1727,7 @@ const listCompactedCveFindings = async ({
             active: finding.active !== false && !mitigated,
             endpoint: normalizeArray(finding.endpoints).map(getEndpointLabel).join(', '),
             cveIds: fingerprint.cveIds,
+            cweIds,
             date: dateCandidate?.label || '',
             mitigationConfirmedAt: finding.mitigation_confirmed_at || null
         });
@@ -1724,6 +1735,7 @@ const listCompactedCveFindings = async ({
 
     return Array.from(groups.values()).map(group => {
         const cveIds = sortStrings(group.cveIds);
+        const cweIds = sortStrings(group.cweIds);
         const cveSignature = cveIds.join(',');
         const originalIds = sortFindingIds(group.originalIds);
         const productIds = sortStrings(group.productIds);
@@ -1777,6 +1789,7 @@ const listCompactedCveFindings = async ({
             legacySyncKeys,
             cveId: cveSignature,
             cveIds,
+            cweIds,
             isCveGroup: cveIds.length > 0,
             severity: group.severity,
             productId: productIds[0] || '',
@@ -1787,6 +1800,7 @@ const listCompactedCveFindings = async ({
             affectedEndpoints: endpointDetails.map(detail => detail.label),
             allEndpoints: Array.from(group.allEndpointsMap.values()),
             allCVEs: cveIds.map(vulnerability_id => ({ vulnerability_id })),
+            allCWEs: cweIds.map(weakness_id => ({ weakness_id })),
             allMitigations: sortStrings(group.mitigations),
             allDescriptions: allDescriptionSources.map(source => source.text),
             allImpacts: allImpactSources.map(source => source.text),
@@ -2040,6 +2054,7 @@ const finalizeEndpointDetails = (endpointDetailsMap) => (
             host: detail.host,
             severity: detail.severity,
             cves: sortStrings(detail.cves),
+            cwes: sortStrings(detail.cwes),
             mitigations: sortStrings(detail.mitigations),
             findingIds: sortFindingIds(detail.findingIds)
         }))
@@ -2058,6 +2073,7 @@ const finalizeSourceGroups = (sourceGroupsMap) => (
             findingIds: sortFindingIds(sourceGroup.findingIds),
             severity: sourceGroup.severity || 'Info',
             cveIds: sortStrings(sourceGroup.cveIds),
+            cweIds: sortStrings(sourceGroup.cweIds),
             endpointDetails: finalizeEndpointDetails(sourceGroup.endpointDetailsMap),
             descriptionSources: sortTextSources(sourceGroup.descriptionsMap),
             impactSources: sortTextSources(sourceGroup.impactsMap),
