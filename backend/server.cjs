@@ -2409,36 +2409,31 @@ app.post('/api/admin/mitigation-queue/:reviewKey/actions', requireAdmin, async (
                 });
             }
             const closedStatus = asArray(statusIds.statuses).find(status => cleanRouteValue(status.id) === closedStatusId);
+            if (closedStatus && closedStatus.is_closed === false && !isClosedStatus(closedStatus.name, closedStatus.id, {}, {})) {
+                return res.status(400).json({
+                    error: `Configured Closed status ID ${closedStatusId} is "${closedStatus.name || 'unknown'}", but Redmine does not mark that status as closed. Update Settings > Redmine > Status IDs to use a real closed status.`
+                });
+            }
             const closedAt = new Date().toISOString();
             redmineCloseNote = [
                 `Reviewed and closed by ${actor || 'unknown user'}${actorRole ? ` (${actorRole})` : ''} in DefectDojo Viewer.`,
                 `Closed at: ${closedAt}`,
                 reason ? `Reviewer note: ${reason}` : '',
             ].filter(Boolean).join('\n');
-            await updateRedmineIssue({
+            const issueStatus = await updateRedmineIssueStatusAndConfirm({
                 baseUrl,
                 apiKey,
                 issueId: item.issueId,
-                issue: {
-                    status_id: Number.parseInt(closedStatusId, 10) || closedStatusId,
-                    notes: redmineCloseNote
-                }
-            });
-            const statusMap = new Map(asArray(statusIds.statuses).map(status => [cleanRouteValue(status.id), Boolean(status.is_closed)]));
-            const issueStatus = await fetchRedmineIssueStatus({
-                baseUrl,
-                apiKey,
-                issueId: item.issueId,
-                statusMap,
+                statusId: closedStatusId,
+                notes: redmineCloseNote,
                 statusIds,
-                config
+                expectedStatusLabel: `closed status ${closedStatus?.name || closedStatusId}`,
+                matchesExpectedStatus: status => (
+                    cleanRouteValue(status.statusId) === closedStatusId
+                    && Boolean(status.isClosed)
+                    && isClosedStatus(status.status, status.statusId, statusIds, config)
+                )
             });
-            const closeConfirmed = cleanRouteValue(issueStatus.statusId) === closedStatusId || issueStatus.isClosed || isClosedStatus(issueStatus.status, issueStatus.statusId, statusIds, config);
-            if (!closeConfirmed) {
-                return res.status(409).json({
-                    error: `Redmine did not report the issue as closed after update. Current status is ${issueStatus.status || issueStatus.statusId || 'unknown'}.`
-                });
-            }
             await updateClosedRedmineSyncRecordsForIssue({
                 issueId: item.issueId,
                 ticketKey: item.ticketKey,
