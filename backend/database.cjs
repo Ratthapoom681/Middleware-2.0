@@ -141,6 +141,53 @@ const normalizeTimestamp = (value) => {
     return Number.isNaN(date.getTime()) ? null : date.toISOString();
 };
 
+const FINDING_DATE_FIELDS = [
+    'date',
+    'last_seen_at',
+    'lastSeenAt',
+    'last_seen',
+    'lastSeen',
+    'found_date',
+    'foundDate',
+    'created',
+    'created_at',
+    'createdAt',
+    'updated',
+    'updated_at',
+    'updatedAt'
+];
+
+const parseDateTimestamp = (value) => {
+    const text = normalizeText(value);
+    if (!text) return 0;
+    const timestamp = Date.parse(text);
+    return Number.isNaN(timestamp) ? 0 : timestamp;
+};
+
+const formatFindingDateLabel = (value) => {
+    const text = normalizeText(value);
+    if (!text) return '';
+    const timestamp = parseDateTimestamp(text);
+    if (!timestamp) return text;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+    return new Date(timestamp).toISOString().slice(0, 10);
+};
+
+const getFindingDateCandidate = (finding = {}) => {
+    for (const field of FINDING_DATE_FIELDS) {
+        const value = finding[field];
+        const timestamp = parseDateTimestamp(value);
+        if (timestamp) {
+            return {
+                value,
+                label: formatFindingDateLabel(value),
+                timestamp
+            };
+        }
+    }
+    return null;
+};
+
 const normalizeFindingRecord = (finding = {}) => {
     const data = finding.data || finding;
     const findingId = finding.findingId || data.id;
@@ -551,11 +598,30 @@ const buildFindingWhere = ({
     };
 };
 
-const buildTicketWhere = ({ productId, engagementId } = {}, startIndex = 1, alias = '') => {
+const buildTicketWhere = ({
+    allowedProducts,
+    requireAllowedProducts = false,
+    productId,
+    engagementId
+} = {}, startIndex = 1, alias = '') => {
     const prefix = alias ? `${alias}.` : '';
     const clauses = [];
     const params = [];
     let index = startIndex;
+
+    const productFilters = normalizeProductFilters(allowedProducts);
+    if (requireAllowedProducts && productFilters.length === 0) {
+        clauses.push('false');
+    } else if (productFilters.length > 0) {
+        const productLookupKeys = Array.from(new Set(productFilters.flatMap(product => buildEntityLookupKeys('product', product))));
+        clauses.push(`(
+            ${prefix}product_name = ANY($${index}::text[])
+            OR ${prefix}product_id = ANY($${index}::text[])
+            OR ${prefix}product_key = ANY($${index + 1}::text[])
+        )`);
+        params.push(productFilters, productLookupKeys);
+        index += 2;
+    }
 
     const scopedProductId = normalizeText(productId);
     if (scopedProductId) {
@@ -977,6 +1043,8 @@ const formatSyncHistoryRow = (row = {}) => ({
     requestedFilters: parseJsonValue(row.requested_filters, {}),
     triggeredBy: row.triggered_by,
     triggeredRole: row.triggered_role,
+    productRunNumber: Number.parseInt(row.product_run_number, 10) || null,
+    productRunCount: Number.parseInt(row.product_run_count, 10) || null,
     createdAt: toIsoString(row.created_at)
 });
 
@@ -1012,15 +1080,26 @@ const listSyncHistory = async ({
         params.push(normalizeText(status));
         index += 1;
     }
-    clauses.push(`COALESCE(requested_filters->>'syncHistorySplitParent', 'false') <> 'true'`);
-
     const safeLimit = Math.max(1, Math.min(Number.parseInt(limit, 10) || 50, 200));
     const safeOffset = Math.max(0, Number.parseInt(offset, 10) || 0);
     params.push(safeLimit, safeOffset);
 
     const { rows } = await pool.query(`
+        WITH ranked_sync_history AS (
+            SELECT
+                history.*,
+                row_number() OVER (
+                    PARTITION BY COALESCE(product_key, product_id, product_name, '__all_products__')
+                    ORDER BY started_at ASC, id ASC
+                )::int AS product_run_number,
+                count(*) OVER (
+                    PARTITION BY COALESCE(product_key, product_id, product_name, '__all_products__')
+                )::int AS product_run_count
+            FROM ${TABLES.syncHistory} history
+            WHERE COALESCE(history.requested_filters->>'syncHistorySplitParent', 'false') <> 'true'
+        )
         SELECT *
-        FROM ${TABLES.syncHistory}
+        FROM ranked_sync_history
         ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''}
         ORDER BY started_at DESC, id DESC
         LIMIT $${index} OFFSET $${index + 1}
@@ -1031,17 +1110,59 @@ const listSyncHistory = async ({
 
 const getSyncHistory = async (id) => {
     const { rows } = await pool.query(
-        `SELECT * FROM ${TABLES.syncHistory} WHERE id = $1`,
+        `WITH ranked_sync_history AS (
+            SELECT
+                history.*,
+                row_number() OVER (
+                    PARTITION BY COALESCE(product_key, product_id, product_name, '__all_products__')
+                    ORDER BY started_at ASC, id ASC
+                )::int AS product_run_number,
+                count(*) OVER (
+                    PARTITION BY COALESCE(product_key, product_id, product_name, '__all_products__')
+                )::int AS product_run_count
+            FROM ${TABLES.syncHistory} history
+            WHERE COALESCE(history.requested_filters->>'syncHistorySplitParent', 'false') <> 'true'
+        )
+        SELECT * FROM ranked_sync_history WHERE id = $1`,
         [id]
     );
     return rows[0] ? formatSyncHistoryRow(rows[0]) : null;
 };
 
-const getDashboardSummary = async ({ productId = '', engagementId = '' } = {}) => {
-    const findingWhere = buildFindingWhere({ productId, engagementId });
-    const ticketWhere = buildTicketWhere({ productId, engagementId });
+const createAllowedProductMatcher = (allowedProducts = [], requireAllowedProducts = false) => {
+    const allowed = normalizeProductFilters(allowedProducts);
+    if (!requireAllowedProducts && allowed.length === 0) return () => true;
+    if (allowed.length === 0) return () => false;
 
-    const [findingStats, ticketStats, productRows, engagementRows] = await Promise.all([
+    const allowedValues = new Set(allowed.flatMap(product => buildEntityLookupKeys('product', product)).map(value => value.toLowerCase()));
+    return (...values) => values
+        .map(value => normalizeText(value).toLowerCase())
+        .filter(Boolean)
+        .some(value => allowedValues.has(value));
+};
+
+const countPendingMitigationReviews = async () => {
+    const { rows } = await pool.query(`
+        SELECT count(*)::int AS pending_count
+        FROM ${TABLES.mitigationReviews}
+        WHERE state = 'pending'
+    `);
+    return rows[0]?.pending_count || 0;
+};
+
+const getDashboardSummary = async ({
+    allowedProducts,
+    requireAllowedProducts = false,
+    productId = '',
+    engagementId = '',
+    includeMitigationReview = false
+} = {}) => {
+    const scope = { allowedProducts, requireAllowedProducts, productId, engagementId };
+    const findingWhere = buildFindingWhere(scope);
+    const ticketWhere = buildTicketWhere(scope);
+    const allowedProductMatches = createAllowedProductMatcher(allowedProducts, requireAllowedProducts);
+
+    const [findingStats, ticketStats, productRows, engagementRows, mitigationReviewStats] = await Promise.all([
         pool.query(`
             SELECT
                 count(*) FILTER (WHERE active = true AND mitigated = false)::int AS active_findings,
@@ -1101,7 +1222,8 @@ const getDashboardSummary = async ({ productId = '', engagementId = '' } = {}) =
                 engagement_id,
                 engagement_name,
                 product_key,
-                product_id
+                product_id,
+                product_name
             FROM engagement_options
             WHERE COALESCE(NULLIF(engagement_id, ''), NULLIF(engagement_name, '')) IS NOT NULL
                 AND (
@@ -1111,10 +1233,13 @@ const getDashboardSummary = async ({ productId = '', engagementId = '' } = {}) =
                     OR lower(COALESCE(product_name, '')) = lower($1)
                 )
             ORDER BY COALESCE(NULLIF(engagement_key, ''), NULLIF(engagement_id, ''), engagement_name), engagement_name NULLS LAST, engagement_id NULLS LAST
-        `, [normalizeText(productId), buildEntityLookupKeys('product', productId)])
+        `, [normalizeText(productId), buildEntityLookupKeys('product', productId)]),
+        includeMitigationReview
+            ? countPendingMitigationReviews()
+            : Promise.resolve(0)
     ]);
 
-    return {
+    const summary = {
         defectDojo: {
             activeFindings: findingStats.rows[0]?.active_findings || 0,
             mitigatedFindings: findingStats.rows[0]?.mitigated_findings || 0
@@ -1127,12 +1252,12 @@ const getDashboardSummary = async ({ productId = '', engagementId = '' } = {}) =
             ticketClosed: ticketStats.rows[0]?.ticket_closed || 0
         },
         filters: {
-            products: productRows.rows.map(row => ({
+            products: productRows.rows.filter(row => allowedProductMatches(row.product_id, row.product_name, row.product_key)).map(row => ({
                 id: row.product_id || '',
                 key: row.product_key || '',
                 name: row.product_name || row.product_id || 'Unknown product'
             })),
-            engagements: engagementRows.rows.map(row => ({
+            engagements: engagementRows.rows.filter(row => allowedProductMatches(row.product_id, row.product_name, row.product_key)).map(row => ({
                 id: row.engagement_id || '',
                 key: row.engagement_key || '',
                 name: row.engagement_name || row.engagement_id || 'Unknown engagement',
@@ -1141,6 +1266,12 @@ const getDashboardSummary = async ({ productId = '', engagementId = '' } = {}) =
             }))
         }
     };
+    if (includeMitigationReview) {
+        summary.mitigationReview = {
+            pendingCount: mitigationReviewStats || 0
+        };
+    }
+    return summary;
 };
 
 const formatTicketRecord = (record = {}) => {
@@ -1406,14 +1537,284 @@ const getEndpointHost = (endpoint) => {
     return normalizeText(endpoint) || 'Unknown endpoint';
 };
 
-const loadTicketRowsForScope = async ({ productId = '', engagementId = '' } = {}) => {
-    const ticketWhere = buildTicketWhere({ productId, engagementId });
-    const { rows } = await pool.query(`
+const loadTicketRowsForScope = ({
+    allowedProducts,
+    requireAllowedProducts = false,
+    productId = '',
+    engagementId = ''
+} = {}) => {
+    const ticketWhere = buildTicketWhere({ allowedProducts, requireAllowedProducts, productId, engagementId });
+    return pool.query(`
         SELECT *
         FROM ${TABLES.redmineTickets}
         ${ticketWhere.where}
-    `, ticketWhere.params);
-    return rows;
+    `, ticketWhere.params).then(({ rows }) => rows);
+};
+
+const listCompactedCveFindings = async ({
+    allowedProducts,
+    requireAllowedProducts = false,
+    productId = '',
+    engagementId = '',
+    severity = ''
+} = {}) => {
+    const scope = { allowedProducts, requireAllowedProducts, productId, engagementId };
+    const findings = await loadFindings(scope);
+    const severityFilter = normalizeText(severity);
+    const scopedFindings = severityFilter
+        ? findings.filter(finding => normalizeText(finding.severity).toLowerCase() === severityFilter.toLowerCase())
+        : findings;
+    const tickets = await loadTicketRowsForScope(scope);
+    const groups = new Map();
+
+    scopedFindings.forEach(finding => {
+        const fingerprint = buildFindingFingerprint(finding);
+        const groupKey = fingerprint.groupKey;
+
+        if (!groups.has(groupKey)) {
+            groups.set(groupKey, {
+                compactSourceKey: groupKey,
+                compactFamilyKeys: new Set(),
+                compactFamilyTitles: new Set(),
+                compactReasons: new Set(),
+                legacySyncSourceMap: new Map(),
+                cveIds: new Set(),
+                softwareFamilies: new Set(),
+                titles: new Set(),
+                mitigations: new Set(),
+                descriptionsMap: new Map(),
+                impactsMap: new Map(),
+                endpointDetailsMap: new Map(),
+                sourceGroupsMap: new Map(),
+                allEndpointsMap: new Map(),
+                originalIds: [],
+                severity: finding.severity || 'Info',
+                productIds: new Set(),
+                productNames: new Set(),
+                engagementIds: new Set(),
+                engagementNames: new Set(),
+                findingStates: [],
+                activeCount: 0,
+                mitigatedCount: 0,
+                lastSeenSync: finding.last_seen_sync_id || null,
+                date: '',
+                dateTimestamp: 0
+            });
+        }
+
+        const group = groups.get(groupKey);
+        const dateCandidate = getFindingDateCandidate(finding);
+        if (dateCandidate && dateCandidate.timestamp >= (group.dateTimestamp || 0)) {
+            group.date = dateCandidate.label;
+            group.dateTimestamp = dateCandidate.timestamp;
+        }
+        const title = finding.title || finding.name || 'Untitled finding';
+        const sourceTitle = normalizeText(title) || 'Untitled finding';
+        const mitigation = getCompactMitigationText(finding);
+        const description = finding.description || '';
+        const impact = finding.impact || '';
+        const productIdValue = finding.product_id || finding.defectdojo_route?.projectId || '';
+        const productNameValue = finding.product_name || finding.defectdojo_route?.projectName || '';
+        const engagementIdValue = finding.engagement_id || finding.defectdojo_route?.engagementId || '';
+        const engagementNameValue = finding.engagement_name || finding.defectdojo_route?.engagementName || '';
+
+        group.severity = highestSeverity(group.severity, finding.severity || 'Info');
+        if (fingerprint.compactFamilyKey) group.compactFamilyKeys.add(fingerprint.compactFamilyKey);
+        if (fingerprint.compactFamilyTitle) group.compactFamilyTitles.add(fingerprint.compactFamilyTitle);
+        if (fingerprint.compactReason) group.compactReasons.add(fingerprint.compactReason);
+        group.originalIds.push(finding.id);
+        const legacyGroupKey = buildLegacyFindingGroupKey(finding);
+        if (!group.legacySyncSourceMap.has(legacyGroupKey)) group.legacySyncSourceMap.set(legacyGroupKey, new Set());
+        group.legacySyncSourceMap.get(legacyGroupKey).add(finding.id);
+        group.lastSeenSync = finding.last_seen_sync_id || group.lastSeenSync;
+        if (fingerprint.softwareFamily) group.softwareFamilies.add(fingerprint.softwareFamily);
+        fingerprint.cveIds.forEach(cveId => group.cveIds.add(cveId));
+        group.titles.add(normalizeText(title));
+        if (mitigation) group.mitigations.add(mitigation);
+        addTextSource(group.descriptionsMap, description, finding.id);
+        addTextSource(group.impactsMap, impact, finding.id);
+        if (!group.sourceGroupsMap.has(sourceTitle)) {
+            group.sourceGroupsMap.set(sourceTitle, {
+                title: sourceTitle,
+                findingIds: [],
+                severity: finding.severity || 'Info',
+                cveIds: new Set(),
+                endpointDetailsMap: new Map(),
+                descriptionsMap: new Map(),
+                impactsMap: new Map(),
+                mitigations: new Set(),
+                activeCount: 0,
+                mitigatedCount: 0
+            });
+        }
+        const sourceGroup = group.sourceGroupsMap.get(sourceTitle);
+        sourceGroup.findingIds.push(finding.id);
+        sourceGroup.severity = highestSeverity(sourceGroup.severity, finding.severity || 'Info');
+        fingerprint.cveIds.forEach(cveId => sourceGroup.cveIds.add(cveId));
+        if (mitigation) sourceGroup.mitigations.add(mitigation);
+        addTextSource(sourceGroup.descriptionsMap, description, finding.id);
+        addTextSource(sourceGroup.impactsMap, impact, finding.id);
+        if (productIdValue) group.productIds.add(productIdValue);
+        if (productNameValue) group.productNames.add(productNameValue);
+        if (engagementIdValue) group.engagementIds.add(engagementIdValue);
+        if (engagementNameValue) group.engagementNames.add(engagementNameValue);
+
+        const endpoints = normalizeArray(finding.endpoints).length > 0
+            ? normalizeArray(finding.endpoints)
+            : [{ host: 'Unknown endpoint' }];
+        endpoints.forEach(endpoint => {
+            const label = getEndpointLabel(endpoint);
+            const endpointKey = label;
+            group.allEndpointsMap.set(endpointKey, endpoint);
+            if (!group.endpointDetailsMap.has(endpointKey)) {
+                group.endpointDetailsMap.set(endpointKey, {
+                    endpoint,
+                    label,
+                    host: getEndpointHost(endpoint),
+                    severity: finding.severity || 'Info',
+                    cves: new Set(),
+                    mitigations: new Set(),
+                    findingIds: []
+                });
+            }
+            const detail = group.endpointDetailsMap.get(endpointKey);
+            detail.severity = highestSeverity(detail.severity, finding.severity || 'Info');
+            detail.findingIds.push(finding.id);
+            fingerprint.cveIds.forEach(cveId => detail.cves.add(cveId));
+            if (mitigation) detail.mitigations.add(mitigation);
+
+            if (!sourceGroup.endpointDetailsMap.has(endpointKey)) {
+                sourceGroup.endpointDetailsMap.set(endpointKey, {
+                    endpoint,
+                    label,
+                    host: getEndpointHost(endpoint),
+                    severity: finding.severity || 'Info',
+                    cves: new Set(),
+                    mitigations: new Set(),
+                    findingIds: []
+                });
+            }
+            const sourceDetail = sourceGroup.endpointDetailsMap.get(endpointKey);
+            sourceDetail.severity = highestSeverity(sourceDetail.severity, finding.severity || 'Info');
+            sourceDetail.findingIds.push(finding.id);
+            fingerprint.cveIds.forEach(cveId => sourceDetail.cves.add(cveId));
+            if (mitigation) sourceDetail.mitigations.add(mitigation);
+        });
+
+        const mitigated = Boolean(finding.mitigated || finding.is_mitigated);
+        if (mitigated) {
+            group.mitigatedCount += 1;
+            sourceGroup.mitigatedCount += 1;
+        } else if (finding.active !== false) {
+            group.activeCount += 1;
+            sourceGroup.activeCount += 1;
+        }
+        group.findingStates.push({
+            findingId: finding.id,
+            title,
+            severity: finding.severity || 'Info',
+            mitigated,
+            active: finding.active !== false && !mitigated,
+            endpoint: normalizeArray(finding.endpoints).map(getEndpointLabel).join(', '),
+            cveIds: fingerprint.cveIds,
+            date: dateCandidate?.label || '',
+            mitigationConfirmedAt: finding.mitigation_confirmed_at || null
+        });
+    });
+
+    return Array.from(groups.values()).map(group => {
+        const cveIds = sortStrings(group.cveIds);
+        const cveSignature = cveIds.join(',');
+        const originalIds = sortFindingIds(group.originalIds);
+        const productIds = sortStrings(group.productIds);
+        const productNames = sortStrings(group.productNames);
+        const engagementIds = sortStrings(group.engagementIds);
+        const engagementNames = sortStrings(group.engagementNames);
+        const syncKey = buildCompactSyncKey({
+            groupKey: group.compactSourceKey,
+            productIds,
+            engagementIds
+        });
+        const legacySyncKeys = Array.from(new Set([
+            buildLegacyCompactSyncKey({
+                groupKey: group.compactSourceKey,
+                findingIds: originalIds,
+                productIds,
+                engagementIds
+            }),
+            ...Array.from(group.legacySyncSourceMap.entries()).map(([legacyGroupKey, legacyFindingIds]) => (
+                buildLegacyCompactSyncKey({
+                    groupKey: legacyGroupKey,
+                    findingIds: sortFindingIds(legacyFindingIds),
+                    productIds,
+                    engagementIds
+                })
+            ))
+        ].filter(key => key && key !== syncKey)));
+        const ticket = findTicketForGroup(tickets, syncKey, originalIds, cveSignature, legacySyncKeys);
+        const endpointDetails = finalizeEndpointDetails(group.endpointDetailsMap);
+        const sourceGroups = finalizeSourceGroups(group.sourceGroupsMap);
+        const allDescriptionSources = sortTextSources(group.descriptionsMap);
+        const allImpactSources = sortTextSources(group.impactsMap);
+        const allTitles = sortStrings(group.titles);
+        const softwareFamily = sortStrings(group.softwareFamilies)[0] || '';
+        const compactFamilyTitle = sortStrings(group.compactFamilyTitles)[0] || '';
+        const compactFamilyKey = sortStrings(group.compactFamilyKeys)[0] || group.compactSourceKey;
+        const compactReason = sortStrings(group.compactReasons)[0] || 'strict-fingerprint';
+        const currentStatus = group.activeCount > 0 && group.mitigatedCount > 0
+            ? 'mixed'
+            : group.activeCount > 0
+                ? 'active'
+                : 'mitigated';
+        return {
+            groupKey: syncKey,
+            compactedSyncKey: syncKey,
+            compactGroupId: syncKey,
+            compactSourceKey: group.compactSourceKey,
+            compactFamilyKey,
+            compactFamilyTitle,
+            compactReason,
+            legacySyncKeys,
+            cveId: cveSignature,
+            cveIds,
+            isCveGroup: cveIds.length > 0,
+            severity: group.severity,
+            productId: productIds[0] || '',
+            productName: productNames[0] || '',
+            engagementId: engagementIds[0] || '',
+            engagementName: engagementNames[0] || '',
+            title: chooseCompactDisplayTitle(allTitles, compactFamilyTitle || 'Untitled finding'),
+            affectedEndpoints: endpointDetails.map(detail => detail.label),
+            allEndpoints: Array.from(group.allEndpointsMap.values()),
+            allCVEs: cveIds.map(vulnerability_id => ({ vulnerability_id })),
+            allMitigations: sortStrings(group.mitigations),
+            allDescriptions: allDescriptionSources.map(source => source.text),
+            allImpacts: allImpactSources.map(source => source.text),
+            allDescriptionSources,
+            allImpactSources,
+            allTitles,
+            sourceGroups,
+            softwareFamily,
+            endpointDetails,
+            originalIds,
+            findingIds: originalIds.map(String),
+            findingCount: originalIds.length,
+            findingStates: group.findingStates,
+            activeCount: group.activeCount,
+            mitigatedCount: group.mitigatedCount,
+            date: group.date || '',
+            lastSeenSync: group.lastSeenSync,
+            redmineTicketId: ticket?.issue_id || '',
+            redmineTicketKey: ticket?.ticket_key || '',
+            redmineStatus: ticket?.status_name || '',
+            redmineStatusId: ticket?.status_id || '',
+            currentStatus
+        };
+    }).sort((a, b) => (
+        (SEVERITY_RANK[b.severity] || 0) - (SEVERITY_RANK[a.severity] || 0)
+        || a.cveId.localeCompare(b.cveId, undefined, { numeric: true })
+        || a.productName.localeCompare(b.productName, undefined, { numeric: true })
+    ));
 };
 
 const findTicketForGroup = (tickets = [], syncKey = '', findingIds = [], cveId = '', legacySyncKeys = []) => {
@@ -1731,256 +2132,6 @@ const buildLegacyFindingGroupKey = (finding = {}) => ([
     normalizeCompactFamilyText(finding.engagement_id || finding.defectdojo_route?.engagementId || finding.engagement_name || finding.defectdojo_route?.engagementName || '')
 ].join('|'));
 
-const listCompactedCveFindings = async ({ productId = '', engagementId = '', severity = '' } = {}) => {
-    const findings = await loadFindings({ productId, engagementId });
-    const severityFilter = normalizeText(severity);
-    const scopedFindings = severityFilter
-        ? findings.filter(finding => normalizeText(finding.severity).toLowerCase() === severityFilter.toLowerCase())
-        : findings;
-    const tickets = await loadTicketRowsForScope({ productId, engagementId });
-    const groups = new Map();
-
-    scopedFindings.forEach(finding => {
-        const fingerprint = buildFindingFingerprint(finding);
-        const groupKey = fingerprint.groupKey;
-
-        if (!groups.has(groupKey)) {
-            groups.set(groupKey, {
-                compactSourceKey: groupKey,
-                compactFamilyKeys: new Set(),
-                compactFamilyTitles: new Set(),
-                compactReasons: new Set(),
-                legacySyncSourceMap: new Map(),
-                cveIds: new Set(),
-                softwareFamilies: new Set(),
-                titles: new Set(),
-                mitigations: new Set(),
-                descriptionsMap: new Map(),
-                impactsMap: new Map(),
-                endpointDetailsMap: new Map(),
-                sourceGroupsMap: new Map(),
-                allEndpointsMap: new Map(),
-                originalIds: [],
-                severity: finding.severity || 'Info',
-                productIds: new Set(),
-                productNames: new Set(),
-                engagementIds: new Set(),
-                engagementNames: new Set(),
-                findingStates: [],
-                activeCount: 0,
-                mitigatedCount: 0,
-                lastSeenSync: finding.last_seen_sync_id || null
-            });
-        }
-
-        const group = groups.get(groupKey);
-        const title = finding.title || finding.name || 'Untitled finding';
-        const sourceTitle = normalizeText(title) || 'Untitled finding';
-        const mitigation = getCompactMitigationText(finding);
-        const description = finding.description || '';
-        const impact = finding.impact || '';
-        const productIdValue = finding.product_id || finding.defectdojo_route?.projectId || '';
-        const productNameValue = finding.product_name || finding.defectdojo_route?.projectName || '';
-        const engagementIdValue = finding.engagement_id || finding.defectdojo_route?.engagementId || '';
-        const engagementNameValue = finding.engagement_name || finding.defectdojo_route?.engagementName || '';
-
-        group.severity = highestSeverity(group.severity, finding.severity || 'Info');
-        if (fingerprint.compactFamilyKey) group.compactFamilyKeys.add(fingerprint.compactFamilyKey);
-        if (fingerprint.compactFamilyTitle) group.compactFamilyTitles.add(fingerprint.compactFamilyTitle);
-        if (fingerprint.compactReason) group.compactReasons.add(fingerprint.compactReason);
-        group.originalIds.push(finding.id);
-        const legacyGroupKey = buildLegacyFindingGroupKey(finding);
-        if (!group.legacySyncSourceMap.has(legacyGroupKey)) group.legacySyncSourceMap.set(legacyGroupKey, new Set());
-        group.legacySyncSourceMap.get(legacyGroupKey).add(finding.id);
-        group.lastSeenSync = finding.last_seen_sync_id || group.lastSeenSync;
-        if (fingerprint.softwareFamily) group.softwareFamilies.add(fingerprint.softwareFamily);
-        fingerprint.cveIds.forEach(cveId => group.cveIds.add(cveId));
-        group.titles.add(normalizeText(title));
-        if (mitigation) group.mitigations.add(mitigation);
-        addTextSource(group.descriptionsMap, description, finding.id);
-        addTextSource(group.impactsMap, impact, finding.id);
-        if (!group.sourceGroupsMap.has(sourceTitle)) {
-            group.sourceGroupsMap.set(sourceTitle, {
-                title: sourceTitle,
-                findingIds: [],
-                severity: finding.severity || 'Info',
-                cveIds: new Set(),
-                endpointDetailsMap: new Map(),
-                descriptionsMap: new Map(),
-                impactsMap: new Map(),
-                mitigations: new Set(),
-                activeCount: 0,
-                mitigatedCount: 0
-            });
-        }
-        const sourceGroup = group.sourceGroupsMap.get(sourceTitle);
-        sourceGroup.findingIds.push(finding.id);
-        sourceGroup.severity = highestSeverity(sourceGroup.severity, finding.severity || 'Info');
-        fingerprint.cveIds.forEach(cveId => sourceGroup.cveIds.add(cveId));
-        if (mitigation) sourceGroup.mitigations.add(mitigation);
-        addTextSource(sourceGroup.descriptionsMap, description, finding.id);
-        addTextSource(sourceGroup.impactsMap, impact, finding.id);
-        if (productIdValue) group.productIds.add(productIdValue);
-        if (productNameValue) group.productNames.add(productNameValue);
-        if (engagementIdValue) group.engagementIds.add(engagementIdValue);
-        if (engagementNameValue) group.engagementNames.add(engagementNameValue);
-
-        const endpoints = normalizeArray(finding.endpoints).length > 0
-            ? normalizeArray(finding.endpoints)
-            : [{ host: 'Unknown endpoint' }];
-        endpoints.forEach(endpoint => {
-            const label = getEndpointLabel(endpoint);
-            const endpointKey = label;
-            group.allEndpointsMap.set(endpointKey, endpoint);
-            if (!group.endpointDetailsMap.has(endpointKey)) {
-                group.endpointDetailsMap.set(endpointKey, {
-                    endpoint,
-                    label,
-                    host: getEndpointHost(endpoint),
-                    severity: finding.severity || 'Info',
-                    cves: new Set(),
-                    mitigations: new Set(),
-                    findingIds: []
-                });
-            }
-            const detail = group.endpointDetailsMap.get(endpointKey);
-            detail.severity = highestSeverity(detail.severity, finding.severity || 'Info');
-            detail.findingIds.push(finding.id);
-            fingerprint.cveIds.forEach(cveId => detail.cves.add(cveId));
-            if (mitigation) detail.mitigations.add(mitigation);
-
-            if (!sourceGroup.endpointDetailsMap.has(endpointKey)) {
-                sourceGroup.endpointDetailsMap.set(endpointKey, {
-                    endpoint,
-                    label,
-                    host: getEndpointHost(endpoint),
-                    severity: finding.severity || 'Info',
-                    cves: new Set(),
-                    mitigations: new Set(),
-                    findingIds: []
-                });
-            }
-            const sourceDetail = sourceGroup.endpointDetailsMap.get(endpointKey);
-            sourceDetail.severity = highestSeverity(sourceDetail.severity, finding.severity || 'Info');
-            sourceDetail.findingIds.push(finding.id);
-            fingerprint.cveIds.forEach(cveId => sourceDetail.cves.add(cveId));
-            if (mitigation) sourceDetail.mitigations.add(mitigation);
-        });
-
-        const mitigated = Boolean(finding.mitigated || finding.is_mitigated);
-        if (mitigated) {
-            group.mitigatedCount += 1;
-            sourceGroup.mitigatedCount += 1;
-        } else if (finding.active !== false) {
-            group.activeCount += 1;
-            sourceGroup.activeCount += 1;
-        }
-        group.findingStates.push({
-            findingId: finding.id,
-            title,
-            severity: finding.severity || 'Info',
-            mitigated,
-            active: finding.active !== false && !mitigated,
-            endpoint: normalizeArray(finding.endpoints).map(getEndpointLabel).join(', '),
-            cveIds: fingerprint.cveIds,
-            mitigationConfirmedAt: finding.mitigation_confirmed_at || null
-        });
-    });
-
-    return Array.from(groups.values()).map(group => {
-        const cveIds = sortStrings(group.cveIds);
-        const cveSignature = cveIds.join(',');
-        const originalIds = sortFindingIds(group.originalIds);
-        const productIds = sortStrings(group.productIds);
-        const productNames = sortStrings(group.productNames);
-        const engagementIds = sortStrings(group.engagementIds);
-        const engagementNames = sortStrings(group.engagementNames);
-        const syncKey = buildCompactSyncKey({
-            groupKey: group.compactSourceKey,
-            productIds,
-            engagementIds
-        });
-        const legacySyncKeys = Array.from(new Set([
-            buildLegacyCompactSyncKey({
-                groupKey: group.compactSourceKey,
-                findingIds: originalIds,
-                productIds,
-                engagementIds
-            }),
-            ...Array.from(group.legacySyncSourceMap.entries()).map(([legacyGroupKey, legacyFindingIds]) => (
-                buildLegacyCompactSyncKey({
-                    groupKey: legacyGroupKey,
-                    findingIds: sortFindingIds(legacyFindingIds),
-                    productIds,
-                    engagementIds
-                })
-            ))
-        ].filter(key => key && key !== syncKey)));
-        const ticket = findTicketForGroup(tickets, syncKey, originalIds, cveSignature, legacySyncKeys);
-        const endpointDetails = finalizeEndpointDetails(group.endpointDetailsMap);
-        const sourceGroups = finalizeSourceGroups(group.sourceGroupsMap);
-        const allDescriptionSources = sortTextSources(group.descriptionsMap);
-        const allImpactSources = sortTextSources(group.impactsMap);
-        const allTitles = sortStrings(group.titles);
-        const softwareFamily = sortStrings(group.softwareFamilies)[0] || '';
-        const compactFamilyTitle = sortStrings(group.compactFamilyTitles)[0] || '';
-        const compactFamilyKey = sortStrings(group.compactFamilyKeys)[0] || group.compactSourceKey;
-        const compactReason = sortStrings(group.compactReasons)[0] || 'strict-fingerprint';
-        const currentStatus = group.activeCount > 0 && group.mitigatedCount > 0
-            ? 'mixed'
-            : group.activeCount > 0
-                ? 'active'
-                : 'mitigated';
-        return {
-            groupKey: syncKey,
-            compactedSyncKey: syncKey,
-            compactGroupId: syncKey,
-            compactSourceKey: group.compactSourceKey,
-            compactFamilyKey,
-            compactFamilyTitle,
-            compactReason,
-            legacySyncKeys,
-            cveId: cveSignature,
-            cveIds,
-            isCveGroup: cveIds.length > 0,
-            severity: group.severity,
-            productId: productIds[0] || '',
-            productName: productNames[0] || '',
-            engagementId: engagementIds[0] || '',
-            engagementName: engagementNames[0] || '',
-            title: chooseCompactDisplayTitle(allTitles, compactFamilyTitle || 'Untitled finding'),
-            affectedEndpoints: endpointDetails.map(detail => detail.label),
-            allEndpoints: Array.from(group.allEndpointsMap.values()),
-            allCVEs: cveIds.map(vulnerability_id => ({ vulnerability_id })),
-            allMitigations: sortStrings(group.mitigations),
-            allDescriptions: allDescriptionSources.map(source => source.text),
-            allImpacts: allImpactSources.map(source => source.text),
-            allDescriptionSources,
-            allImpactSources,
-            allTitles,
-            sourceGroups,
-            softwareFamily,
-            endpointDetails,
-            originalIds,
-            findingIds: originalIds.map(String),
-            findingCount: originalIds.length,
-            findingStates: group.findingStates,
-            activeCount: group.activeCount,
-            mitigatedCount: group.mitigatedCount,
-            lastSeenSync: group.lastSeenSync,
-            redmineTicketId: ticket?.issue_id || '',
-            redmineTicketKey: ticket?.ticket_key || '',
-            redmineStatus: ticket?.status_name || '',
-            redmineStatusId: ticket?.status_id || '',
-            currentStatus
-        };
-    }).sort((a, b) => (
-        (SEVERITY_RANK[b.severity] || 0) - (SEVERITY_RANK[a.severity] || 0)
-        || a.cveId.localeCompare(b.cveId, undefined, { numeric: true })
-        || a.productName.localeCompare(b.productName, undefined, { numeric: true })
-    ));
-};
-
 const recordMitigationRechecks = async (records = []) => {
     if (records.length === 0) return { inserted: 0 };
 
@@ -2032,10 +2183,30 @@ const recordMitigationRechecks = async (records = []) => {
     return { inserted };
 };
 
-const listMitigationRechecks = async ({ syncHistoryId = '', productId = '', engagementId = '' } = {}) => {
+const listMitigationRechecks = ({
+    allowedProducts,
+    requireAllowedProducts = false,
+    syncHistoryId = '',
+    productId = '',
+    engagementId = ''
+} = {}) => {
     const clauses = [];
     const params = [];
     let index = 1;
+
+    const productFilters = normalizeProductFilters(allowedProducts);
+    if (requireAllowedProducts && productFilters.length === 0) {
+        clauses.push('false');
+    } else if (productFilters.length > 0) {
+        const productLookupKeys = Array.from(new Set(productFilters.flatMap(product => buildEntityLookupKeys('product', product))));
+        clauses.push(`(
+            product_name = ANY($${index}::text[])
+            OR product_id = ANY($${index}::text[])
+            OR product_key = ANY($${index + 1}::text[])
+        )`);
+        params.push(productFilters, productLookupKeys);
+        index += 2;
+    }
 
     if (normalizeText(syncHistoryId)) {
         clauses.push(`sync_history_id = $${index}`);
@@ -2052,14 +2223,12 @@ const listMitigationRechecks = async ({ syncHistoryId = '', productId = '', enga
         params.push(normalizeText(engagementId));
     }
 
-    const { rows } = await pool.query(`
+    return pool.query(`
         SELECT *
         FROM ${TABLES.mitigationRechecks}
         ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''}
         ORDER BY created_at DESC, id DESC
-    `, params);
-
-    return rows.map(row => ({
+    `, params).then(({ rows }) => rows.map(row => ({
         id: row.id,
         syncHistoryId: row.sync_history_id,
         ticketKey: row.ticket_key,
@@ -2076,7 +2245,7 @@ const listMitigationRechecks = async ({ syncHistoryId = '', productId = '', enga
         reason: row.reason,
         raw: parseJsonValue(row.raw, {}),
         createdAt: toIsoString(row.created_at)
-    }));
+    })));
 };
 
 const upsertMitigationReviewItems = async (items = []) => {
@@ -2363,6 +2532,87 @@ const applyMitigationReviewAction = async (reviewKey, {
     });
 };
 
+const listAdminActionHistory = async ({
+    action = '',
+    search = '',
+    limit = 200
+} = {}) => {
+    const clauses = [];
+    const params = [];
+    let index = 1;
+    const normalizedAction = normalizeText(action);
+    if (normalizedAction) {
+        clauses.push(`aa.action = $${index}`);
+        params.push(normalizedAction);
+        index += 1;
+    }
+
+    const normalizedSearch = normalizeText(search);
+    if (normalizedSearch) {
+        clauses.push(`(
+            aa.review_key ILIKE $${index}
+            OR aa.ticket_key ILIKE $${index}
+            OR aa.issue_id ILIKE $${index}
+            OR aa.defectdojo_finding_id ILIKE $${index}
+            OR aa.product_name ILIKE $${index}
+            OR aa.product_id ILIKE $${index}
+            OR aa.engagement_name ILIKE $${index}
+            OR aa.engagement_id ILIKE $${index}
+            OR aa.cve_id ILIKE $${index}
+            OR aa.actor ILIKE $${index}
+            OR mr.title ILIKE $${index}
+            OR mr.endpoint ILIKE $${index}
+        )`);
+        params.push(`%${normalizedSearch}%`);
+        index += 1;
+    }
+
+    const parsedLimit = Number.parseInt(limit, 10);
+    const boundedLimit = Number.isInteger(parsedLimit) && parsedLimit > 0
+        ? Math.min(parsedLimit, 500)
+        : 200;
+    params.push(boundedLimit);
+
+    const { rows } = await pool.query(`
+        SELECT
+            aa.*,
+            mr.title,
+            mr.endpoint,
+            mr.severity,
+            mr.redmine_status_name,
+            mr.mitigation_confirmed_at
+        FROM ${TABLES.adminActions} aa
+        LEFT JOIN ${TABLES.mitigationReviews} mr ON mr.review_key = aa.review_key
+        ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''}
+        ORDER BY aa.created_at DESC, aa.id DESC
+        LIMIT $${index}
+    `, params);
+
+    return rows.map(row => ({
+        id: row.id,
+        action: row.action,
+        reviewKey: row.review_key,
+        ticketKey: row.ticket_key,
+        issueId: row.issue_id,
+        defectdojoFindingId: row.defectdojo_finding_id,
+        productId: row.product_id,
+        productName: row.product_name,
+        engagementId: row.engagement_id,
+        engagementName: row.engagement_name,
+        cveId: row.cve_id,
+        actor: row.actor,
+        actorRole: row.actor_role,
+        reason: row.reason,
+        title: row.title,
+        endpoint: row.endpoint,
+        severity: row.severity,
+        redmineStatusName: row.redmine_status_name,
+        mitigationConfirmedAt: toIsoString(row.mitigation_confirmed_at),
+        raw: parseJsonValue(row.raw, {}),
+        createdAt: toIsoString(row.created_at)
+    }));
+};
+
 module.exports = {
     isConfigured: () => configured,
     isEnabled,
@@ -2397,6 +2647,8 @@ module.exports = {
     listMitigationRechecks,
     upsertMitigationReviewItems,
     listMitigationReviewQueue,
+    countPendingMitigationReviews,
+    listAdminActionHistory,
     applyMitigationReviewAction,
     __test: {
         findTicketForGroup

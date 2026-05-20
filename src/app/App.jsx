@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, useTransition } from 'react';
 import { 
   Settings, 
   RefreshCw, 
@@ -10,7 +10,10 @@ import {
   LogOut,
   X,
   History,
-  ShieldCheck
+  ShieldCheck,
+  Search,
+  ChevronDown,
+  Check
 } from 'lucide-react';
 import { AUTH_EXPIRED_EVENT, apiFetch, getCurrentUser, openDashboardSyncStream, removeAuthToken, removeCurrentUser } from '../services/api';
 import Login from '../features/auth/Login';
@@ -18,6 +21,7 @@ import SettingsView from '../features/settings/Settings';
 import SummaryCards from '../features/dashboard/SummaryCards';
 import SyncHistory from '../features/sync-history/SyncHistory';
 import MitigationReview from '../features/admin/MitigationReview';
+import ThemeToggle from '../components/ThemeToggle';
 
 const PULL_SEVERITY_OPTIONS = ['Critical', 'High', 'Medium', 'Low', 'Info'];
 const DEFAULT_REDMINE_STATUS_POLL_SECONDS = 60;
@@ -118,11 +122,127 @@ const createPullFiltersDraft = (filters = {}) => ({
   severity: normalizeSeverityFilterValue(filters.severity),
 });
 
+const FINDING_DATE_FIELDS = [
+  'date',
+  'last_seen_at',
+  'lastSeenAt',
+  'last_seen',
+  'lastSeen',
+  'found_date',
+  'foundDate',
+  'created',
+  'created_at',
+  'createdAt',
+  'updated',
+  'updated_at',
+  'updatedAt',
+];
+
+const parseFindingDateTimestamp = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return 0;
+  const timestamp = Date.parse(text);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+};
+
+const formatFindingDateLabel = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const timestamp = parseFindingDateTimestamp(text);
+  if (!timestamp) return text;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  return new Date(timestamp).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+};
+
+const getFindingDateCandidate = (finding = {}) => {
+  for (const field of FINDING_DATE_FIELDS) {
+    const value = finding[field];
+    const timestamp = parseFindingDateTimestamp(value);
+    if (timestamp) {
+      return {
+        value,
+        label: formatFindingDateLabel(value),
+        timestamp,
+      };
+    }
+  }
+  return null;
+};
+
 const formatSyncTimestamp = (value) => (
   value ? new Date(value).toLocaleString() : 'Not yet'
 );
 
 const formatTimeoutSeconds = (timeoutMs) => Math.round(timeoutMs / 1000);
+
+const formatDuration = (milliseconds = 0) => {
+  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+};
+
+const getSyncProgressMetrics = (progress = {}, now = Date.now()) => {
+  const startedAt = progress.startedAt || now;
+  const elapsedMs = Math.max(0, now - startedAt);
+  const timeoutMs = progress.timeoutMs || SYNC_ALL_REDMINE_REQUEST_TIMEOUT_MS;
+  const hasActualTotal = Number(progress.total) > 0;
+  const actualPercent = hasActualTotal
+    ? Math.min(100, Math.round((Number(progress.current || 0) / Number(progress.total)) * 100))
+    : 0;
+  const estimatedPercent = timeoutMs > 0
+    ? Math.min(95, Math.max(4, Math.round((elapsedMs / timeoutMs) * 100)))
+    : 18;
+  const percent = progress.phase === 'Complete'
+    ? 100
+    : hasActualTotal ? actualPercent : estimatedPercent;
+  const remainingMs = progress.phase === 'Complete'
+    ? 0
+    : Math.max(0, timeoutMs - elapsedMs);
+
+  return {
+    elapsed: formatDuration(elapsedMs),
+    remaining: remainingMs > 0 ? formatDuration(remainingMs) : 'almost done',
+    percent,
+    hasActualTotal,
+  };
+};
+
+const buildSyncAllSummary = (data = {}) => ([
+  {
+    title: 'DefectDojo Pull',
+    items: [
+      ['Findings pulled', data.pull?.count || 0],
+      ['Findings updated', (data.pull?.updated || 0) + (data.pull?.staleActiveUpdated || 0)],
+      ['Still active', data.pull?.stillActive || data.pull?.active || 0],
+    ],
+  },
+  {
+    title: 'Redmine Tickets',
+    items: [
+      ['Checked', data.redmine?.checked || 0],
+      ['Updated', data.redmine?.changed || 0],
+      ['Priority updated', data.redmine?.priorityUpdated || 0],
+      ['Created/updated', data.redmine?.createdOrUpdated || 0],
+      ['Failed', data.redmine?.failed || 0],
+    ],
+  },
+  {
+    title: 'Mitigation Review',
+    items: [
+      ['Feedback attempted', data.mitigationRecheck?.attemptedFeedback || 0],
+      ['Reopened from Resolve', data.mitigationRecheck?.reopened || 0],
+      ['Queued for review', data.mitigationRecheck?.reviewQueued || 0],
+      ['Skipped no linked findings', data.mitigationRecheck?.skippedNoLinkedFindings || 0],
+      ['Skipped no active findings', data.mitigationRecheck?.skippedNoActiveLinkedFindings || 0],
+    ],
+  },
+]);
 
 const runWithTimeout = async (task, timeoutMs, timeoutMessage) => {
   if (!timeoutMs || timeoutMs <= 0) return task();
@@ -510,6 +630,10 @@ const routeValueMatches = (selectedValue, ...candidates) => {
   if (!selected) return true;
   return candidates.some(candidate => cleanText(candidate).toLowerCase() === selected);
 };
+
+const getScopeOptionValue = (item = {}) => (
+  cleanText(item.id || item.key || item.name)
+);
 
 const parseUpgradeTarget = (finding) => {
   const sources = [
@@ -1516,6 +1640,12 @@ const normalizeBackendCveGroupForDisplay = (group) => {
     endpointDetails,
   });
   const sourceFindingCount = getCompactedFindingCount({ ...group, originalIds, findingStates, endpointDetails });
+  const dateCandidate = getFindingDateCandidate(group)
+    || findingStates
+      .map(getFindingDateCandidate)
+      .filter(Boolean)
+      .sort((left, right) => right.timestamp - left.timestamp)[0]
+    || null;
   const route = {
     projectId: group.productId || '',
     projectName: group.productName || '',
@@ -1555,6 +1685,7 @@ const normalizeBackendCveGroupForDisplay = (group) => {
     redmineSubject,
     subject: redmineSubject,
     title: displayTicket.title,
+    date: dateCandidate?.label || '',
     severity: group.severity || 'Info',
     count: sourceFindingCount,
     findingCount: sourceFindingCount,
@@ -1607,15 +1738,50 @@ function App() {
   const [showSyncAllFilters, setShowSyncAllFilters] = useState(false);
   const [syncAllPullFilters, setSyncAllPullFilters] = useState(() => createPullFiltersDraft());
   const [syncAllProgress, setSyncAllProgress] = useState(null);
+  const [syncProgressNow, setSyncProgressNow] = useState(0);
+  const [mitigationReviewToast, setMitigationReviewToast] = useState(null);
   const [redmineSyncByTicket, setRedmineSyncByTicket] = useState({});
+  const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
+  const [scopeSearch, setScopeSearch] = useState('');
+  const [isScopePending, startScopeTransition] = useTransition();
+  const scopeMenuRef = useRef(null);
 
   useEffect(() => {
     localStorage.removeItem('defectdojo_redmine_sync');
   }, []);
+
+  useEffect(() => {
+    if (!syncAllProgress) return undefined;
+    const timer = window.setInterval(() => setSyncProgressNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [syncAllProgress]);
+
+  useEffect(() => {
+    if (!scopeMenuOpen) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (scopeMenuRef.current && !scopeMenuRef.current.contains(event.target)) {
+        setScopeMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setScopeMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [scopeMenuOpen]);
   
   const findingsRefreshRef = useRef({ inFlight: false, queued: false });
   const dashboardSyncVersionRef = useRef(null);
   const dashboardSyncReconnectRef = useRef(0);
+  const mitigationReviewPendingRef = useRef(null);
   const [configBackups, setConfigBackups] = useState([]);
   const [selectedConfigBackup, setSelectedConfigBackup] = useState('');
   const [user, setUser] = useState(() => getCurrentUser());
@@ -1684,7 +1850,24 @@ function App() {
         apiFetch(`/dashboard/summary${query}`),
         apiFetch(`/compacted-cves${query}`),
       ]);
-      if (summaryRes.ok) setDashboardSummary(await summaryRes.json());
+      if (summaryRes.ok) {
+        const nextSummary = await summaryRes.json();
+        const nextPendingCount = Number(nextSummary?.mitigationReview?.pendingCount || 0);
+        if (user?.role === 'admin' && nextSummary?.mitigationReview) {
+          const previousPendingCount = mitigationReviewPendingRef.current;
+          if (previousPendingCount !== null && nextPendingCount > previousPendingCount && currentHash !== '#mitigation-review') {
+            setMitigationReviewToast({
+              count: nextPendingCount,
+              added: nextPendingCount - previousPendingCount,
+            });
+          }
+          mitigationReviewPendingRef.current = nextPendingCount;
+        } else {
+          mitigationReviewPendingRef.current = null;
+          setMitigationReviewToast(null);
+        }
+        setDashboardSummary(nextSummary);
+      }
       if (cveRes.ok) {
         const groups = await cveRes.json();
         setCompactedCveFindings(Array.isArray(groups) ? groups.map(normalizeBackendCveGroupForDisplay) : []);
@@ -1922,18 +2105,24 @@ function App() {
     return sync?.issueId || sync?.issue?.id || '';
   };
 
-  const setSyncProgress = ({ phase, current, total, message, append = true }) => {
+  const setSyncProgress = ({ phase, current, total, message, append = true, summary = undefined, warnings = undefined }) => {
     setSyncAllProgress(prev => {
       const previousLines = prev?.lines || [];
       const nextLines = append && message
         ? [...previousLines, message].slice(-8)
         : previousLines;
+      const now = Date.now();
 
       return {
         phase: phase ?? prev?.phase ?? 'Preparing',
         current: current ?? prev?.current ?? 0,
         total: total ?? prev?.total ?? 0,
         message: message ?? prev?.message ?? '',
+        startedAt: prev?.startedAt || now,
+        updatedAt: now,
+        timeoutMs: prev?.timeoutMs || SYNC_ALL_REDMINE_REQUEST_TIMEOUT_MS,
+        summary: summary === undefined ? prev?.summary : summary,
+        warnings: warnings === undefined ? prev?.warnings : warnings,
         lines: nextLines,
       };
     });
@@ -2207,6 +2396,8 @@ function App() {
       setConfig(createDefaultConfig());
       setRedmineSyncStatus(DEFAULT_REDMINE_SYNC_STATUS);
       setDashboardSync({ connected: false, reason: 'signed-out', updatedAt: null });
+      mitigationReviewPendingRef.current = null;
+      setMitigationReviewToast(null);
     };
 
     window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
@@ -2231,6 +2422,8 @@ function App() {
     removeCurrentUser();
     setConfig(createDefaultConfig());
     setRedmineSyncStatus(DEFAULT_REDMINE_SYNC_STATUS);
+    mitigationReviewPendingRef.current = null;
+    setMitigationReviewToast(null);
     setUser(null);
   };
 
@@ -2238,46 +2431,43 @@ function App() {
     if (loggedInUser?.role !== 'admin') {
       setConfig(createDefaultConfig());
     }
+    mitigationReviewPendingRef.current = null;
+    setMitigationReviewToast(null);
     setUser(loggedInUser);
   };
 
-  const availableProducts = dashboardSummary?.filters?.products || [];
-  const availableEngagements = dashboardSummary?.filters?.engagements || [];
-  const uniqueProducts = availableProducts.map(product => product.name).filter(Boolean);
+  const availableProducts = useMemo(() => dashboardSummary?.filters?.products || [], [dashboardSummary?.filters?.products]);
+  const availableEngagements = useMemo(() => dashboardSummary?.filters?.engagements || [], [dashboardSummary?.filters?.engagements]);
+  const uniqueProducts = useMemo(() => availableProducts.map(product => product.name).filter(Boolean), [availableProducts]);
 
-  let filteredFindings = findings;
-  
-  if (activeFilter !== 'All') {
-    filteredFindings = filteredFindings.filter(f => f.severity === activeFilter);
-  }
-
-  if (selectedProductId) {
-    filteredFindings = filteredFindings.filter(f => {
-      const route = getDefectDojoRoute(f);
-      return routeValueMatches(
+  const productEngagementScopedFindings = useMemo(() => (
+    findings.filter(finding => {
+      const route = getDefectDojoRoute(finding);
+      const productMatches = !selectedProductId || routeValueMatches(
         selectedProductId,
         route.projectId,
         route.projectName,
         route.productKey,
         getEntityRouteKey('product', route.projectId, route.projectName)
       );
-    });
-  }
-
-  if (selectedEngagementId) {
-    filteredFindings = filteredFindings.filter(f => {
-      const route = getDefectDojoRoute(f);
-      return routeValueMatches(
+      if (!productMatches) return false;
+      return !selectedEngagementId || routeValueMatches(
         selectedEngagementId,
         route.engagementId,
         route.engagementName,
         route.engagementKey,
         getEntityRouteKey('engagement', route.engagementId, route.engagementName)
       );
-    });
-  }
+    })
+  ), [findings, selectedProductId, selectedEngagementId]);
 
-  const getCompactedFindings = (findingsToCompact) => {
+  const filteredFindings = useMemo(() => (
+    activeFilter === 'All'
+      ? productEngagementScopedFindings
+      : productEngagementScopedFindings.filter(f => f.severity === activeFilter)
+  ), [activeFilter, productEngagementScopedFindings]);
+
+  const getCompactedFindings = useCallback((findingsToCompact) => {
     const groups = new Map();
     findingsToCompact.forEach(f => {
       const defectDojoRoute = getDefectDojoRoute(f);
@@ -2323,10 +2513,17 @@ function App() {
           activeCount: 0,
           mitigatedCount: 0,
           count: 0,
+          date: '',
+          dateTimestamp: 0,
         });
       }
 
       const group = groups.get(key);
+      const dateCandidate = getFindingDateCandidate(f);
+      if (dateCandidate && dateCandidate.timestamp >= (group.dateTimestamp || 0)) {
+        group.date = dateCandidate.label;
+        group.dateTimestamp = dateCandidate.timestamp;
+      }
       group.serverRedmineSync = chooseRedmineSync(group.serverRedmineSync, f.redmineSync);
       group.count += 1;
       group.originalIds.push(f.id);
@@ -2431,6 +2628,7 @@ function App() {
         active: f.active !== false && !mitigatedState,
         endpoint: endpoints.map(endpointLabel).join(', '),
         cveIds: cves,
+        date: dateCandidate?.label || '',
         mitigationConfirmedAt: f.mitigation_confirmed_at || f.mitigation_confirmed || f.mitigated_at || null,
       });
     });
@@ -2514,6 +2712,7 @@ function App() {
         defectDojoProjectName: defectDojoProjectNames[0] || '',
         defectDojoEngagementId: defectDojoEngagementIds[0] || '',
         defectDojoEngagementName: defectDojoEngagementNames[0] || '',
+        date: group.date || '',
         allDefectDojoProjectIds: defectDojoProjectIds,
         allDefectDojoProjectNames: defectDojoProjectNames,
         allDefectDojoEngagementIds: defectDojoEngagementIds,
@@ -2542,13 +2741,14 @@ function App() {
       delete compactedTicket.defectDojoEngagementNamesSet;
       delete compactedTicket.endpointDetailMap;
       delete compactedTicket.compactSourceKey;
+      delete compactedTicket.dateTimestamp;
 
       return {
         ...compactedTicket,
         superTicketMarkdown: buildSuperTicketMarkdown(compactedTicket),
       };
     });
-  };
+  }, [config]);
 
   const getFindingRedmineSync = (finding) => {
     const candidateKeys = [
@@ -2683,6 +2883,7 @@ function App() {
     const cves = selectedFinding.allCVEs || [];
     const mitigations = selectedFinding.allMitigations || [];
     const sourceFindingCount = getCompactedFindingCount(selectedFinding);
+    const isAdmin = user?.role === 'admin';
 
     return (
       <div className="modal-overlay" role="presentation" onClick={() => setSelectedFinding(null)}>
@@ -2802,7 +3003,7 @@ function App() {
             )}
           </section>
 
-          {selectedFinding.superTicketMarkdown && (
+          {isAdmin && selectedFinding.superTicketMarkdown && (
             <section className="detail-section">
               <h3>Super Ticket Markdown</h3>
               <div className="ticket-preview compact">
@@ -2811,15 +3012,17 @@ function App() {
             </section>
           )}
 
-          <section className="detail-section">
-            <h3>Raw JSON Preview</h3>
-            <div className="json-container compact">
-              <pre>{JSON.stringify(selectedFinding, null, 2)}</pre>
-            </div>
-          </section>
+          {isAdmin && (
+            <section className="detail-section">
+              <h3>Raw JSON Preview</h3>
+              <div className="json-container compact">
+                <pre>{JSON.stringify(selectedFinding, null, 2)}</pre>
+              </div>
+            </section>
+          )}
 
           <div className="detail-actions">
-            {selectedFinding.superTicketMarkdown && user?.role === 'admin' && (
+            {isAdmin && selectedFinding.superTicketMarkdown && (
               <button
                 className="btn-secondary"
                 onClick={() => openRedmineIssue(selectedFinding)}
@@ -2836,9 +3039,311 @@ function App() {
     );
   };
 
-  const fallbackCompactedFindings = getCompactedFindings(filteredFindings);
+  const allCompactedFindings = useMemo(() => getCompactedFindings(findings), [findings, getCompactedFindings]);
+  const fallbackCompactedFindings = useMemo(() => {
+    if (!selectedProductId && !selectedEngagementId && activeFilter === 'All') return allCompactedFindings;
+    return getCompactedFindings(filteredFindings);
+  }, [activeFilter, allCompactedFindings, filteredFindings, getCompactedFindings, selectedEngagementId, selectedProductId]);
   const displayFindings = compactedCveFindings ?? fallbackCompactedFindings;
-  const compactedFindingsForStats = compactedCveFindings ?? getCompactedFindings(findings);
+  const compactedFindingsForStats = allCompactedFindings;
+  const compactedFindingsForSeverity = useMemo(() => {
+    if (!selectedProductId && !selectedEngagementId) return allCompactedFindings;
+    return getCompactedFindings(productEngagementScopedFindings);
+  }, [allCompactedFindings, getCompactedFindings, productEngagementScopedFindings, selectedEngagementId, selectedProductId]);
+  const compactedSeverityCounts = useMemo(() => {
+    const counts = Object.fromEntries(PULL_SEVERITY_OPTIONS.map(severity => [severity, 0]));
+    compactedFindingsForSeverity.forEach(finding => {
+      const severity = PULL_SEVERITY_OPTIONS.includes(finding.severity) ? finding.severity : 'Info';
+      counts[severity] += 1;
+    });
+    return counts;
+  }, [compactedFindingsForSeverity]);
+  const displayFindingGroups = useMemo(() => {
+    const groups = new Map();
+    displayFindings.forEach(finding => {
+      const route = getDefectDojoRoute(finding);
+      const productName = route.projectName || finding.defectDojoProjectName || 'Unknown product';
+      if (!groups.has(productName)) groups.set(productName, []);
+      groups.get(productName).push(finding);
+    });
+    return Array.from(groups.entries())
+      .map(([productName, productFindings]) => ({ productName, productFindings }))
+      .sort((left, right) => left.productName.localeCompare(right.productName, undefined, { numeric: true }));
+  }, [displayFindings]);
+
+  const scopeProducts = useMemo(() => {
+    const scopeProductMap = new Map();
+    const scopeEngagementMap = new Map();
+    const productCountMap = new Map();
+    const engagementCountMap = new Map();
+    const increment = (map, key) => {
+      if (!key) return;
+      map.set(key, (map.get(key) || 0) + 1);
+    };
+    const addScopeProduct = (product = {}) => {
+      const id = cleanText(product.id || product.projectId);
+      const key = cleanText(product.key || product.productKey);
+      const name = cleanText(product.name || product.projectName || id || key);
+      const value = getScopeOptionValue({ id, key, name });
+      if (!value) return null;
+      const existing = scopeProductMap.get(value) || {};
+      const next = {
+        id: existing.id || id,
+        key: existing.key || key,
+        name: existing.name || name || 'Unknown product',
+        value,
+      };
+      scopeProductMap.set(value, next);
+      return next;
+    };
+    const addScopeEngagement = (engagement = {}) => {
+      const id = cleanText(engagement.id || engagement.engagementId);
+      const key = cleanText(engagement.key || engagement.engagementKey);
+      const name = cleanText(engagement.name || engagement.engagementName || id || key);
+      const product = addScopeProduct({
+        id: engagement.productId || engagement.projectId,
+        key: engagement.productKey,
+        name: engagement.productName || engagement.projectName,
+      });
+      const productValue = product?.value || cleanText(engagement.productId || engagement.productKey || engagement.productName);
+      const value = getScopeOptionValue({ id, key, name });
+      if (!value || !productValue) return null;
+      const mapKey = `${productValue}::${value}`;
+      const existing = scopeEngagementMap.get(mapKey) || {};
+      const next = {
+        id: existing.id || id,
+        key: existing.key || key,
+        name: existing.name || name || 'Unknown engagement',
+        value,
+        productValue,
+      };
+      scopeEngagementMap.set(mapKey, next);
+      return next;
+    };
+
+    availableProducts.forEach(addScopeProduct);
+    availableEngagements.forEach(addScopeEngagement);
+    findings.forEach(finding => {
+      const route = getDefectDojoRoute(finding);
+      const product = addScopeProduct({
+        id: route.projectId,
+        key: route.productKey || getEntityRouteKey('product', route.projectId, route.projectName),
+        name: route.projectName,
+      });
+      if (route.engagementId || route.engagementName || route.engagementKey) {
+        addScopeEngagement({
+          id: route.engagementId,
+          key: route.engagementKey || getEntityRouteKey('engagement', route.engagementId, route.engagementName),
+          name: route.engagementName,
+          productId: product?.id || route.projectId,
+          productKey: product?.key || route.productKey || getEntityRouteKey('product', route.projectId, route.projectName),
+          productName: product?.name || route.projectName,
+        });
+      }
+    });
+
+    allCompactedFindings.forEach(finding => {
+      const route = getDefectDojoRoute(finding);
+      const productValue = getScopeOptionValue({
+        id: route.projectId || finding.defectDojoProjectId,
+        key: route.productKey || getEntityRouteKey('product', route.projectId, route.projectName),
+        name: route.projectName || finding.defectDojoProjectName,
+      });
+      const engagementValue = getScopeOptionValue({
+        id: route.engagementId || finding.defectDojoEngagementId,
+        key: route.engagementKey || getEntityRouteKey('engagement', route.engagementId, route.engagementName),
+        name: route.engagementName || finding.defectDojoEngagementName,
+      });
+      increment(productCountMap, productValue);
+      if (productValue && engagementValue) increment(engagementCountMap, `${productValue}::${engagementValue}`);
+    });
+
+    return Array.from(scopeProductMap.values())
+      .map(product => ({
+        ...product,
+        count: productCountMap.get(product.value) || 0,
+        engagements: Array.from(scopeEngagementMap.values())
+          .filter(engagement => engagement.productValue === product.value)
+          .map(engagement => ({
+            ...engagement,
+            count: engagementCountMap.get(`${product.value}::${engagement.value}`) || 0,
+          }))
+          .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true })),
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }));
+  }, [allCompactedFindings, availableEngagements, availableProducts, findings]);
+
+  const visibleScopeProducts = useMemo(() => {
+    const normalizedScopeSearch = cleanText(scopeSearch).toLowerCase();
+    return scopeProducts
+      .map(product => {
+        const productMatches = product.name.toLowerCase().includes(normalizedScopeSearch);
+        const engagements = product.engagements.filter(engagement => (
+          productMatches || engagement.name.toLowerCase().includes(normalizedScopeSearch)
+        ));
+        return {
+          ...product,
+          engagements,
+          hiddenBySearch: normalizedScopeSearch && !productMatches && engagements.length === 0,
+        };
+      })
+      .filter(product => !product.hiddenBySearch);
+  }, [scopeProducts, scopeSearch]);
+  const selectedScopeProduct = useMemo(() => scopeProducts.find(product => routeValueMatches(
+    selectedProductId,
+    product.id,
+    product.key,
+    product.name,
+    product.value
+  )), [scopeProducts, selectedProductId]);
+  const selectedScopeEngagement = useMemo(() => scopeProducts
+    .flatMap(product => product.engagements.map(engagement => ({ ...engagement, product })))
+    .find(item => routeValueMatches(selectedEngagementId, item.id, item.key, item.name, item.value)), [scopeProducts, selectedEngagementId]);
+  const scopeLabel = selectedEngagementId
+    ? `${selectedScopeEngagement?.product?.name || selectedScopeProduct?.name || 'Product'} / ${selectedScopeEngagement?.name || selectedEngagementId}`
+    : selectedProductId
+      ? selectedScopeProduct?.name || selectedProductId
+      : 'All Products';
+  const scopeDescription = isScopePending
+    ? 'Updating scope...'
+    : selectedEngagementId
+      ? 'Engagement scope'
+      : selectedProductId
+        ? 'Product scope'
+        : `${scopeProducts.length} product${scopeProducts.length !== 1 ? 's' : ''}`;
+  const selectAllScope = () => {
+    setScopeSearch('');
+    setScopeMenuOpen(false);
+    startScopeTransition(() => {
+      setCompactedCveFindings(null);
+      setSelectedProductId('');
+      setSelectedEngagementId('');
+      setSelectedFinding(null);
+    });
+  };
+  const selectProductScope = (product) => {
+    setScopeSearch('');
+    setScopeMenuOpen(false);
+    startScopeTransition(() => {
+      setCompactedCveFindings(null);
+      setSelectedProductId(product.value);
+      setSelectedEngagementId('');
+      setSelectedFinding(null);
+    });
+  };
+  const selectEngagementScope = (product, engagement) => {
+    setScopeSearch('');
+    setScopeMenuOpen(false);
+    startScopeTransition(() => {
+      setCompactedCveFindings(null);
+      setSelectedProductId(product.value);
+      setSelectedEngagementId(engagement.value);
+      setSelectedFinding(null);
+    });
+  };
+  const renderScopeMenu = () => (
+    <div className="scope-menu" ref={scopeMenuRef}>
+      <button
+        type="button"
+        className="scope-trigger"
+        onClick={() => setScopeMenuOpen(open => !open)}
+        aria-haspopup="menu"
+        aria-expanded={scopeMenuOpen}
+        aria-controls="dashboard-scope-menu"
+      >
+        <span>
+          <strong>{scopeLabel}</strong>
+          <small>{scopeDescription}</small>
+        </span>
+        <ChevronDown size={16} aria-hidden="true" />
+      </button>
+      {scopeMenuOpen && (
+        <div className="scope-popover" id="dashboard-scope-menu" role="menu" aria-label="Select dashboard product scope">
+          <label className="scope-search">
+            <span className="sr-only">Search products and engagements</span>
+            <Search size={15} aria-hidden="true" />
+            <input
+              type="search"
+              value={scopeSearch}
+              onChange={(e) => setScopeSearch(e.target.value)}
+              placeholder="Search product or engagement"
+              autoFocus
+            />
+          </label>
+          <button
+            type="button"
+            className={`scope-option scope-product-row ${!selectedProductId && !selectedEngagementId ? 'active' : ''}`}
+            onClick={selectAllScope}
+            role="menuitem"
+            aria-current={!selectedProductId && !selectedEngagementId ? 'true' : undefined}
+          >
+            <span>
+              <strong>All Products</strong>
+              <small>{compactedFindingsForStats.length} compacted finding{compactedFindingsForStats.length !== 1 ? 's' : ''}</small>
+            </span>
+            {!selectedProductId && !selectedEngagementId && <Check size={15} aria-hidden="true" />}
+          </button>
+          <div className="scope-options">
+            {visibleScopeProducts.length > 0 ? (
+              visibleScopeProducts.map(product => {
+                const productActive = selectedProductId && !selectedEngagementId && routeValueMatches(
+                  selectedProductId,
+                  product.id,
+                  product.key,
+                  product.name,
+                  product.value
+                );
+                return (
+                  <div className="scope-product-group" key={product.value}>
+                    <button
+                      type="button"
+                      className={`scope-option scope-product-row ${productActive ? 'active' : ''}`}
+                      onClick={() => selectProductScope(product)}
+                      role="menuitem"
+                      aria-current={productActive ? 'true' : undefined}
+                    >
+                      <span>
+                        <strong>{product.name}</strong>
+                        <small>{product.count} compacted finding{product.count !== 1 ? 's' : ''}</small>
+                      </span>
+                      {productActive && <Check size={15} aria-hidden="true" />}
+                    </button>
+                    {product.engagements.map(engagement => {
+                      const engagementActive = selectedEngagementId && routeValueMatches(
+                        selectedEngagementId,
+                        engagement.id,
+                        engagement.key,
+                        engagement.name,
+                        engagement.value
+                      );
+                      return (
+                        <button
+                          key={`${product.value}-${engagement.value}`}
+                          type="button"
+                          className={`scope-option scope-engagement-row ${engagementActive ? 'active' : ''}`}
+                          onClick={() => selectEngagementScope(product, engagement)}
+                          role="menuitem"
+                          aria-current={engagementActive ? 'true' : undefined}
+                        >
+                          <span>
+                            <strong>{engagement.name}</strong>
+                            <small>{engagement.count} compacted finding{engagement.count !== 1 ? 's' : ''}</small>
+                          </span>
+                          {engagementActive && <Check size={15} aria-hidden="true" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })
+            ) : (
+              <p className="scope-empty">No products or engagements match.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 
   const openSyncAllFilters = () => {
     if (user?.role !== 'admin') {
@@ -2883,12 +3388,19 @@ function App() {
     }
 
     const filtersForSync = createPullFiltersDraft(pullFilters);
+    const startedAt = Date.now();
+    setSyncProgressNow(startedAt);
 
     setSyncAllProgress({
       phase: 'Starting',
       current: 0,
       total: 0,
       message: 'Starting Sync All',
+      startedAt,
+      updatedAt: startedAt,
+      timeoutMs: SYNC_ALL_REDMINE_REQUEST_TIMEOUT_MS,
+      summary: null,
+      warnings: [],
       lines: ['Starting Sync All'],
     });
     setBulkOpeningRedmine(true);
@@ -2930,33 +3442,26 @@ function App() {
         current: data.redmine?.checked || 0,
         total: data.redmine?.checked || 0,
         message: 'Sync All finished',
+        summary: buildSyncAllSummary(data),
+        warnings: data.mitigationRecheck?.warnings || [],
       });
       await Promise.all([fetchFindings({ silent: true }), fetchDashboardData({ silent: true }), fetchRedmineSyncStatus()]);
-      alert(
-        'Sync All finished.\n\n'
-        + `Findings pulled: ${data.pull?.count || 0}\n`
-        + `Tickets checked: ${data.redmine?.checked || 0}\n`
-        + `Tickets updated: ${data.redmine?.changed || 0}\n`
-        + `Ticket priorities updated: ${data.redmine?.priorityUpdated || 0}\n`
-        + `Tickets created/updated: ${data.redmine?.createdOrUpdated || 0}\n`
-        + `Attempted Feedback changes: ${data.mitigationRecheck?.attemptedFeedback || 0}\n`
-        + `Reopened from Resolve: ${data.mitigationRecheck?.reopened || 0}\n`
-        + `Queued for review: ${data.mitigationRecheck?.reviewQueued || 0}\n`
-        + `Skipped without linked findings: ${data.mitigationRecheck?.skippedNoLinkedFindings || 0}\n`
-        + `Skipped without active linked findings: ${data.mitigationRecheck?.skippedNoActiveLinkedFindings || 0}`
-        + `${data.mitigationRecheck?.warnings?.length ? `\n\nWarnings:\n${data.mitigationRecheck.warnings.slice(0, 5).join('\n')}` : ''}`
-      );
     } catch (err) {
       console.error('Error during Sync All:', err);
       setSyncProgress({
         phase: 'Failed',
         message: err.message || 'Sync All failed unexpectedly.',
+        summary: [{
+          title: 'Sync Failed',
+          items: [
+            ['Error', err.message || 'Sync All failed unexpectedly.'],
+          ],
+        }],
       });
       alert(err.message || 'Sync All failed unexpectedly.');
     } finally {
       setOpeningRedmineId(null);
       setBulkOpeningRedmine(false);
-      setSyncAllProgress(null);
     }
   };
 
@@ -2995,10 +3500,158 @@ function App() {
     `Errors: ${redmineSyncStatus.redmineErrorCount || 0}`,
     redmineSyncStatus.lastError ? `Last error: ${redmineSyncStatus.lastError}` : '',
   ].filter(Boolean).join('\n');
+  const syncProgressMetrics = syncAllProgress
+    ? getSyncProgressMetrics(syncAllProgress, syncProgressNow)
+    : null;
+  const mitigationReviewPendingCount = user?.role === 'admin'
+    ? Number(dashboardSummary?.mitigationReview?.pendingCount || 0)
+    : 0;
 
   if (!user) {
     return <Login onLoginSuccess={handleLoginSuccess} />;
   }
+
+  const renderMitigationReviewToast = () => {
+    if (user?.role !== 'admin' || !mitigationReviewToast || currentHash === '#mitigation-review') return null;
+    const count = Number(mitigationReviewToast.count || 0);
+    if (count <= 0) return null;
+
+    return (
+      <div className="mitigation-toast" role="status" aria-live="polite">
+        <div className="mitigation-toast-icon">
+          <ShieldCheck size={18} />
+        </div>
+        <div className="mitigation-toast-copy">
+          <strong>{count} mitigation review{count !== 1 ? 's' : ''} awaiting closure</strong>
+          <span>{mitigationReviewToast.added} new item{mitigationReviewToast.added !== 1 ? 's' : ''} added to the queue.</span>
+        </div>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={() => {
+            setMitigationReviewToast(null);
+            setHashRoute('#mitigation-review');
+          }}
+        >
+          Open Review
+        </button>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => setMitigationReviewToast(null)}
+          aria-label="Dismiss mitigation review notification"
+          title="Dismiss"
+        >
+          <X size={16} />
+        </button>
+      </div>
+    );
+  };
+
+  const renderAppSidebar = () => {
+    const isDashboard = !currentHash;
+    const navItems = [
+      {
+        label: 'Dashboard',
+        icon: AlertTriangle,
+        active: isDashboard,
+        onClick: () => setHashRoute(''),
+      },
+      ...(user?.role === 'admin' ? [
+        {
+          label: 'Sync History',
+          icon: History,
+          active: currentHash === '#sync-history',
+          onClick: () => setHashRoute('#sync-history'),
+        },
+        {
+          label: 'Mitigation Review',
+          icon: ShieldCheck,
+          active: currentHash === '#mitigation-review',
+          badge: mitigationReviewPendingCount,
+          onClick: () => {
+            setMitigationReviewToast(null);
+            setHashRoute('#mitigation-review');
+          },
+        },
+        {
+          label: 'Settings',
+          icon: Settings,
+          active: currentHash === '#settings',
+          onClick: () => setHashRoute('#settings'),
+        },
+      ] : []),
+    ];
+
+    return (
+      <aside className="app-sidebar" aria-label="Primary navigation">
+        <div className="sidebar-brand">
+          <span className="sidebar-brand-mark">
+            <AlertTriangle size={20} />
+          </span>
+          <span>
+            <strong>DefectDojo</strong>
+            <small>Viewer</small>
+          </span>
+        </div>
+
+        <div className="sidebar-user">
+          <span>{user.username}</span>
+          <small>{user.role === 'admin' ? 'Admin' : 'Viewer'}</small>
+        </div>
+
+        <nav className="sidebar-nav" aria-label="Dashboard sections">
+          {navItems.map(item => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.label}
+                type="button"
+                className={`sidebar-nav-item ${item.active ? 'active' : ''}`}
+                onClick={item.onClick}
+                aria-current={item.active ? 'page' : undefined}
+                title={item.label}
+              >
+                <Icon size={18} />
+                <span>{item.label}</span>
+                {item.badge > 0 && (
+                  <strong className="sidebar-nav-badge" aria-label={`${item.badge} pending mitigation reviews`}>
+                    {item.badge > 99 ? '99+' : item.badge}
+                  </strong>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="sidebar-theme-row">
+            <span>Theme</span>
+            <ThemeToggle />
+          </div>
+          <button
+            type="button"
+            className="sidebar-nav-item utility"
+            onClick={() => { fetchFindings(); fetchDashboardData({ silent: true }); }}
+            disabled={loading || dashboardLoading}
+            title="Refresh findings"
+          >
+            <RefreshCw size={18} className={loading ? 'spin' : ''} />
+            <span>Refresh</span>
+          </button>
+          <button
+            type="button"
+            className="sidebar-nav-item danger"
+            onClick={handleLogout}
+            title="Logout"
+          >
+            <LogOut size={18} />
+            <span>Logout</span>
+          </button>
+        </div>
+      </aside>
+    );
+  };
 
   if (currentHash === '#settings') {
     if (user?.role !== 'admin') {
@@ -3006,18 +3659,11 @@ function App() {
     }
     return (
       <div className="app-shell">
+        {renderAppSidebar()}
         <header className="top-bar">
           <div className="top-bar-title">
             <Settings size={22} />
             <span>Configuration & Settings</span>
-          </div>
-          <div className="top-bar-actions">
-            <button className="btn-secondary" onClick={() => { setHashRoute(''); }}>
-              Back to Dashboard
-            </button>
-            <button className="icon-btn" onClick={handleLogout} title="Logout" aria-label="Logout">
-              <LogOut size={20} />
-            </button>
           </div>
         </header>
         <main className="main-content settings-main">
@@ -3053,6 +3699,7 @@ function App() {
             user={user}
           />
         </main>
+        {renderMitigationReviewToast()}
       </div>
     );
   }
@@ -3061,20 +3708,17 @@ function App() {
     if (user?.role !== 'admin') return null;
     return (
       <div className="app-shell">
+        {renderAppSidebar()}
         <header className="top-bar">
           <div className="top-bar-title">
             <History size={22} />
             <span>Sync History</span>
           </div>
-          <div className="top-bar-actions">
-            <button className="icon-btn" onClick={handleLogout} title="Logout" aria-label="Logout">
-              <LogOut size={20} />
-            </button>
-          </div>
         </header>
         <main className="main-content">
           <SyncHistory onBack={() => setHashRoute('')} />
         </main>
+        {renderMitigationReviewToast()}
       </div>
     );
   }
@@ -3083,26 +3727,24 @@ function App() {
     if (user?.role !== 'admin') return null;
     return (
       <div className="app-shell">
+        {renderAppSidebar()}
         <header className="top-bar">
           <div className="top-bar-title">
             <ShieldCheck size={22} />
             <span>Mitigation Review</span>
           </div>
-          <div className="top-bar-actions">
-            <button className="icon-btn" onClick={handleLogout} title="Logout" aria-label="Logout">
-              <LogOut size={20} />
-            </button>
-          </div>
         </header>
         <main className="main-content">
           <MitigationReview onBack={() => setHashRoute('')} config={config} />
         </main>
+        {renderMitigationReviewToast()}
       </div>
     );
   }
 
   return (
     <div className="app-shell">
+      {renderAppSidebar()}
       <header className="top-bar">
         <div className="top-bar-title">
           <AlertTriangle size={22} />
@@ -3125,29 +3767,20 @@ function App() {
             {redmineSyncLabel}
           </span>
         </div>
-        <div className="top-bar-actions">
-          {user?.role === 'admin' && (
-            <button className="icon-btn" onClick={() => { setHashRoute('#sync-history'); }} title="Sync history" aria-label="Open sync history">
-              <History size={20} />
+        {user?.role === 'admin' && (
+          <div className="top-bar-actions">
+            <button
+              type="button"
+              className="btn-secondary sync-all-btn"
+              onClick={openSyncAllFilters}
+              disabled={bulkOpeningRedmine}
+              title="Choose DefectDojo pull filters, then sync every compacted ticket in Redmine"
+            >
+              <RefreshCw size={14} className={bulkOpeningRedmine ? 'spin' : ''} />
+              {bulkOpeningRedmine ? 'Syncing...' : `Sync All (${compactedFindingsForStats.length})`}
             </button>
-          )}
-          {user?.role === 'admin' && (
-            <button className="icon-btn" onClick={() => { setHashRoute('#mitigation-review'); }} title="Mitigation review" aria-label="Open mitigation review">
-              <ShieldCheck size={20} />
-            </button>
-          )}
-          {user?.role === 'admin' && (
-            <button className="icon-btn" onClick={() => { setHashRoute('#settings'); }} title="Settings" aria-label="Open settings">
-              <Settings size={20} />
-            </button>
-          )}
-          <button className="icon-btn" onClick={() => { fetchFindings(); fetchDashboardData({ silent: true }); }} title="Refresh Findings" aria-label="Refresh findings" disabled={loading || dashboardLoading}>
-            <RefreshCw size={20} className={loading ? "spin" : ""} />
-          </button>
-          <button className="icon-btn" onClick={handleLogout} title="Logout" aria-label="Logout">
-            <LogOut size={20} />
-          </button>
-        </div>
+          </div>
+        )}
       </header>
 
       <main className="main-content">
@@ -3164,88 +3797,46 @@ function App() {
 
         <SummaryCards summary={dashboardSummary} loading={dashboardLoading} />
 
-        <section className="filters-bar" aria-label="Finding filters">
-          <div className="filters-left">
-            <span className="filter-label">
-              <Filter size={16} />
-              Filters
-            </span>
-            <div className="filter-chip-group" role="group" aria-label="Filter findings by severity">
-              {['All', 'Critical', 'High', 'Medium', 'Low', 'Info'].map(sev => (
-                <button
-                  key={sev}
-                  type="button"
-                  className={`filter-btn ${sev.toLowerCase()} ${activeFilter === sev ? 'active' : ''}`}
-                  onClick={() => setActiveFilter(sev)}
-                  aria-pressed={activeFilter === sev}
-                >
-                  {sev}
-                </button>
-              ))}
+        <section className="dashboard-section compacted-findings-section" aria-labelledby="compacted-findings-title">
+          <div className="dashboard-section-header">
+            <div>
+              <p className="eyebrow">Compacted Findings</p>
+              <h2 id="compacted-findings-title">Ticket Review</h2>
             </div>
-            {uniqueProducts.length > 0 && (
-              <label className="product-filter">
-                <span className="sr-only">Filter by product</span>
-                <select
-                  value={selectedProductId}
-                  onChange={(e) => {
-                    setSelectedProductId(e.target.value);
-                    setSelectedEngagementId('');
-                  }}
-                >
-                  <option value="">All Products ({availableProducts.length})</option>
-                  {availableProducts.map(product => (
-                    <option key={product.id || product.key || product.name} value={product.id || product.key || product.name}>{product.name}</option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {availableEngagements.length > 0 && (
-              <label className="product-filter">
-                <span className="sr-only">Filter by engagement</span>
-                <select
-                  value={selectedEngagementId}
-                  onChange={(e) => setSelectedEngagementId(e.target.value)}
-                >
-                  <option value="">All Engagements ({availableEngagements.length})</option>
-                  {availableEngagements.map(engagement => (
-                    <option key={engagement.id || engagement.key || engagement.name} value={engagement.id || engagement.key || engagement.name}>{engagement.name}</option>
-                  ))}
-                </select>
-              </label>
+            <div className="compacted-header-actions">
+              <span className="compacted-count">{displayFindings.length} compacted row{displayFindings.length !== 1 ? 's' : ''} shown</span>
+              {renderScopeMenu()}
+            </div>
+          </div>
+
+          <div className="severity-summary" aria-label="Compacted finding severity summary">
+            {PULL_SEVERITY_OPTIONS.map(severity => (
+              <button
+                key={severity}
+                type="button"
+                className={`severity-summary-btn ${severity.toLowerCase()} ${activeFilter === severity ? 'active' : ''}`}
+                onClick={() => setActiveFilter(severity)}
+                aria-pressed={activeFilter === severity}
+              >
+                <span className={`severity-dot ${severity.toLowerCase()}`} />
+                <span>{severity}</span>
+                <strong>{compactedSeverityCounts[severity] || 0}</strong>
+              </button>
+            ))}
+            {activeFilter !== 'All' && (
+              <button type="button" className="severity-summary-btn clear" onClick={() => setActiveFilter('All')}>
+                Show all
+                <strong>{compactedFindingsForSeverity.length}</strong>
+              </button>
             )}
           </div>
-          {user?.role === 'admin' && (
-            <button
-              type="button"
-              className="btn-secondary sync-all-btn"
-              onClick={openSyncAllFilters}
-              disabled={bulkOpeningRedmine}
-              title="Choose DefectDojo pull filters, then sync every compacted ticket in Redmine"
-            >
-              <RefreshCw size={14} className={bulkOpeningRedmine ? 'spin' : ''} />
-              {bulkOpeningRedmine ? 'Syncing...' : `Sync All (${compactedFindingsForStats.length})`}
-            </button>
-          )}
-        </section>
 
-        <section className="findings-workspace" aria-label="Finding review workspace">
-          <div className="findings-list-panel">
-            <div className="findings-list-header">
-              <div>
-                <h2>Findings</h2>
-                <p>{displayFindings.length} compacted row{displayFindings.length !== 1 ? 's' : ''}</p>
-              </div>
-            </div>
-
-            <div className="findings-list" role="listbox" aria-label="Filtered findings">
-              {displayFindings.length > 0 ? (
-                !selectedProductId && uniqueProducts.length > 1 ? (
-                  uniqueProducts.map(productName => {
-                    const productFindings = displayFindings.filter(f => getDefectDojoRoute(f).projectName === productName);
-                    if (productFindings.length === 0) return null;
-
-                    return (
+          <div className="findings-workspace" aria-label="Finding review workspace">
+            <div className="findings-list-panel">
+              <div className="findings-list">
+                {displayFindings.length > 0 ? (
+                  !selectedProductId && displayFindingGroups.length > 1 ? (
+                    displayFindingGroups.map(({ productName, productFindings }) => (
                       <div key={productName} className="product-group">
                         <div className="product-group-header">
                           <h2>{productName}</h2>
@@ -3255,24 +3846,25 @@ function App() {
                         </div>
                         {productFindings.map((finding, idx) => renderFindingRow(finding, idx))}
                       </div>
-                    );
-                  })
+                    ))
+                  ) : (
+                    displayFindings.map((finding, idx) => renderFindingRow(finding, idx))
+                  )
                 ) : (
-                  displayFindings.map((finding, idx) => renderFindingRow(finding, idx))
-                )
-              ) : (
-                <div className="empty-state" role="status">
-                  <Info size={48} className="empty-state-icon" />
-                  <h2>No matching findings</h2>
-                  <p>No findings found for the selected filter.</p>
-                </div>
-              )}
+                  <div className="empty-state" role="status">
+                    <Info size={48} className="empty-state-icon" />
+                    <h2>No matching findings</h2>
+                    <p>No findings found for the selected filter.</p>
+                  </div>
+                )}
+                      </div>
             </div>
           </div>
         </section>
       </main>
 
       {renderFindingDetailModal()}
+      {renderMitigationReviewToast()}
 
       {syncAllProgress && (
         <div className="modal-overlay sync-progress-overlay">
@@ -3284,26 +3876,77 @@ function App() {
               </h2>
             </div>
             <div className="sync-progress-summary">
-              <span>{syncAllProgress.phase}</span>
-              <strong>
-                {syncAllProgress.total > 0
-                  ? `${syncAllProgress.current}/${syncAllProgress.total}`
-                  : syncAllProgress.message}
-              </strong>
+              <div>
+                <span>{syncAllProgress.phase}</span>
+                <strong>
+                  {syncAllProgress.total > 0
+                    ? `${syncAllProgress.current}/${syncAllProgress.total}`
+                    : `${syncProgressMetrics?.percent || 0}% estimated`}
+                </strong>
+              </div>
+              <p>{syncAllProgress.message}</p>
             </div>
-            {syncAllProgress.total > 0 && (
-              <div className="sync-progress-bar" aria-hidden="true">
-                <span style={{ width: `${Math.min(100, Math.round((syncAllProgress.current / syncAllProgress.total) * 100))}%` }} />
+            <div className="sync-progress-bar" aria-hidden="true">
+              <span style={{ width: `${syncProgressMetrics?.percent || 0}%` }} />
+            </div>
+            <div className="sync-progress-metrics" aria-label="Sync All timing">
+              <div>
+                <span>Elapsed</span>
+                <strong>{syncProgressMetrics?.elapsed || '0s'}</strong>
+              </div>
+              <div>
+                <span>{syncProgressMetrics?.hasActualTotal ? 'Remaining' : 'Est. remaining'}</span>
+                <strong>{syncProgressMetrics?.remaining || 'calculating'}</strong>
+              </div>
+              <div>
+                <span>Limit</span>
+                <strong>{formatDuration(syncAllProgress.timeoutMs || SYNC_ALL_REDMINE_REQUEST_TIMEOUT_MS)}</strong>
+              </div>
+            </div>
+            {!syncProgressMetrics?.hasActualTotal && (
+              <p className="sync-progress-note">
+                Live item totals are shown when the server returns them; this estimate is based on the current request window.
+              </p>
+            )}
+            <div className="sync-result-summary" aria-label="Sync All result summary">
+              {syncAllProgress.summary ? (
+                syncAllProgress.summary.map(section => (
+                  <section key={section.title} className="sync-result-section">
+                    <h3>{section.title}</h3>
+                    <div className="sync-result-items">
+                      {section.items.map(([label, value]) => (
+                        <div key={label} className="sync-result-item">
+                          <span>{label}</span>
+                          <strong>{value}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ))
+              ) : (
+                <section className="sync-result-section pending">
+                  <h3>Sync Summary</h3>
+                  <p>The summary will appear here when Sync All finishes.</p>
+                </section>
+              )}
+              {syncAllProgress.warnings?.length > 0 && (
+                <section className="sync-result-section warning">
+                  <h3>Warnings</h3>
+                  <ul>
+                    {syncAllProgress.warnings.slice(0, 5).map((warning, index) => (
+                      <li key={`${warning}-${index}`}>{warning}</li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+            </div>
+            {!bulkOpeningRedmine && (
+              <div className="modal-actions">
+                <button type="button" className="btn-primary" onClick={() => setSyncAllProgress(null)}>
+                  Done
+                </button>
               </div>
             )}
-            <div className="terminal-window sync-progress-log">
-              {(syncAllProgress.lines || []).map((line, index) => (
-                <div key={`${line}-${index}`} className="log-line">
-                  <span className="log-time">[{index + 1}]</span>
-                  <span className="log-level-info">{line}</span>
-                </div>
-              ))}
-            </div>
           </div>
         </div>
       )}

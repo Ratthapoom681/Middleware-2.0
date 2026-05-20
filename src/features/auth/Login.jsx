@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ShieldAlert, LogIn } from 'lucide-react';
 import { API_BASE, removeAuthToken, removeCurrentUser, setAuthToken, setCurrentUser } from '../../services/api';
+import ThemeToggle from '../../components/ThemeToggle';
 
 const Login = ({ onLoginSuccess }) => {
   const [username, setUsername] = useState('');
@@ -40,6 +41,9 @@ const Login = ({ onLoginSuccess }) => {
 
   return (
     <div className="login-container">
+      <div style={{ position: 'fixed', top: '1rem', right: '1rem', zIndex: 10 }}>
+        <ThemeToggle />
+      </div>
       <div className="login-card">
         <div className="login-header">
           <ShieldAlert size={48} color="var(--primary)" />
@@ -85,3 +89,4 @@ const Login = ({ onLoginSuccess }) => {
 };
 
 export default Login;
+

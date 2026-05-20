@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ExternalLink, Info, RefreshCw, Search, XCircle } from 'lucide-react';
+import { CheckCircle2, ExternalLink, History, Info, RefreshCw, Search, XCircle } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
@@ -41,6 +41,38 @@ const getSearchText = (item = {}) => [
   ...toList(item.defectdojoFindingIds || item.defectdojoFindingId),
   ...toList(item.endpoints),
 ].join(' ').toLowerCase();
+
+const getHistorySearchText = (item = {}) => [
+  item.action,
+  item.actor,
+  item.actorRole,
+  item.productName,
+  item.productId,
+  item.engagementName,
+  item.engagementId,
+  item.issueId,
+  item.ticketKey,
+  item.reviewKey,
+  item.title,
+  item.endpoint,
+  item.severity,
+  item.cveId,
+  item.defectdojoFindingId,
+  item.reason,
+].join(' ').toLowerCase();
+
+const getActionLabel = (action = '') => {
+  if (action === 'close_redmine') return 'Closed Redmine';
+  if (action === 'ignore') return 'Ignored';
+  if (action === 'mark_reviewed') return 'Reviewed';
+  return action || 'Action';
+};
+
+const getActionBadgeClass = (action = '') => {
+  if (action === 'close_redmine') return 'success';
+  if (action === 'ignore') return 'warning';
+  return 'info';
+};
 
 const getSortValue = (item, key) => {
   if (key === 'product') return `${item.productName || item.productId || ''} ${item.engagementName || item.engagementId || ''}`.toLowerCase();
@@ -128,6 +160,10 @@ const MitigationReview = ({ onBack, config = {} }) => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [pendingAction, setPendingAction] = useState(null);
+  const [activeView, setActiveView] = useState('queue');
+  const [historyItems, setHistoryItems] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historySearchTerm, setHistorySearchTerm] = useState('');
 
   const fetchQueue = async () => {
     setLoading(true);
@@ -145,8 +181,24 @@ const MitigationReview = ({ onBack, config = {} }) => {
     }
   };
 
+  const fetchHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await apiFetch('/admin/mitigation-actions?limit=200');
+      if (res.ok) {
+        const data = await res.json();
+        setHistoryItems(Array.isArray(data) ? data : []);
+      }
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   useEffect(() => {
-    queueMicrotask(fetchQueue);
+    queueMicrotask(() => {
+      fetchQueue();
+      fetchHistory();
+    });
   }, []);
 
   const redmineIssueUrl = (item) => item.issueUrl || (item.issueId ? buildUrl(config.redmineUrl, `/issues/${encodeURIComponent(item.issueId)}`) : '');
@@ -167,6 +219,12 @@ const MitigationReview = ({ onBack, config = {} }) => {
     });
     return sorted;
   }, [filteredItems, sortConfig]);
+
+  const filteredHistoryItems = useMemo(() => {
+    const term = historySearchTerm.trim().toLowerCase();
+    if (!term) return historyItems;
+    return historyItems.filter(item => getHistorySearchText(item).includes(term));
+  }, [historyItems, historySearchTerm]);
 
   const pageCount = Math.max(1, Math.ceil(sortedItems.length / pageSize));
   const currentPage = Math.min(page, pageCount);
@@ -210,6 +268,7 @@ const MitigationReview = ({ onBack, config = {} }) => {
         return next;
       });
       await fetchQueue();
+      await fetchHistory();
     } finally {
       setBusyKey('');
     }
@@ -232,6 +291,7 @@ const MitigationReview = ({ onBack, config = {} }) => {
 
       setSelectedKeys(prev => new Set([...prev].filter(key => !completedKeys.has(key))));
       await fetchQueue();
+      await fetchHistory();
 
       const actionLabel = action === 'close_redmine' ? 'closed' : 'ignored';
       if (failures.length > 0) {
@@ -331,7 +391,7 @@ const MitigationReview = ({ onBack, config = {} }) => {
           <h1>Resolved Redmine tickets awaiting closure</h1>
         </div>
         <div className="view-toolbar-actions">
-          <button type="button" className="btn-secondary" onClick={fetchQueue} disabled={loading || isBusy}>
+          <button type="button" className="btn-secondary" onClick={() => { fetchQueue(); fetchHistory(); }} disabled={loading || historyLoading || isBusy}>
             <RefreshCw size={16} className={loading ? 'spin' : ''} />
             Refresh
           </button>
@@ -339,6 +399,94 @@ const MitigationReview = ({ onBack, config = {} }) => {
         </div>
       </div>
 
+      <div className="review-view-tabs" role="tablist" aria-label="Mitigation review pages">
+        <button
+          type="button"
+          className={activeView === 'queue' ? 'active' : ''}
+          onClick={() => setActiveView('queue')}
+          role="tab"
+          aria-selected={activeView === 'queue'}
+        >
+          <CheckCircle2 size={16} />
+          Queue
+          <span>{items.length}</span>
+        </button>
+        <button
+          type="button"
+          className={activeView === 'history' ? 'active' : ''}
+          onClick={() => setActiveView('history')}
+          role="tab"
+          aria-selected={activeView === 'history'}
+        >
+          <History size={16} />
+          History & Logs
+          <span>{historyItems.length}</span>
+        </button>
+      </div>
+
+      {activeView === 'history' ? (
+        <section className="review-history-wrap">
+          <div className="review-tools">
+            <label className="review-search">
+              <span className="sr-only">Search mitigation review history</span>
+              <Search size={16} aria-hidden="true" />
+              <input
+                type="search"
+                value={historySearchTerm}
+                onChange={(event) => setHistorySearchTerm(event.target.value)}
+                placeholder="Search reviewer, issue, product, endpoint, CVE..."
+              />
+            </label>
+            <div className="review-bulk-actions">
+              <span>{filteredHistoryItems.length} log{filteredHistoryItems.length !== 1 ? 's' : ''}</span>
+              <button type="button" className="btn-secondary" onClick={fetchHistory} disabled={historyLoading}>
+                <RefreshCw size={16} className={historyLoading ? 'spin' : ''} />
+                Refresh Logs
+              </button>
+            </div>
+          </div>
+
+          {historyLoading && historyItems.length === 0 ? (
+            <div className="empty-state compact-empty">
+              <RefreshCw size={36} className="empty-state-icon spin" />
+              <h2>Loading review logs</h2>
+            </div>
+          ) : filteredHistoryItems.length === 0 ? (
+            <div className="empty-state compact-empty">
+              <History size={36} className="empty-state-icon" />
+              <h2>No review logs found</h2>
+              <p>Closed and ignored mitigation reviews will appear here.</p>
+            </div>
+          ) : (
+            <div className="review-history-list">
+              {filteredHistoryItems.map(item => (
+                <article key={item.id || `${item.reviewKey}-${item.createdAt}`} className="review-history-card">
+                  <div className="review-history-main">
+                    <span className={`action-badge ${getActionBadgeClass(item.action)}`}>{getActionLabel(item.action)}</span>
+                    <div>
+                      <h2>
+                        <ExternalAnchor href={redmineIssueUrl(item)}>
+                          {item.issueId ? `Redmine #${item.issueId}` : item.title || 'Mitigation review'}
+                        </ExternalAnchor>
+                      </h2>
+                      <p>{item.title || 'No compacted finding title recorded'}</p>
+                    </div>
+                  </div>
+                  <div className="review-history-meta">
+                    <span><strong>Reviewer</strong>{item.actor || 'Unknown'} {item.actorRole ? `(${item.actorRole})` : ''}</span>
+                    <span><strong>When</strong>{formatDate(item.createdAt)}</span>
+                    <span><strong>Product</strong>{item.productName || item.productId || 'Unknown'}</span>
+                    <span><strong>Engagement</strong>{item.engagementName || item.engagementId || 'Unknown'}</span>
+                    <span><strong>Endpoint</strong>{item.endpoint || 'Not recorded'}</span>
+                    <span><strong>CVE</strong>{item.cveId || 'None'}</span>
+                  </div>
+                  {item.reason && <p className="review-history-reason">{item.reason}</p>}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : (
       <section className="review-table-wrap">
         <div className="review-tools">
           <label className="review-search">
@@ -477,6 +625,7 @@ const MitigationReview = ({ onBack, config = {} }) => {
           </>
         )}
       </section>
+      )}
 
       {pendingAction && (
         <div className="modal-overlay" role="presentation">

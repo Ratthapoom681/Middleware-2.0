@@ -838,7 +838,11 @@ const filterFindingsForUser = (findings, user) => {
     let filteredFindings = findings;
     if (user.role !== 'admin') {
         const allowedProducts = getAllowedProductsForUser(user);
-        filteredFindings = findings.filter(finding => allowedProducts.includes(finding.defectDojoProjectName || finding.product_name));
+        filteredFindings = findings.filter(finding => {
+            const route = getAutoDefectDojoRoute(finding);
+            const productKey = getRouteEntityKey('product', route.projectId, route.projectName);
+            return allowedProducts.some(product => routeValueMatches(product, route.projectId, route.projectName, productKey));
+        });
     }
     return appendRedmineSyncToFindings(filteredFindings);
 };
@@ -2164,10 +2168,15 @@ app.get('/api/dashboard/summary', async (req, res) => {
     try {
         const productId = cleanRouteValue(req.query.productId);
         const engagementId = cleanRouteValue(req.query.engagementId);
+        const isAdmin = req.user.role === 'admin';
+        const allowedProducts = isAdmin ? undefined : getAllowedProductsForUser(req.user);
         if (database.isEnabled()) {
             return res.json(await database.getDashboardSummary({
+                allowedProducts,
+                requireAllowedProducts: !isAdmin,
                 productId,
-                engagementId
+                engagementId,
+                includeMitigationReview: isAdmin
             }));
         }
         const findings = await loadFindingsForUser(req.user);
@@ -2200,9 +2209,17 @@ app.get('/api/dashboard/summary', async (req, res) => {
                 });
             }
         });
-        const ticketValues = Object.values(redmineSyncStore.byTicket || ({}));
+        const ticketValues = Object.values(redmineSyncStore.byTicket || ({})).filter(ticket => {
+            const route = ticket.route || {};
+            const productKey = getRouteEntityKey('product', route.projectId, route.projectName);
+            const engagementKey = getRouteEntityKey('engagement', route.engagementId, route.engagementName);
+            if (!isAdmin && !allowedProducts.some(product => routeValueMatches(product, route.projectId, route.projectName, productKey))) return false;
+            if (productId && !routeValueMatches(productId, route.projectId, route.projectName, productKey)) return false;
+            if (engagementId && !routeValueMatches(engagementId, route.engagementId, route.engagementName, engagementKey)) return false;
+            return true;
+        });
         const ticketCount = predicate => ticketValues.filter(predicate).length;
-        res.json({
+        const summary = {
             defectDojo: {
                 activeFindings: scopedFindings.filter(finding => isStoredFindingActive(finding) && !isStoredFindingMitigated(finding)).length,
                 mitigatedFindings: scopedFindings.filter(isStoredFindingMitigated).length
@@ -2218,7 +2235,11 @@ app.get('/api/dashboard/summary', async (req, res) => {
                 products: Array.from(products.values()),
                 engagements: Array.from(engagements.values())
             }
-        });
+        };
+        if (isAdmin) {
+            summary.mitigationReview = { pendingCount: 0 };
+        }
+        res.json(summary);
     } catch (error) {
         console.error('Error building dashboard summary:', error);
         res.status(500).json({
@@ -2262,8 +2283,12 @@ app.get('/api/compacted-cves', async (req, res) => {
         const productId = cleanRouteValue(req.query.productId);
         const engagementId = cleanRouteValue(req.query.engagementId);
         const severity = cleanRouteValue(req.query.severity);
+        const isAdmin = req.user.role === 'admin';
+        const allowedProducts = isAdmin ? undefined : getAllowedProductsForUser(req.user);
         if (database.isEnabled()) {
             return res.json(await database.listCompactedCveFindings({
+                allowedProducts,
+                requireAllowedProducts: !isAdmin,
                 productId,
                 engagementId,
                 severity
@@ -2306,7 +2331,12 @@ app.get('/api/compacted-cves', async (req, res) => {
 app.get('/api/mitigation-rechecks', async (req, res) => {
     try {
         if (!database.isEnabled()) return res.json([]);
-        res.json(await database.listMitigationRechecks(req.query));
+        const isAdmin = req.user.role === 'admin';
+        res.json(await database.listMitigationRechecks({
+            ...req.query,
+            allowedProducts: isAdmin ? undefined : getAllowedProductsForUser(req.user),
+            requireAllowedProducts: !isAdmin
+        }));
     } catch (error) {
         console.error('Error listing mitigation rechecks:', error);
         res.status(500).json({
@@ -2328,6 +2358,18 @@ app.get('/api/admin/mitigation-queue', requireAdmin, async (req, res) => {
         });
     }
 });
+app.get('/api/admin/mitigation-actions', requireAdmin, async (req, res) => {
+    try {
+        if (!database.isEnabled()) return res.json([]);
+        res.json(await database.listAdminActionHistory(req.query));
+    } catch (error) {
+        console.error('Error listing mitigation review action history:', error);
+        res.status(500).json({
+            error: 'Failed to list mitigation review action history',
+            details: error.message
+        });
+    }
+});
 app.post('/api/admin/mitigation-queue/:reviewKey/actions', requireAdmin, async (req, res) => {
     try {
         if (!database.isEnabled()) {
@@ -2343,6 +2385,9 @@ app.post('/api/admin/mitigation-queue/:reviewKey/actions', requireAdmin, async (
             error: 'Review item not found'
         });
         const reviewKeys = Array.isArray(item.reviewKeys) && item.reviewKeys.length > 0 ? item.reviewKeys : [item.reviewKey];
+        const actor = req.user?.username || '';
+        const actorRole = req.user?.role || '';
+        let redmineCloseNote = '';
         if (action === 'close_redmine') {
             const redmineUrl = String(config.redmineUrl || '').trim();
             const apiKey = String(config.redmineApiKey || '').trim();
@@ -2364,13 +2409,19 @@ app.post('/api/admin/mitigation-queue/:reviewKey/actions', requireAdmin, async (
                 });
             }
             const closedStatus = asArray(statusIds.statuses).find(status => cleanRouteValue(status.id) === closedStatusId);
+            const closedAt = new Date().toISOString();
+            redmineCloseNote = [
+                `Reviewed and closed by ${actor || 'unknown user'}${actorRole ? ` (${actorRole})` : ''} in DefectDojo Viewer.`,
+                `Closed at: ${closedAt}`,
+                reason ? `Reviewer note: ${reason}` : '',
+            ].filter(Boolean).join('\n');
             await updateRedmineIssue({
                 baseUrl,
                 apiKey,
                 issueId: item.issueId,
                 issue: {
                     status_id: Number.parseInt(closedStatusId, 10) || closedStatusId,
-                    notes: reason || `Admin ${req.user.username} closed after DefectDojo mitigation review.`
+                    notes: redmineCloseNote
                 }
             });
             const statusMap = new Map(asArray(statusIds.statuses).map(status => [cleanRouteValue(status.id), Boolean(status.is_closed)]));
@@ -2402,11 +2453,12 @@ app.post('/api/admin/mitigation-queue/:reviewKey/actions', requireAdmin, async (
         for (const reviewKey of reviewKeys) {
             results.push(await database.applyMitigationReviewAction(reviewKey, {
                 action,
-                actor: req.user?.username || '',
-                actorRole: req.user?.role || '',
+                actor,
+                actorRole,
                 reason,
                 raw: {
                     request: req.body || ({}),
+                    redmineCloseNote,
                     groupedReviewKey: item.reviewKey,
                     groupedReviewKeys: reviewKeys
                 }
