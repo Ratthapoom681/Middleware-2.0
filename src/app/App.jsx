@@ -109,6 +109,8 @@ const createDashboardSummary = () => ({
   },
 });
 
+const isSyncAllTerminalPhase = (phase = '') => ['complete', 'failed'].includes(String(phase || '').trim().toLowerCase());
+
 const getFindingProductScopeValue = (finding = {}) => {
   const route = getDefectDojoRoute(finding);
   return getScopeOptionValue({
@@ -940,6 +942,9 @@ function App() {
             dashboardSyncReconnectRef.current = 0;
             if (data.syncAllProgress) {
               setSyncProgress(data.syncAllProgress);
+              if (isSyncAllTerminalPhase(data.syncAllProgress.phase)) {
+                setBulkOpeningRedmine(false);
+              }
             }
             setDashboardSync({
               connected: true,
@@ -2380,6 +2385,7 @@ function App() {
   const syncProgressMetrics = syncAllProgress
     ? getSyncProgressMetrics(syncAllProgress, syncProgressNow)
     : null;
+  const syncAllProgressFinished = syncAllProgress ? isSyncAllTerminalPhase(syncAllProgress.phase) : false;
   const mitigationReviewPendingCount = user?.role === 'admin'
     ? Number(dashboardSummary?.mitigationReview?.pendingCount || 0)
     : 0;
@@ -2691,7 +2697,7 @@ function App() {
           <div className="modal-content log-modal sync-progress-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-heading-with-icon">
-                <RefreshCw size={20} className={bulkOpeningRedmine ? 'spin' : ''} />
+                <RefreshCw size={20} className={bulkOpeningRedmine && !syncAllProgressFinished ? 'spin' : ''} />
                 Sync All Progress
               </h2>
             </div>
@@ -2768,7 +2774,7 @@ function App() {
                 </section>
               )}
             </div>
-            {!bulkOpeningRedmine && (
+            {(!bulkOpeningRedmine || syncAllProgressFinished) && (
               <div className="modal-actions">
                 <button type="button" className="btn-primary" onClick={() => setSyncAllProgress(null)}>
                   Done
