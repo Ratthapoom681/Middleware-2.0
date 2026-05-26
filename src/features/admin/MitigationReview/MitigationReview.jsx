@@ -608,7 +608,6 @@ const MitigationReview = ({ onBack, config = {} }) => {
                   <th><SortableHeader sortKey="finding" sortConfig={sortConfig} onSort={toggleSort}>Finding</SortableHeader></th>
                   <th><SortableHeader sortKey="scope" sortConfig={sortConfig} onSort={toggleSort}>Scope</SortableHeader></th>
                   <th><SortableHeader sortKey="product" sortConfig={sortConfig} onSort={toggleSort}>Product</SortableHeader></th>
-                  <th><SortableHeader sortKey="mitigated" sortConfig={sortConfig} onSort={toggleSort}>Mitigated</SortableHeader></th>
                   <th>Actions</th>
                 </tr>
               </thead>

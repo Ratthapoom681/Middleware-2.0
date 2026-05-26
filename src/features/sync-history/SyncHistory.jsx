@@ -626,9 +626,9 @@ const SyncHistory = ({ onBack }) => {
           </div>
         </section>
 
-        {/* ── History List ── */}
+        {/* ── History Table ── */}
         <section className="sh-list-container">
-          <div className="sh-list">
+          <div className="sh-table-shell">
             {visibleItems.length === 0 ? (
               <div className="sh-empty" role="status">
                 <div className="sh-empty-icon-wrap">
@@ -643,40 +643,86 @@ const SyncHistory = ({ onBack }) => {
                 <div className="sh-date-heading">
                   <CalendarDays size={14} />
                   <span>{label}</span>
+                  <small>{groupItems.length} run{groupItems.length !== 1 ? 's' : ''}</small>
                 </div>
-                {groupItems.map((item, idx) => (
-                  <div
-                    key={item.id}
-                    className={`sh-row-wrap sh-card-enter ${selected?.id === item.id ? 'selected' : ''}`}
-                    style={{ animationDelay: `${Math.min(idx * 35, 400)}ms` }}
-                  >
-                    <label className="sh-compare-check">
-                      <input
-                        type="checkbox"
-                        checked={compareIds.includes(item.id)}
-                        onChange={() => toggleCompare(item.id)}
-                        aria-label={`Select ${item.syncType} from ${formatDate(item.startedAt)} for compare`}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      className="sh-row"
-                      onClick={() => setSelected(item)}
-                      aria-haspopup="dialog"
-                      aria-label={`Open details for ${getRunLabel(item)} ${item.syncType}`}
-                    >
-                      <div className="sh-row-title">
-                        <strong>{item.syncType}</strong>
-                        <span className="sh-run-badge">{getRunLabel(item)}</span>
-                      </div>
-                      <span className="sh-row-scope">{item.productName || item.productId || 'All products'} / {item.engagementName || item.engagementId || 'All engagements'}</span>
-                      <div className="sh-row-footer">
-                        <span className={`sh-status-pill ${item.status}`}>{item.status}</span>
-                        <small>{formatDate(item.startedAt)}</small>
-                      </div>
-                    </button>
-                  </div>
-                ))}
+                <div className="sh-table-scroll">
+                  <table className="sh-history-table">
+                    <thead>
+                      <tr>
+                        <th className="sh-col-select" scope="col">Compare</th>
+                        <th scope="col">Run</th>
+                        <th scope="col">Scope</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Findings</th>
+                        <th scope="col">Tickets</th>
+                        <th scope="col">Started</th>
+                        <th scope="col">By</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {groupItems.map((item, idx) => (
+                        <tr
+                          key={item.id}
+                          className={`${selected?.id === item.id ? 'selected' : ''} sh-card-enter`}
+                          style={{ animationDelay: `${Math.min(idx * 20, 260)}ms` }}
+                        >
+                          <td className="sh-col-select">
+                            <label className="sh-table-check">
+                              <input
+                                type="checkbox"
+                                checked={compareIds.includes(item.id)}
+                                onChange={() => toggleCompare(item.id)}
+                                aria-label={`Select ${item.syncType} from ${formatDate(item.startedAt)} for compare`}
+                              />
+                              <span className="sr-only">Compare</span>
+                            </label>
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="sh-run-link"
+                              onClick={() => setSelected(item)}
+                              aria-haspopup="dialog"
+                              aria-label={`Open details for ${getRunLabel(item)} ${item.syncType}`}
+                            >
+                              <strong>{item.syncType}</strong>
+                              <span>{getRunLabel(item)}</span>
+                            </button>
+                          </td>
+                          <td>
+                            <span className="sh-scope-cell">
+                              <strong>{item.productName || item.productId || 'All products'}</strong>
+                              <span>{item.engagementName || item.engagementId || 'All engagements'}</span>
+                            </span>
+                          </td>
+                          <td>
+                            <span className={`sh-status-pill ${item.status}`}>{item.status}</span>
+                          </td>
+                          <td>
+                            <span className="sh-metric-cell">
+                              <strong>{toNumber(item.findingsPulled)}</strong>
+                              <span>{toNumber(item.findingsMitigated)} mitigated · {toNumber(item.findingsStillActive)} active</span>
+                            </span>
+                          </td>
+                          <td>
+                            <span className="sh-metric-cell">
+                              <strong>{toNumber(item.ticketsPulled)}</strong>
+                              <span>{toNumber(item.ticketsUpdated)} updated</span>
+                            </span>
+                          </td>
+                          <td>
+                            <time className="sh-time-cell" dateTime={item.startedAt || item.createdAt || undefined}>
+                              {formatDate(item.startedAt)}
+                            </time>
+                          </td>
+                          <td>
+                            <span className="sh-user-cell">{item.triggeredBy || 'system'}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             ))}
           </div>

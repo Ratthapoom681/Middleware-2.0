@@ -1144,7 +1144,13 @@ const createAllowedProductMatcher = (allowedProducts = [], requireAllowedProduct
 
 const countPendingMitigationReviews = async () => {
     const { rows } = await pool.query(`
-        SELECT count(*)::int AS pending_count
+        SELECT count(DISTINCT
+            CASE
+                WHEN COALESCE(NULLIF(ticket_key, ''), '') <> '' THEN 'ticket:' || ticket_key
+                WHEN COALESCE(NULLIF(issue_id, ''), '') <> '' THEN 'issue:' || issue_id
+                ELSE 'review:' || review_key
+            END
+        )::int AS pending_count
         FROM ${TABLES.mitigationReviews}
         WHERE state = 'pending'
     `);

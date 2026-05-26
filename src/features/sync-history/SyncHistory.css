@@ -333,6 +333,7 @@
   gap: 1rem;
 }
 
+.sh-table-shell,
 .sh-list {
   display: flex;
   flex-direction: column;
@@ -362,9 +363,156 @@
   width: fit-content;
 }
 
+.sh-date-heading small {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .sh-date-heading svg {
   color: var(--primary);
   opacity: 0.7;
+}
+
+/* ── History Table ── */
+.sh-table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: var(--bg-card);
+}
+
+.sh-history-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  color: var(--text-main);
+  font-size: 0.82rem;
+}
+
+.sh-history-table th,
+.sh-history-table td {
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.sh-history-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-subtle);
+  color: var(--text-soft);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.sh-history-table tbody tr {
+  background: var(--bg-card);
+  transition: background 0.14s ease;
+}
+
+.sh-history-table tbody tr:hover {
+  background: var(--bg-subtle-hover);
+}
+
+.sh-history-table tbody tr.selected {
+  background: var(--bg-active);
+}
+
+.sh-history-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.sh-col-select {
+  width: 5rem;
+  text-align: center;
+}
+
+.sh-table-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.45rem;
+  background: var(--bg-subtle);
+}
+
+.sh-table-check input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--primary);
+}
+
+.sh-run-link {
+  max-width: 15rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-main);
+  cursor: pointer;
+  display: grid;
+  gap: 0.12rem;
+  text-align: left;
+}
+
+.sh-run-link:hover strong,
+.sh-run-link:focus-visible strong {
+  color: var(--primary);
+}
+
+.sh-run-link:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 3px;
+}
+
+.sh-run-link strong,
+.sh-scope-cell strong,
+.sh-metric-cell strong {
+  color: var(--text-main);
+  font-weight: 850;
+}
+
+.sh-run-link span,
+.sh-scope-cell span,
+.sh-metric-cell span {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.sh-scope-cell,
+.sh-metric-cell {
+  min-width: 0;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.sh-scope-cell {
+  max-width: 18rem;
+}
+
+.sh-scope-cell strong,
+.sh-scope-cell span,
+.sh-run-link strong,
+.sh-run-link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sh-time-cell,
+.sh-user-cell {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
 }
 
 /* ── History Row ── */
