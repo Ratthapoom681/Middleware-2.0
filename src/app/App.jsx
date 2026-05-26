@@ -174,6 +174,28 @@ const normalizeFindingStateFilter = (value) => {
   return FINDING_STATE_FILTERS.includes(normalized) ? normalized : 'open';
 };
 
+const REDMINE_STATUS_FILTER_OPTIONS = [
+  { id: 'all', label: 'All Redmine' },
+  { id: 'new', label: 'New' },
+  { id: 'in_progress', label: 'In Progress' },
+  { id: 'feedback', label: 'Feedback' },
+  { id: 'resolve', label: 'Resolve' },
+  { id: 'closed', label: 'Closed' },
+  { id: 'unlinked', label: 'No Ticket' },
+  { id: 'not_found', label: 'Not Found' },
+  { id: 'error', label: 'Error' },
+  { id: 'other', label: 'Other' },
+];
+
+const normalizeRedmineStatusFilter = (value) => {
+  const normalized = cleanText(value).toLowerCase().replace(/[\s-]+/g, '_');
+  return REDMINE_STATUS_FILTER_OPTIONS.some(option => option.id === normalized) ? normalized : 'all';
+};
+
+const getRedmineStatusFilterLabel = (statusKey) => (
+  REDMINE_STATUS_FILTER_OPTIONS.find(option => option.id === statusKey)?.label || 'Other'
+);
+
 const isFindingClosedFromRedmine = (sync = {}) => {
   const redmineSync = sync || {};
   const status = normalizeRedmineStatus(redmineSync.status || redmineSync.issue?.status?.name);
@@ -182,11 +204,27 @@ const isFindingClosedFromRedmine = (sync = {}) => {
     || ['closed', 'done'].includes(status);
 };
 
+const getRedmineStatusFilterKey = (sync = {}) => {
+  const redmineSync = sync || {};
+  const action = cleanText(redmineSync.action).toLowerCase();
+  const status = normalizeRedmineStatus(redmineSync.status || redmineSync.issue?.status?.name);
+  if (!action && !status && !redmineSync.issueId) return 'unlinked';
+  if (action === 'not_found') return 'not_found';
+  if (action === 'check_failed') return 'error';
+  if (isFindingClosedFromRedmine(redmineSync)) return 'closed';
+  if (['resolve', 'resolved'].includes(status)) return 'resolve';
+  if (status === 'feedback') return 'feedback';
+  if (status === 'in progress') return 'in_progress';
+  if (status === 'new' || action === 'created') return 'new';
+  return status || action || redmineSync.issueId ? 'other' : 'unlinked';
+};
+
 function App() {
   const [findings, setFindings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [activeFilter, setActiveFilter] = useState('All');
   const [findingStateFilter, setFindingStateFilter] = useState('open');
+  const [redmineStatusFilter, setRedmineStatusFilter] = useState('all');
   const [selectedProductId, setSelectedProductId] = useState('');
   const [selectedEngagementId, setSelectedEngagementId] = useState('');
   const [dashboardSummary, setDashboardSummary] = useState(null);
@@ -278,10 +316,12 @@ function App() {
     const productId = query.get('productId') || '';
     const engagementId = query.get('engagementId') || '';
     const stateFilter = normalizeFindingStateFilter(query.get('state'));
+    const redmineStatus = normalizeRedmineStatusFilter(query.get('redmineStatus') || query.get('redmine'));
     queueMicrotask(() => {
       setSelectedProductId(productId);
       setSelectedEngagementId(engagementId);
       setFindingStateFilter(stateFilter);
+      setRedmineStatusFilter(redmineStatus);
       setCompactedCveFindings(null);
       setCompactedCveScopeKey('');
     });
@@ -298,6 +338,7 @@ function App() {
       setCompactedSearch('');
       setActiveFilter('All');
       setFindingStateFilter('open');
+      setRedmineStatusFilter('all');
     });
   }, [currentRoute.id]);
 
@@ -305,6 +346,7 @@ function App() {
     if (currentRoute.id !== APP_ROUTE_IDS.dashboard) return;
     queueMicrotask(() => {
       setFindingStateFilter('open');
+      setRedmineStatusFilter('all');
     });
   }, [currentRoute.id]);
 
@@ -1322,6 +1364,12 @@ function App() {
     return normalizedState === 'closed' ? isClosed : !isClosed;
   }, [findingStateFilter, getFindingRedmineSync]);
 
+  const findingMatchesRedmineStatusFilter = useCallback((finding, statusFilter = redmineStatusFilter) => {
+    const normalizedStatus = normalizeRedmineStatusFilter(statusFilter);
+    if (normalizedStatus === 'all') return true;
+    return getRedmineStatusFilterKey(getFindingRedmineSync(finding)) === normalizedStatus;
+  }, [getFindingRedmineSync, redmineStatusFilter]);
+
   const getFindingIdentity = (finding, fallback = '') => {
     const identityParts = [
       finding?.title,
@@ -1634,15 +1682,19 @@ function App() {
   const stateFilteredBaseDisplayFindings = useMemo(() => (
     baseDisplayFindings.filter(finding => findingMatchesStateFilter(finding))
   ), [baseDisplayFindings, findingMatchesStateFilter]);
+  const redmineStatusFilteredBaseDisplayFindings = useMemo(() => (
+    stateFilteredBaseDisplayFindings.filter(finding => findingMatchesRedmineStatusFilter(finding))
+  ), [findingMatchesRedmineStatusFilter, stateFilteredBaseDisplayFindings]);
   const compactedSearchTokens = useMemo(() => (
     cleanText(compactedSearch).toLowerCase().split(/\s+/).filter(Boolean)
   ), [compactedSearch]);
   const displayFindings = useMemo(() => {
-    if (compactedSearchTokens.length === 0) return stateFilteredBaseDisplayFindings;
+    if (compactedSearchTokens.length === 0) return redmineStatusFilteredBaseDisplayFindings;
 
-    return stateFilteredBaseDisplayFindings.filter(finding => {
+    return redmineStatusFilteredBaseDisplayFindings.filter(finding => {
       const route = getDefectDojoRoute(finding);
       const redmineSync = getFindingRedmineSync(finding);
+      const redmineStatusKey = getRedmineStatusFilterKey(redmineSync);
       const searchableValues = [
         finding.title,
         finding.subject,
@@ -1661,7 +1713,10 @@ function App() {
         finding.compactGroupId,
         finding.groupKey,
         redmineSync?.issueId,
+        redmineSync?.issueId ? `#${redmineSync.issueId}` : '',
         redmineSync?.status,
+        normalizeRedmineStatus(redmineSync?.status || redmineSync?.issue?.status?.name),
+        getRedmineStatusFilterLabel(redmineStatusKey),
         redmineSync?.projectName,
         getRedmineSyncLabel(redmineSync),
         ...(finding.allCVEs || []).map(cve => cve?.vulnerability_id || cve?.name || cve?.id || cve),
@@ -1676,7 +1731,7 @@ function App() {
       const haystack = searchableValues.map(cleanText).filter(Boolean).join(' ').toLowerCase();
       return compactedSearchTokens.every(token => haystack.includes(token));
     });
-  }, [compactedSearchTokens, getFindingRedmineSync, stateFilteredBaseDisplayFindings]);
+  }, [compactedSearchTokens, getFindingRedmineSync, redmineStatusFilteredBaseDisplayFindings]);
   const compactedSearchActive = compactedSearchTokens.length > 0;
   const compactedFindingsForStats = allCompactedFindings;
   const dashboardRedmineSummary = useMemo(() => {
@@ -1705,14 +1760,26 @@ function App() {
   const stateFilteredCompactedFindingsForSeverity = useMemo(() => (
     compactedFindingsForSeverity.filter(finding => findingMatchesStateFilter(finding))
   ), [compactedFindingsForSeverity, findingMatchesStateFilter]);
+  const redmineStatusCounts = useMemo(() => {
+    const counts = Object.fromEntries(REDMINE_STATUS_FILTER_OPTIONS.map(option => [option.id, 0]));
+    stateFilteredCompactedFindingsForSeverity.forEach(finding => {
+      const statusKey = getRedmineStatusFilterKey(getFindingRedmineSync(finding));
+      counts[statusKey] = (counts[statusKey] || 0) + 1;
+      counts.all += 1;
+    });
+    return counts;
+  }, [getFindingRedmineSync, stateFilteredCompactedFindingsForSeverity]);
+  const redmineStatusFilteredCompactedFindingsForSeverity = useMemo(() => (
+    stateFilteredCompactedFindingsForSeverity.filter(finding => findingMatchesRedmineStatusFilter(finding))
+  ), [findingMatchesRedmineStatusFilter, stateFilteredCompactedFindingsForSeverity]);
   const compactedSeverityCounts = useMemo(() => {
     const counts = Object.fromEntries(PULL_SEVERITY_OPTIONS.map(severity => [severity, 0]));
-    stateFilteredCompactedFindingsForSeverity.forEach(finding => {
+    redmineStatusFilteredCompactedFindingsForSeverity.forEach(finding => {
       const severity = PULL_SEVERITY_OPTIONS.includes(finding.severity) ? finding.severity : 'Info';
       counts[severity] += 1;
     });
     return counts;
-  }, [stateFilteredCompactedFindingsForSeverity]);
+  }, [redmineStatusFilteredCompactedFindingsForSeverity]);
   const displayFindingGroups = useMemo(() => {
     const groups = new Map();
     displayFindings.forEach(finding => {
@@ -1982,6 +2049,7 @@ function App() {
       setSelectedFinding(null);
       setActiveFilter('All');
       setFindingStateFilter('open');
+      setRedmineStatusFilter('all');
     });
     setHashRoute(`#product-findings${params.toString() ? `?${params.toString()}` : ''}`);
   };
@@ -2003,6 +2071,7 @@ function App() {
       setSelectedFinding(null);
       setActiveFilter('All');
       setFindingStateFilter('open');
+      setRedmineStatusFilter('all');
     });
     setHashRoute('#findings');
   };
@@ -2017,6 +2086,20 @@ function App() {
       query.delete('state');
     } else {
       query.set('state', normalizedState);
+    }
+    setHashRoute(`#product-findings${query.toString() ? `?${query.toString()}` : ''}`);
+  };
+  const handleRedmineStatusChange = (statusFilter) => {
+    const normalizedStatus = normalizeRedmineStatusFilter(statusFilter);
+    setRedmineStatusFilter(normalizedStatus);
+    if (currentRoute.id !== APP_ROUTE_IDS.productFindings) return;
+
+    const queryString = String(currentHash || '').split('?')[1] || '';
+    const query = new URLSearchParams(queryString);
+    if (normalizedStatus === 'all') {
+      query.delete('redmineStatus');
+    } else {
+      query.set('redmineStatus', normalizedStatus);
     }
     setHashRoute(`#product-findings${query.toString() ? `?${query.toString()}` : ''}`);
   };
@@ -2419,9 +2502,9 @@ function App() {
     return renderShell(
       <FindingsPage
         activeFilter={activeFilter}
-        baseDisplayFindings={stateFilteredBaseDisplayFindings}
+        baseDisplayFindings={redmineStatusFilteredBaseDisplayFindings}
         bulkOpeningRedmine={bulkOpeningRedmine}
-        compactedFindingsForSeverity={stateFilteredCompactedFindingsForSeverity}
+        compactedFindingsForSeverity={redmineStatusFilteredCompactedFindingsForSeverity}
         compactedFindingsForStats={compactedFindingsForStats}
         compactedSearch={compactedSearch}
         compactedSearchActive={compactedSearchActive}
@@ -2433,7 +2516,11 @@ function App() {
         onClearSearch={() => setCompactedSearch('')}
         onOpenSyncAllFilters={openSyncAllFilters}
         onFindingStateChange={handleFindingStateChange}
+        onRedmineStatusChange={handleRedmineStatusChange}
         onSearchChange={setCompactedSearch}
+        redmineStatusCounts={redmineStatusCounts}
+        redmineStatusFilter={redmineStatusFilter}
+        redmineStatusOptions={REDMINE_STATUS_FILTER_OPTIONS}
         renderFindingDetailModal={renderFindingDetailModal}
         renderFindingRow={renderFindingRow}
         renderMitigationReviewToast={renderMitigationReviewToast}
@@ -2492,6 +2579,7 @@ function App() {
                 setSelectedProductId('');
                 setSelectedEngagementId('');
                 setFindingStateFilter('open');
+                setRedmineStatusFilter('all');
                 setRedmineSyncByTicket({});
                 setCompactedCveFindings([]);
                 setCompactedCveScopeKey('');
@@ -2564,8 +2652,8 @@ function App() {
         findingsContent={(
           <FindingsPage
             activeFilter={activeFilter}
-            baseDisplayFindings={stateFilteredBaseDisplayFindings}
-            compactedFindingsForSeverity={stateFilteredCompactedFindingsForSeverity}
+            baseDisplayFindings={redmineStatusFilteredBaseDisplayFindings}
+            compactedFindingsForSeverity={redmineStatusFilteredCompactedFindingsForSeverity}
             compactedSearch={compactedSearch}
             compactedSearchActive={compactedSearchActive}
             compactedSeverityCounts={compactedSeverityCounts}
@@ -2576,7 +2664,11 @@ function App() {
             findingStateFilter={findingStateFilter}
             onClearSearch={() => setCompactedSearch('')}
             onFindingStateChange={handleFindingStateChange}
+            onRedmineStatusChange={handleRedmineStatusChange}
             onSearchChange={setCompactedSearch}
+            redmineStatusCounts={redmineStatusCounts}
+            redmineStatusFilter={redmineStatusFilter}
+            redmineStatusOptions={REDMINE_STATUS_FILTER_OPTIONS}
             renderFindingDetailModal={renderFindingDetailModal}
             renderFindingRow={renderFindingRow}
             renderMitigationReviewToast={() => null}

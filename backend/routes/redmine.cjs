@@ -470,14 +470,14 @@ module.exports = function(ctx) {
                     console.warn(`Known Redmine issue ${knownIssueId} could not be checked; falling back to project search: ${missingMessage}`);
                 }
             }
-            const redmineProjectResolveCache = new Map();
+            const redmineProjectResolveCache = ctx.redmineProjectResolveCache || new Map();
             const resolvedProject = await ctx.resolveRedmineProjectCached({
                 cache: redmineProjectResolveCache,
                 baseUrl,
                 apiKey,
                 configuredProjectId,
                 route,
-                retain: false
+                retain: true
             });
             const projectId = resolvedProject.id;
             const searchArgs = {

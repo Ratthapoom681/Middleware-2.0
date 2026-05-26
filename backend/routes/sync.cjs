@@ -61,6 +61,13 @@ module.exports = function(ctx) {
                 error: 'Redmine URL and API Key are required'
             });
         }
+        if (ctx.isSyncAllRunning?.()) {
+            return res.status(409).json({
+                error: 'Sync All is already running',
+                details: 'Wait for the current Sync All to finish before starting another one.'
+            });
+        }
+        ctx.setSyncAllRunning?.(true);
         const sendSyncAllProgress = ctx.createSyncAllProgressBroadcaster();
         try {
             sendSyncAllProgress({
@@ -342,6 +349,8 @@ module.exports = function(ctx) {
                 details: error.response?.data || error.message,
                 syncHistory
             });
+        } finally {
+            ctx.setSyncAllRunning?.(false);
         }
     });
 

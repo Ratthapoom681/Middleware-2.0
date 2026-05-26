@@ -15,7 +15,11 @@ const FindingsPage = ({
   findingStateFilter = 'open',
   onClearSearch,
   onFindingStateChange = () => {},
+  onRedmineStatusChange = () => {},
   onSearchChange,
+  redmineStatusCounts = {},
+  redmineStatusFilter = 'all',
+  redmineStatusOptions = [],
   renderFindingDetailModal,
   renderFindingRow,
   renderMitigationReviewToast,
@@ -87,6 +91,21 @@ const FindingsPage = ({
             );
           })}
         </div>
+
+        <label className="redmine-status-filter">
+          <span>Redmine</span>
+          <select
+            value={redmineStatusFilter}
+            onChange={(event) => onRedmineStatusChange(event.target.value)}
+            aria-label="Filter findings by Redmine status"
+          >
+            {redmineStatusOptions.map(option => (
+              <option key={option.id} value={option.id}>
+                {option.label} ({redmineStatusCounts[option.id] || 0})
+              </option>
+            ))}
+          </select>
+        </label>
 
         <span className="findings-result-count">
           <Layers size={14} />

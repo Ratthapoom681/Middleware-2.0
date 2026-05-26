@@ -179,6 +179,7 @@ let scanPathWatcher = null;
 let scanPathWatchDebounce = null;
 let redmineSyncPollTimer = null;
 let redmineSyncPollRunning = false;
+let syncAllRunning = false;
 let redmineSyncScheduler = {
     enabled: false,
     configured: false,
@@ -2560,6 +2561,9 @@ registerApiRoutes(app, {
     getKnownRedmineIssueId,
     buildTicketStatusFromIssue,
     resolveRedmineProjectCached,
+    redmineProjectResolveCache,
+    isSyncAllRunning: () => syncAllRunning,
+    setSyncAllRunning: (value) => { syncAllRunning = Boolean(value); },
     buildRedmineProjectMissingStatus,
     isRedmineProjectReferenceError,
     extractMissingRedmineProjectNameFromError,
