@@ -1,8 +1,8 @@
 // DefectDojo API client — entity resolution, finding enrichment, and filter query building.
 
 const axios = require('axios');
-const { cleanRouteValue } = require('./utils.cjs');
-const { splitDelimitedFilterValue, runWithConcurrency, createProgressLogger } = require('./sync-utils.cjs');
+const { cleanRouteValue } = require('../lib/utils.cjs');
+const { splitDelimitedFilterValue, runWithConcurrency, createProgressLogger } = require('../domain/sync-utils.cjs');
 
 const DEFECTDOJO_CONTEXT_CONCURRENCY = 5;
 

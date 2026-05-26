@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ShieldAlert, LogIn } from 'lucide-react';
-import { API_BASE, removeAuthToken, removeCurrentUser, setAuthToken, setCurrentUser } from '../../services/api';
-import ThemeToggle from '../../components/ThemeToggle';
+import { API_BASE, removeAuthToken, removeCurrentUser, setAuthToken, setCurrentUser } from '../../shared/api/api';
+import ThemeToggle from '../../shared/ui/ThemeToggle';
 
 const Login = ({ onLoginSuccess }) => {
   const [username, setUsername] = useState('');
@@ -89,4 +89,3 @@ const Login = ({ onLoginSuccess }) => {
 };
 
 export default Login;
-

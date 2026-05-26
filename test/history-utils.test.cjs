@@ -9,15 +9,15 @@ const {
     evaluateResolveRecheck,
     isClosedStatus,
     isResolveStatus
-} = require('../backend/history-utils.cjs');
+} = require('../backend/domain/history-utils.cjs');
 const {
     findTicketForGroup
-} = require('../backend/database.cjs').__test;
+} = require('../backend/data/database.cjs').__test;
 const {
     buildBackendCompactedRedmineTicketRefs,
     collectAutoCweIds
-} = require('../backend/compaction.cjs');
-const redmineClient = require('../backend/redmine-client.cjs');
+} = require('../backend/domain/compaction.cjs');
+const redmineClient = require('../backend/integrations/redmine-client.cjs');
 
 test('groups compacted findings into upgrade-family super tickets without splitting per CVE', () => {
     const groups = groupFindingsByFingerprint([

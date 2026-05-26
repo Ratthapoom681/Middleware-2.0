@@ -1,0 +1,76 @@
+export const cleanText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+
+export const formatRouteValue = (name, id) => {
+  if (name && id) return `${name} (ID: ${id})`;
+  return name || id || 'N/A';
+};
+
+export const getScopeOptionValue = (item = {}) => (
+  cleanText(item.id || item.key || item.name)
+);
+
+export const routeValueMatches = (selectedValue, ...candidates) => {
+  const selected = cleanText(selectedValue).toLowerCase();
+  if (!selected) return true;
+  return candidates.some(candidate => cleanText(candidate).toLowerCase() === selected);
+};
+
+const SEVERITY_RANK = {
+  None: 0,
+  Info: 0,
+  Informational: 0,
+  Low: 1,
+  Medium: 2,
+  High: 3,
+  Critical: 4,
+};
+
+const getSeverityRank = (severity) => SEVERITY_RANK[severity] ?? 0;
+
+export const highestSeverity = (current, next) => (
+  getSeverityRank(next) > getSeverityRank(current) ? next : current
+);
+
+export const normalizeRedmineStatus = (status) => (
+  cleanText(status)
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+);
+
+export const getRedmineStatusBadgeClass = (sync = {}) => {
+  const normalizedStatus = normalizeRedmineStatus(sync.status);
+  if (sync.action === 'existing_closed' || ['closed', 'done'].includes(normalizedStatus)) return 'status-closed';
+  if (normalizedStatus === 'new') return 'status-new';
+  if (normalizedStatus === 'feedback') return 'status-feedback';
+  if (normalizedStatus === 'in progress') return 'status-in-progress';
+  if (['resolve', 'resolved'].includes(normalizedStatus)) return 'status-resolve';
+  if (sync.action === 'not_found') return 'status-not-found';
+  if (sync.action === 'check_failed') return 'status-error';
+  return 'status-synced';
+};
+
+export const getRedmineSyncBadgeClass = (sync = {}) => (
+  ['redmine-sync-badge', sync.action, getRedmineStatusBadgeClass(sync)].filter(Boolean).join(' ')
+);
+
+const REDMINE_SYNC_PRIORITY = {
+  created: 5,
+  existing_open: 4,
+  closed_with_new_findings: 2,
+  existing_closed: 2,
+  not_found: 1,
+  check_failed: 0,
+};
+
+export const chooseRedmineSync = (current, next) => {
+  if (!next) return current || null;
+  if (!current) return next;
+
+  const currentPriority = REDMINE_SYNC_PRIORITY[current.action] ?? -1;
+  const nextPriority = REDMINE_SYNC_PRIORITY[next.action] ?? -1;
+  if (nextPriority !== currentPriority) return nextPriority > currentPriority ? next : current;
+
+  const currentUpdatedAt = Date.parse(current.updatedAt || current.checkedAt || '') || 0;
+  const nextUpdatedAt = Date.parse(next.updatedAt || next.checkedAt || '') || 0;
+  return nextUpdatedAt >= currentUpdatedAt ? next : current;
+};

@@ -1,0 +1,364 @@
+import { cleanText } from '../../shared/lib/dashboardUtils';
+import {
+  normalizeForGrouping,
+  cleanBlockText,
+  asArray,
+  asFindingIdArray,
+  sortStrings,
+  sortFindingIds,
+  LESS_THAN_VERSION_RE,
+  parseUpgradeText,
+  compareVersions,
+  getDefectDojoRoute,
+} from './findingUtils';
+import { resolveCompactFamily, getLegacyCompactGroupKey } from './vulnerabilityUtils';
+
+export const addCompactedFindingIds = (target, value) => {
+  asFindingIdArray(value).forEach(id => {
+    const cleaned = cleanText(id);
+    if (cleaned) target.add(cleaned);
+  });
+};
+
+export const getCompactedFindingIds = (finding = {}) => {
+  const ids = new Set();
+
+  addCompactedFindingIds(ids, finding.originalIds);
+  addCompactedFindingIds(ids, finding.findingIds);
+  addCompactedFindingIds(ids, finding.defectdojoFindingIds);
+  addCompactedFindingIds(ids, finding.serverRedmineSync?.findingIds);
+
+  asArray(finding.findingStates).forEach(state => {
+    addCompactedFindingIds(ids, state?.findingId || state?.finding_id || state?.id);
+  });
+
+  asArray(finding.endpointDetails).forEach(detail => {
+    addCompactedFindingIds(ids, detail?.findingIds);
+  });
+
+  asArray(finding.allDescriptionSources).forEach(source => {
+    addCompactedFindingIds(ids, source?.findingIds);
+  });
+  asArray(finding.allImpactSources).forEach(source => {
+    addCompactedFindingIds(ids, source?.findingIds);
+  });
+
+  asArray(finding.sourceGroups).forEach(sourceGroup => {
+    addCompactedFindingIds(ids, sourceGroup?.findingIds);
+    asArray(sourceGroup?.endpointDetails).forEach(detail => {
+      addCompactedFindingIds(ids, detail?.findingIds);
+    });
+    asArray(sourceGroup?.descriptionSources).forEach(source => {
+      addCompactedFindingIds(ids, source?.findingIds);
+    });
+    asArray(sourceGroup?.impactSources).forEach(source => {
+      addCompactedFindingIds(ids, source?.findingIds);
+    });
+  });
+
+  return sortFindingIds(Array.from(ids));
+};
+
+export const getCompactedFindingCount = (finding = {}) => {
+  const ids = getCompactedFindingIds(finding);
+  if (ids.length > 0) return ids.length;
+
+  const fallback = [finding.findingCount, finding.sourceFindingCount, finding.count]
+    .map(value => Number.parseInt(value, 10))
+    .find(value => Number.isFinite(value) && value > 0);
+
+  return fallback || 1;
+};
+
+export const SOURCE_EVIDENCE_RE = /\b(?:URL|URI)\s*:\s*https?:\/\/\S+(?:\s+\([^)]*\))?(?:\s+(?:Installed|Detected|Current|Fixed|Affected) version\s*:\s*\S+)*|\bVersion source\s*:\s*\S+(?:\s+(?!(?:Installed|Detected|Current|Fixed|Affected) version\s*:)\S+)*(?:\s+(?:Installed|Detected|Current|Fixed|Affected) version\s*:\s*\S+)*/gi;
+
+export const cleanTextSourceBody = (text = '') => (
+  cleanBlockText(text)
+    .replace(SOURCE_EVIDENCE_RE, '')
+    .replace(/\busing the following request\s*:\s*https?:\/\/\S+/i, 'using a request to the affected endpoint')
+    .replace(/\s*This produced the following truncated output[\s\S]*$/i, '\n\nEvidence output omitted. See DefectDojo finding for raw truncated output.')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+);
+
+export const extractTextSourceEvidenceLines = (text = '') => {
+  const evidenceLines = new Set();
+  cleanBlockText(text).replace(SOURCE_EVIDENCE_RE, (match) => {
+    const cleaned = cleanText(match);
+    if (cleaned) evidenceLines.add(cleaned);
+    return match;
+  });
+  return Array.from(evidenceLines);
+};
+
+export const normalizeTextSourceKey = (text = '') => (
+  [
+    cleanTextSourceBody(text),
+    extractTextSourceEvidenceLines(text)
+      .map(line => line
+        .replace(/\bURL\s*:\s*https?:\/\/\S+/gi, 'URL: <endpoint>')
+        .replace(/\bhttps?:\/\/[^\s)]+/gi, '<url>')
+        .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, '<host>')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase())
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+      .join('|'),
+  ]
+    .filter(Boolean)
+    .join('|evidence|')
+    .toLowerCase()
+);
+
+export const getCompactionDetailKey = (finding = {}) => ([
+  'detail',
+  normalizeTextSourceKey(finding.description || ''),
+  normalizeTextSourceKey(finding.impact || ''),
+].join('|'));
+
+export const addTextSource = (sourceMap, text, findingId) => {
+  const cleanedText = cleanBlockText(text);
+  if (!cleanedText) return;
+  const bodyText = cleanTextSourceBody(cleanedText);
+  const evidenceLines = extractTextSourceEvidenceLines(cleanedText);
+  const sourceKey = normalizeTextSourceKey(cleanedText);
+
+  if (!sourceMap.has(sourceKey)) {
+    sourceMap.set(sourceKey, {
+      text: bodyText,
+      findingIds: new Set(),
+      evidenceLines: new Set(),
+    });
+  }
+
+  evidenceLines.forEach(line => sourceMap.get(sourceKey).evidenceLines.add(line));
+  const cleanedFindingId = cleanText(findingId);
+  if (cleanedFindingId) sourceMap.get(sourceKey).findingIds.add(cleanedFindingId);
+};
+
+export const sortTextSources = (sourceMap) => (
+  Array.from(sourceMap.values())
+    .map(source => ({
+      text: source.text,
+      findingIds: sortFindingIds(Array.from(source.findingIds)),
+      evidenceLines: sortStrings(source.evidenceLines || []),
+    }))
+    .filter(source => source.text || source.evidenceLines.length > 0)
+    .sort((a, b) => cleanText(a.text || a.evidenceLines.join(' ')).localeCompare(cleanText(b.text || b.evidenceLines.join(' ')), undefined, { numeric: true }))
+);
+
+export const stableHash = (value) => {
+  const text = String(value || '');
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+};
+
+export const buildCompactedSyncKey = ({
+  groupKey,
+  productIds = [],
+  engagementIds = [],
+}) => {
+  const source = [
+    `group:${groupKey}`,
+    `products:${sortStrings(asArray(productIds).map(id => cleanText(id)).filter(Boolean)).join(',')}`,
+    `engagements:${sortStrings(asArray(engagementIds).map(id => cleanText(id)).filter(Boolean)).join(',')}`,
+  ].join('|');
+
+  return `dd-compact-${stableHash(source)}`;
+};
+
+export const buildLegacyCompactedSyncKey = ({
+  groupKey,
+  findingIds = [],
+  productIds = [],
+  engagementIds = [],
+}) => {
+  const source = [
+    `group:${groupKey}`,
+    `findings:${sortStrings(asFindingIdArray(findingIds).map(id => cleanText(id)).filter(Boolean)).join(',')}`,
+    `products:${sortStrings(asArray(productIds).map(id => cleanText(id)).filter(Boolean)).join(',')}`,
+    `engagements:${sortStrings(asArray(engagementIds).map(id => cleanText(id)).filter(Boolean)).join(',')}`,
+  ].join('|');
+
+  return `dd-compact-${stableHash(source)}`;
+};
+
+export const extractTitleVersion = (title) => {
+  const text = cleanText(title);
+  const lessThanMatch = text.match(LESS_THAN_VERSION_RE);
+  if (lessThanMatch) return lessThanMatch[1].replace(/\.$/, '');
+
+  const target = parseUpgradeText(text);
+  if (target) return target.version;
+
+  const versionMatch = text.match(/\bversion\s+([0-9][0-9a-z.-]*)/i);
+  return versionMatch ? versionMatch[1].replace(/\.$/, '') : null;
+};
+
+export const chooseDisplayTitle = (titles, fallbackTitle) => {
+  const cleanedTitles = sortStrings(titles)
+    .map(title => cleanText(title))
+    .filter(Boolean);
+
+  if (cleanedTitles.length === 0) return cleanText(fallbackTitle || 'Untitled finding');
+
+  return cleanedTitles.reduce((best, candidate) => {
+    const bestVersion = extractTitleVersion(best);
+    const candidateVersion = extractTitleVersion(candidate);
+
+    if (candidateVersion && (!bestVersion || compareVersions(candidateVersion, bestVersion) > 0)) {
+      return candidate;
+    }
+
+    if (!candidateVersion && !bestVersion && candidate.length > best.length) {
+      return candidate;
+    }
+
+    return best;
+  }, cleanedTitles[0]);
+};
+
+export const groupEndpointDetailsByCves = (details) => {
+  const groups = new Map();
+
+  details.forEach(detail => {
+    const signature = detail.cves.length > 0 ? detail.cves.join('|') : 'None';
+    if (!groups.has(signature)) {
+      groups.set(signature, {
+        cves: detail.cves,
+        cwes: new Set(),
+        endpoints: [],
+      });
+    }
+
+    asArray(detail.cwes).forEach(cwe => groups.get(signature).cwes.add(cwe));
+    groups.get(signature).endpoints.push(detail);
+  });
+
+  return Array.from(groups.values())
+    .map(group => ({
+      ...group,
+      cwes: sortStrings(group.cwes),
+      endpoints: group.endpoints.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })),
+    }))
+    .sort((a, b) => {
+      const firstA = a.endpoints[0]?.label || '';
+      const firstB = b.endpoints[0]?.label || '';
+      return firstA.localeCompare(firstB, undefined, { numeric: true });
+    });
+};
+
+export const sortSourceGroupsByTitleVersion = (groups = []) => (
+  groups.sort((a, b) => {
+    const versionA = extractTitleVersion(a.title);
+    const versionB = extractTitleVersion(b.title);
+    if (versionA && versionB) return compareVersions(versionB, versionA);
+    if (versionA) return -1;
+    if (versionB) return 1;
+    return cleanText(a.title).localeCompare(cleanText(b.title), undefined, { numeric: true });
+  })
+);
+
+export const finalizeEndpointDetails = (endpointDetailMap) => (
+  Array.from(endpointDetailMap.values())
+    .map(detail => ({
+      endpoint: detail.endpoint,
+      label: detail.label,
+      host: detail.host,
+      severity: detail.severity,
+      cves: sortStrings(detail.cves),
+      cwes: sortStrings(detail.cwes),
+      mitigations: sortStrings(detail.mitigations),
+      findingIds: sortFindingIds(detail.findingIds),
+    }))
+    .sort((a, b) => (
+      a.host.localeCompare(b.host, undefined, { numeric: true })
+      || a.label.localeCompare(b.label, undefined, { numeric: true })
+    ))
+);
+
+export const finalizeSourceGroups = (sourceGroupsMap) => (
+  sortSourceGroupsByTitleVersion(Array.from(sourceGroupsMap.values()).map(sourceGroup => {
+    const activeCount = sourceGroup.activeCount || 0;
+    const mitigatedCount = sourceGroup.mitigatedCount || 0;
+    return {
+      title: sourceGroup.title,
+      findingIds: sortFindingIds(sourceGroup.findingIds),
+      severity: sourceGroup.severity || 'Info',
+      cveIds: sortStrings(sourceGroup.cveIds),
+      cweIds: sortStrings(sourceGroup.cweIds),
+      endpointDetails: finalizeEndpointDetails(sourceGroup.endpointDetailMap),
+      descriptionSources: sortTextSources(sourceGroup.descriptionsMap),
+      impactSources: sortTextSources(sourceGroup.impactsMap),
+      mitigations: sortStrings(sourceGroup.mitigations),
+      activeCount,
+      mitigatedCount,
+      currentStatus: activeCount > 0 && mitigatedCount > 0
+        ? 'mixed'
+        : activeCount > 0
+          ? 'active'
+          : 'mitigated',
+    };
+  }))
+);
+
+export const getCompactFingerprint = (finding, route = getDefectDojoRoute(finding), config = {}) => {
+  const family = resolveCompactFamily(finding);
+  const cves = family.cves;
+  const cveSignature = cves.join(',');
+  const detailKey = getCompactionDetailKey(finding);
+  const productKey = route.projectId
+    || route.projectName
+    || config.pullFilters?.test__engagement__product
+    || '';
+  const engagementKey = route.engagementId
+    || route.engagementName
+    || config.pullFilters?.test__engagement
+    || '';
+
+  return {
+    cves,
+    cveSignature,
+    compactFamilyKey: family.familyKey,
+    compactFamilyTitle: family.familyTitle,
+    compactReason: family.reason,
+    softwareFamily: family.softwareFamily,
+    isSoftwareFamily: family.isSoftwareFamily,
+    groupKey: [
+      family.familyKey,
+      detailKey,
+      'route',
+      normalizeForGrouping(productKey),
+      normalizeForGrouping(engagementKey),
+    ].join('|'),
+  };
+};
+
+export const getLegacyFindingGroupKey = (finding, route = getDefectDojoRoute(finding), config = {}) => {
+  const productKey = route.projectId
+    || route.projectName
+    || config.pullFilters?.test__engagement__product
+    || '';
+  const engagementKey = route.engagementId
+    || route.engagementName
+    || config.pullFilters?.test__engagement
+    || '';
+
+  return [
+    getLegacyCompactGroupKey(finding),
+    'route',
+    normalizeForGrouping(productKey),
+    normalizeForGrouping(engagementKey),
+  ].join('|');
+};

@@ -1,0 +1,131 @@
+import { cleanText } from '../../shared/lib/dashboardUtils';
+import { firstCleanText } from './findingUtils';
+
+export const splitEndpointHostPort = (value) => {
+  const cleaned = cleanText(value).replace(/^[^@]+@/, '');
+  if (!cleaned) return {};
+
+  if (cleaned.startsWith('[')) {
+    const closeIndex = cleaned.indexOf(']');
+    if (closeIndex > 0) {
+      const host = cleaned.slice(1, closeIndex);
+      const portMatch = cleaned.slice(closeIndex + 1).match(/^:(\d+)/);
+      return { host, port: portMatch?.[1] || '' };
+    }
+  }
+
+  const portMatch = cleaned.match(/^(.+):(\d+)$/);
+  if (portMatch && !portMatch[1].includes(':')) {
+    return { host: portMatch[1], port: portMatch[2] };
+  }
+
+  return { host: cleaned, port: '' };
+};
+
+export const parseEndpointText = (value) => {
+  const text = cleanText(value);
+  if (!text || text.toLowerCase() === 'n/a') return {};
+
+  const labelledMatch = text.match(/^(?:URL|URI|Endpoint|Host|Hostname)\s*[:=]\s*(.+)$/i);
+  if (labelledMatch) return parseEndpointText(labelledMatch[1]);
+
+  const urlMatch = text.match(/\b([a-z][a-z0-9+.-]*):\/\/([^/\s?#]+)/i);
+  if (urlMatch) {
+    return {
+      protocol: urlMatch[1].toLowerCase(),
+      ...splitEndpointHostPort(urlMatch[2]),
+    };
+  }
+
+  const hostCandidate = text.split(/[/?#]/)[0];
+  const looksLikeHost = /^[^\s]+$/.test(hostCandidate)
+    && (
+      hostCandidate.includes('.')
+      || hostCandidate.includes(':')
+      || /^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostCandidate)
+      || hostCandidate.toLowerCase() === 'localhost'
+    );
+
+  return looksLikeHost ? splitEndpointHostPort(hostCandidate) : {};
+};
+
+export const getEndpointParts = (endpoint) => {
+  if (endpoint && typeof endpoint === 'object') {
+    const candidates = [
+      endpoint.url,
+      endpoint.uri,
+      endpoint.endpoint,
+      endpoint.display_name,
+      endpoint.name,
+      endpoint.target,
+      endpoint.address,
+      endpoint.netloc,
+      endpoint.host,
+      endpoint.hostname,
+      endpoint.fqdn,
+      endpoint.dns_name,
+      endpoint.ip_address,
+      endpoint.ip,
+    ];
+    const parsed = candidates.map(parseEndpointText).find(parts => parts.host) || {};
+    const explicitHost = firstCleanText(
+      endpoint.host,
+      endpoint.hostname,
+      endpoint.fqdn,
+      endpoint.dns_name,
+      endpoint.ip_address,
+      endpoint.ip
+    );
+    const parsedExplicitHost = parseEndpointText(explicitHost);
+
+    return {
+      protocol: firstCleanText(endpoint.protocol, parsed.protocol),
+      host: parsedExplicitHost.host || explicitHost || parsed.host || '',
+      port: firstCleanText(endpoint.port, parsedExplicitHost.port, parsed.port),
+    };
+  }
+
+  return parseEndpointText(endpoint);
+};
+
+export const endpointLabel = (endpoint) => {
+  const parts = getEndpointParts(endpoint);
+  if (parts.host) {
+    return `${parts.protocol ? `${parts.protocol}://` : ''}${parts.host}${parts.port ? `:${parts.port}` : ''}`;
+  }
+
+  if (endpoint && typeof endpoint === 'object') {
+    if (endpoint.id !== undefined) return `ID: ${endpoint.id}`;
+  }
+
+  return endpoint !== undefined && endpoint !== null ? `ID: ${endpoint}` : 'N/A';
+};
+
+export const endpointHost = (endpoint) => {
+  const parts = getEndpointParts(endpoint);
+  if (parts.host) return parts.host;
+  if (endpoint && typeof endpoint === 'object' && endpoint.id !== undefined) {
+    const idText = cleanText(endpoint.id);
+    return idText && idText.toLowerCase() !== 'n/a' ? `Endpoint ID ${idText}` : 'N/A';
+  }
+  if (endpoint !== undefined && endpoint !== null) {
+    const idText = cleanText(endpoint);
+    return idText && idText.toLowerCase() !== 'n/a' ? `Endpoint ID ${idText}` : 'N/A';
+  }
+  return 'Unknown host';
+};
+
+export const endpointKey = (endpoint) => {
+  const parts = getEndpointParts(endpoint);
+  if (endpoint && typeof endpoint === 'object') {
+    const values = [
+      parts.protocol,
+      parts.host,
+      parts.port,
+      endpoint.id !== undefined ? String(endpoint.id) : '',
+    ].filter(Boolean);
+    return values.length > 0 ? values.join('|') : endpointLabel(endpoint);
+  }
+
+  return parts.host ? endpointLabel(endpoint) : String(endpoint ?? 'N/A');
+};

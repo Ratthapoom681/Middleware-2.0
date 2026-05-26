@@ -1,0 +1,184 @@
+const express = require('express');
+
+const BANGKOK_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
+const padDatePart = (value) => String(value).padStart(2, '0');
+const formatBangkokTimestamp = (date = new Date()) => {
+    const bangkokDate = new Date(date.getTime() + BANGKOK_UTC_OFFSET_MS);
+    return [
+        `${bangkokDate.getUTCFullYear()}-${padDatePart(bangkokDate.getUTCMonth() + 1)}-${padDatePart(bangkokDate.getUTCDate())}`,
+        `T${padDatePart(bangkokDate.getUTCHours())}:${padDatePart(bangkokDate.getUTCMinutes())}:${padDatePart(bangkokDate.getUTCSeconds())}`
+    ].join(' ');
+};
+
+module.exports = function(ctx) {
+    const router = express.Router();
+
+    router.get('/mitigation-rechecks', async (req, res) => {
+        try {
+            if (!ctx.database.isEnabled()) return res.json([]);
+            const isAdmin = req.user.role === 'admin';
+            res.json(await ctx.database.listMitigationRechecks({
+                ...req.query,
+                allowedProducts: isAdmin ? undefined : ctx.getAllowedProductsForUser(req.user),
+                requireAllowedProducts: !isAdmin
+            }));
+        } catch (error) {
+            console.error('Error listing mitigation rechecks:', error);
+            res.status(500).json({
+                error: 'Failed to list mitigation rechecks',
+                details: error.message
+            });
+        }
+    });
+
+    router.get('/admin/mitigation-queue', ctx.requireAdmin, async (req, res) => {
+        try {
+            if (!ctx.database.isEnabled()) return res.json([]);
+            const queue = await ctx.database.listMitigationReviewQueue(req.query);
+            res.json(queue.map(ctx.enrichMitigationReviewItem));
+        } catch (error) {
+            console.error('Error listing mitigation review queue:', error);
+            res.status(500).json({
+                error: 'Failed to list mitigation review queue',
+                details: error.message
+            });
+        }
+    });
+
+    router.get('/admin/mitigation-actions', ctx.requireAdmin, async (req, res) => {
+        try {
+            if (!ctx.database.isEnabled()) return res.json([]);
+            res.json(await ctx.database.listAdminActionHistory(req.query));
+        } catch (error) {
+            console.error('Error listing mitigation review action history:', error);
+            res.status(500).json({
+                error: 'Failed to list mitigation review action history',
+                details: error.message
+            });
+        }
+    });
+
+    router.post('/admin/mitigation-queue/:reviewKey/actions', ctx.requireAdmin, async (req, res) => {
+        try {
+            if (!ctx.database.isEnabled()) {
+                return res.status(400).json({
+                    error: 'Mitigation review actions require PostgreSQL storage'
+                });
+            }
+            const action = ctx.cleanRouteValue(req.body?.action);
+            const reason = String(req.body?.reason || '');
+            const queue = (await ctx.database.listMitigationReviewQueue({})).map(ctx.enrichMitigationReviewItem);
+            const item = queue.find(review => review.reviewKey === req.params.reviewKey || Array.isArray(review.reviewKeys) && review.reviewKeys.includes(req.params.reviewKey));
+            if (!item) return res.status(404).json({
+                error: 'Review item not found'
+            });
+            const reviewKeys = Array.isArray(item.reviewKeys) && item.reviewKeys.length > 0 ? item.reviewKeys : [item.reviewKey];
+            const actor = req.user?.username || '';
+            const actorRole = req.user?.role || '';
+            let redmineCloseNote = '';
+            const config = ctx.getConfig();
+            if (action === 'close_redmine') {
+                const redmineUrl = String(config.redmineUrl || '').trim();
+                const apiKey = String(config.redmineApiKey || '').trim();
+                const baseUrl = redmineUrl.replace(/\/$/, '');
+                const statusIds = redmineUrl && apiKey ? await ctx.resolveRedmineStatusIds({
+                    baseUrl,
+                    apiKey,
+                    config
+                }) : {};
+                const closedStatusId = ctx.cleanRouteValue(statusIds.closed || config.redmineStatusClosedId);
+                if (!redmineUrl || !apiKey || !closedStatusId) {
+                    return res.status(400).json({
+                        error: 'Redmine URL, API key, and Closed status ID are required to close an issue'
+                    });
+                }
+                if (!item.issueId) {
+                    return res.status(400).json({
+                        error: 'This mitigation review item has no Redmine issue ID to close'
+                    });
+                }
+                const closedStatus = ctx.asArray(statusIds.statuses).find(status => ctx.cleanRouteValue(status.id) === closedStatusId);
+                if (closedStatus && closedStatus.is_closed === false && !ctx.isClosedStatus(closedStatus.name, closedStatus.id, {}, {})) {
+                    return res.status(400).json({
+                        error: `Configured Closed status ID ${closedStatusId} is "${closedStatus.name || 'unknown'}", but Redmine does not mark that status as closed. Update Settings > Redmine > Status IDs to use a real closed status.`
+                    });
+                }
+                const closedAt = formatBangkokTimestamp();
+                redmineCloseNote = [
+                    `Reviewed and closed by ${actor || 'unknown user'}${actorRole ? ` (${actorRole})` : ''} in DefectDojo Viewer.`,
+                    `Closed at: ${closedAt}`,
+                    reason ? `Reviewer note: ${reason}` : '',
+                ].filter(Boolean).join('\n');
+                const issueStatus = await ctx.updateRedmineIssueStatusAndConfirm({
+                    baseUrl,
+                    apiKey,
+                    issueId: item.issueId,
+                    statusId: closedStatusId,
+                    notes: redmineCloseNote,
+                    statusIds,
+                    expectedStatusLabel: `closed status ${closedStatus?.name || closedStatusId}`,
+                    matchesExpectedStatus: status => (
+                        ctx.cleanRouteValue(status.statusId) === closedStatusId
+                        && Boolean(status.isClosed)
+                        && ctx.isClosedStatus(status.status, status.statusId, statusIds, config)
+                    )
+                });
+                await ctx.updateClosedRedmineSyncRecordsForIssue({
+                    issueId: item.issueId,
+                    ticketKey: item.ticketKey,
+                    statusId: closedStatusId,
+                    statusName: closedStatus?.name || issueStatus.status || 'Closed',
+                    issueUrl: issueStatus.issueUrl || item.issueUrl || ctx.getRedmineIssueUrl(baseUrl, {
+                        id: item.issueId
+                    })
+                });
+            }
+            const results = [];
+            const groupedReviewSummary = {
+                reviewKey: item.reviewKey,
+                reviewKeys,
+                defectdojoFindingIds: Array.isArray(item.defectdojoFindingIds) ? item.defectdojoFindingIds : [],
+                findingCount: item.findingCount || (Array.isArray(item.defectdojoFindingIds) ? item.defectdojoFindingIds.length : reviewKeys.length),
+                cveIds: Array.isArray(item.cveIds) ? item.cveIds : [],
+                cveCount: item.cveCount || (Array.isArray(item.cveIds) ? item.cveIds.length : 0),
+                endpoints: Array.isArray(item.endpoints) ? item.endpoints : [],
+                endpointCount: Array.isArray(item.endpoints) ? item.endpoints.length : (item.endpoint ? 1 : 0),
+                title: item.compactedTitle || item.title || '',
+                titles: Array.isArray(item.titles) ? item.titles : [],
+                severity: item.severity || ''
+            };
+            for (let i = 0; i < reviewKeys.length; i += 1) {
+                const reviewKey = reviewKeys[i];
+                results.push(await ctx.database.applyMitigationReviewAction(reviewKey, {
+                    action,
+                    actor,
+                    actorRole,
+                    reason,
+                    recordHistory: i === 0,
+                    raw: {
+                        request: req.body || ({}),
+                        redmineCloseNote,
+                        groupedReviewKey: item.reviewKey,
+                        groupedReviewKeys: reviewKeys,
+                        groupedReviewSummary
+                    }
+                }));
+            }
+            ctx.broadcastDashboardSync('mitigation-review-updated');
+            res.json({
+                reviewKey: item.reviewKey,
+                reviewKeys,
+                action,
+                state: results[0]?.state || '',
+                updated: results.length
+            });
+        } catch (error) {
+            console.error('Error applying mitigation review action:', error);
+            res.status(error.status || 500).json({
+                error: error.message || 'Failed to apply mitigation review action'
+            });
+        }
+    });
+
+    return router;
+};

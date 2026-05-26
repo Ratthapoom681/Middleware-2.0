@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
-const { collectAutoCweIds } = require('./compaction.cjs');
+const { collectAutoCweIds } = require('../domain/compaction.cjs');
 
 const TABLES = {
     schemaMigrations: 'defectdojo_viewer_schema_migrations',
@@ -244,7 +244,7 @@ const splitSqlStatements = (sql) => (
 );
 
 const runMigrations = async () => {
-    const migrationsDir = path.join(__dirname, 'migrations');
+    const migrationsDir = path.join(__dirname, '..', 'migrations');
     if (!fs.existsSync(migrationsDir)) return;
 
     await pool.query(`
@@ -2464,6 +2464,7 @@ const applyMitigationReviewAction = async (reviewKey, {
     actor = '',
     actorRole = '',
     reason = '',
+    recordHistory = true,
     raw = {}
 } = {}) => {
     const nextStateByAction = {
@@ -2501,44 +2502,46 @@ const applyMitigationReviewAction = async (reviewKey, {
             WHERE review_key = $1
         `, [reviewKey, nextState, reason || '', actor || '']);
 
-        await client.query(`
-            INSERT INTO ${TABLES.adminActions} (
+        if (recordHistory) {
+            await client.query(`
+                INSERT INTO ${TABLES.adminActions} (
+                    action,
+                    review_key,
+                    ticket_key,
+                    issue_id,
+                    defectdojo_finding_id,
+                    product_key,
+                    product_id,
+                    product_name,
+                    engagement_key,
+                    engagement_id,
+                    engagement_name,
+                    cve_id,
+                    actor,
+                    actor_role,
+                    reason,
+                    raw
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
+            `, [
                 action,
-                review_key,
-                ticket_key,
-                issue_id,
-                defectdojo_finding_id,
-                product_key,
-                product_id,
-                product_name,
-                engagement_key,
-                engagement_id,
-                engagement_name,
-                cve_id,
-                actor,
-                actor_role,
-                reason,
-                raw
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
-        `, [
-            action,
-            review.review_key,
-            review.ticket_key,
-            review.issue_id,
-            review.defectdojo_finding_id,
-            review.product_key,
-            review.product_id,
-            review.product_name,
-            review.engagement_key,
-            review.engagement_id,
-            review.engagement_name,
-            review.cve_id,
-            actor || '',
-            actorRole || '',
-            reason || '',
-            JSON.stringify(raw)
-        ]);
+                review.review_key,
+                review.ticket_key,
+                review.issue_id,
+                review.defectdojo_finding_id,
+                review.product_key,
+                review.product_id,
+                review.product_name,
+                review.engagement_key,
+                review.engagement_id,
+                review.engagement_name,
+                review.cve_id,
+                actor || '',
+                actorRole || '',
+                reason || '',
+                JSON.stringify(raw)
+            ]);
+        }
 
         return {
             reviewKey,
@@ -2546,6 +2549,57 @@ const applyMitigationReviewAction = async (reviewKey, {
             state: nextState
         };
     });
+};
+
+const getGroupedActionKey = (row = {}, raw = {}) => {
+    const summary = normalizeObject(raw.groupedReviewSummary);
+    const groupedKey = normalizeText(summary.reviewKey || raw.groupedReviewKey);
+    if (groupedKey) {
+        return [
+            row.action,
+            groupedKey,
+            normalizeText(row.actor),
+            normalizeText(row.actor_role),
+            normalizeText(row.reason)
+        ].join('|');
+    }
+
+    const groupedReviewKeys = normalizeTextArray(raw.groupedReviewKeys);
+    if (groupedReviewKeys.length > 0) {
+        return [
+            row.action,
+            groupedReviewKeys.sort().join(','),
+            normalizeText(row.actor),
+            normalizeText(row.actor_role),
+            normalizeText(row.reason)
+        ].join('|');
+    }
+
+    return `action:${row.id}`;
+};
+
+const getGroupedActionCounts = (group) => {
+    const summary = normalizeObject(group.raw.groupedReviewSummary);
+    const summaryEndpoints = normalizeTextArray(summary.endpoints);
+    const summaryCves = normalizeTextArray(summary.cveIds);
+    const summaryFindings = normalizeTextArray(summary.defectdojoFindingIds);
+
+    const endpoints = summaryEndpoints.length > 0 ? summaryEndpoints : sortStrings(Array.from(group.endpoints));
+    const cveIds = summaryCves.length > 0 ? summaryCves : sortStrings(Array.from(group.cveIds));
+    const defectdojoFindingIds = summaryFindings.length > 0 ? summaryFindings : sortFindingIds(Array.from(group.defectdojoFindingIds)).map(String);
+
+    const endpointCount = Number.parseInt(summary.endpointCount, 10) || endpoints.length;
+    const cveCount = Number.parseInt(summary.cveCount, 10) || cveIds.length;
+    const findingCount = Number.parseInt(summary.findingCount, 10) || defectdojoFindingIds.length;
+
+    return {
+        endpoints,
+        endpointCount,
+        cveIds,
+        cveCount,
+        defectdojoFindingIds,
+        findingCount
+    };
 };
 
 const listAdminActionHistory = async ({
@@ -2604,29 +2658,62 @@ const listAdminActionHistory = async ({
         LIMIT $${index}
     `, params);
 
-    return rows.map(row => ({
-        id: row.id,
-        action: row.action,
-        reviewKey: row.review_key,
-        ticketKey: row.ticket_key,
-        issueId: row.issue_id,
-        defectdojoFindingId: row.defectdojo_finding_id,
-        productId: row.product_id,
-        productName: row.product_name,
-        engagementId: row.engagement_id,
-        engagementName: row.engagement_name,
-        cveId: row.cve_id,
-        actor: row.actor,
-        actorRole: row.actor_role,
-        reason: row.reason,
-        title: row.title,
-        endpoint: row.endpoint,
-        severity: row.severity,
-        redmineStatusName: row.redmine_status_name,
-        mitigationConfirmedAt: toIsoString(row.mitigation_confirmed_at),
-        raw: parseJsonValue(row.raw, {}),
-        createdAt: toIsoString(row.created_at)
-    }));
+    const groups = new Map();
+    rows.forEach(row => {
+        const raw = parseJsonValue(row.raw, {});
+        const groupKey = getGroupedActionKey(row, raw);
+        if (!groups.has(groupKey)) {
+            groups.set(groupKey, {
+                row,
+                raw,
+                endpoints: new Set(),
+                cveIds: new Set(),
+                defectdojoFindingIds: new Set()
+            });
+        }
+
+        const group = groups.get(groupKey);
+        if (normalizeText(row.endpoint)) group.endpoints.add(row.endpoint);
+        if (normalizeText(row.cve_id)) group.cveIds.add(row.cve_id);
+        if (normalizeText(row.defectdojo_finding_id)) group.defectdojoFindingIds.add(row.defectdojo_finding_id);
+    });
+
+    return Array.from(groups.values()).map(group => {
+        const row = group.row;
+        const counts = getGroupedActionCounts(group);
+        const summary = normalizeObject(group.raw.groupedReviewSummary);
+
+        return {
+            id: row.id,
+            action: row.action,
+            reviewKey: row.review_key,
+            reviewKeys: normalizeTextArray(summary.reviewKeys || group.raw.groupedReviewKeys),
+            ticketKey: row.ticket_key,
+            issueId: row.issue_id,
+            defectdojoFindingId: row.defectdojo_finding_id,
+            defectdojoFindingIds: counts.defectdojoFindingIds,
+            findingCount: counts.findingCount,
+            productId: row.product_id,
+            productName: row.product_name,
+            engagementId: row.engagement_id,
+            engagementName: row.engagement_name,
+            cveId: counts.cveIds.join(', '),
+            cveIds: counts.cveIds,
+            cveCount: counts.cveCount,
+            actor: row.actor,
+            actorRole: row.actor_role,
+            reason: row.reason,
+            title: summary.title || row.title,
+            endpoint: counts.endpoints.length > 1 ? `${counts.endpoints.length} endpoints` : counts.endpoints[0] || row.endpoint,
+            endpoints: counts.endpoints,
+            endpointCount: counts.endpointCount,
+            severity: summary.severity || row.severity,
+            redmineStatusName: row.redmine_status_name,
+            mitigationConfirmedAt: toIsoString(row.mitigation_confirmed_at),
+            raw: group.raw,
+            createdAt: toIsoString(row.created_at)
+        };
+    });
 };
 
 module.exports = {

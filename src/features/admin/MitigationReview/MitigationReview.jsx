@@ -1,15 +1,70 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, ExternalLink, History, Info, RefreshCw, Search, XCircle } from 'lucide-react';
-import { apiFetch } from '../../services/api';
+import { apiFetch } from '../../../shared/api/api';
+import './MitigationReview.css';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
 
 const formatDate = (value) => (value ? new Date(value).toLocaleString() : 'Not recorded');
 
-const formatSourceCountLabel = (item) => {
-  const count = Number.parseInt(item.findingCount, 10) || (Array.isArray(item.defectdojoFindingIds) ? item.defectdojoFindingIds.length : 0);
-  if (count > 1) return `${count} source findings`;
-  return '1 source finding';
+const pluralizeCount = (count, singular, plural = `${singular}s`) => `${count} ${count === 1 ? singular : plural}`;
+
+const getReviewFindingCount = (item = {}) => (
+  Number.parseInt(item.findingCount, 10)
+  || (Array.isArray(item.defectdojoFindingIds) ? item.defectdojoFindingIds.length : 0)
+  || (item.defectdojoFindingId ? 1 : 0)
+  || 1
+);
+
+const getReviewEndpointCount = (item = {}) => {
+  if (Array.isArray(item.endpoints) && item.endpoints.length > 0) return item.endpoints.length;
+  const endpointText = String(item.endpoint || '').trim();
+  const endpointTextCount = endpointText.match(/^(\d+)\s+endpoints?/i);
+  if (endpointTextCount) return Number.parseInt(endpointTextCount[1], 10) || 0;
+  return endpointText ? 1 : 0;
+};
+
+const getReviewCveCount = (item = {}) => (
+  Number.parseInt(item.cveCount, 10)
+  || toList(item.cveIds || item.cveId).length
+);
+
+const formatReviewScopePrimary = (item) => {
+  const findingCount = getReviewFindingCount(item);
+  const endpointCount = getReviewEndpointCount(item);
+  const endpointLabel = endpointCount > 0 ? pluralizeCount(endpointCount, 'endpoint') : 'No endpoints';
+  return `${pluralizeCount(findingCount, 'finding')} · ${endpointLabel}`;
+};
+
+const formatReviewScopeSecondary = (item) => {
+  const cveCount = getReviewCveCount(item);
+  const cveLabel = cveCount > 0 ? pluralizeCount(cveCount, 'CVE') : 'No CVE';
+  return `${cveLabel} · ${item.severity || 'Info'} severity`;
+};
+
+const getHistoryEndpointCount = (item = {}) => {
+  if (Number.isFinite(Number(item.endpointCount)) && Number(item.endpointCount) > 0) return Number(item.endpointCount);
+  if (Array.isArray(item.endpoints) && item.endpoints.length > 0) return item.endpoints.length;
+  const endpointText = String(item.endpoint || '').trim();
+  const endpointTextCount = endpointText.match(/^(\d+)\s+endpoints?/i);
+  if (endpointTextCount) return Number.parseInt(endpointTextCount[1], 10) || 0;
+  return endpointText && endpointText !== 'Not recorded' ? 1 : 0;
+};
+
+const getHistoryCveCount = (item = {}) => {
+  if (Number.isFinite(Number(item.cveCount)) && Number(item.cveCount) > 0) return Number(item.cveCount);
+  if (Array.isArray(item.cveIds) && item.cveIds.length > 0) return item.cveIds.length;
+  return toList(item.cveId).filter(cve => cve.toLowerCase() !== 'none').length;
+};
+
+const formatHistoryEndpointCount = (item) => {
+  const count = getHistoryEndpointCount(item);
+  return count > 0 ? pluralizeCount(count, 'endpoint') : 'No endpoints';
+};
+
+const formatHistoryCveCount = (item) => {
+  const count = getHistoryCveCount(item);
+  return count > 0 ? pluralizeCount(count, 'CVE') : 'No CVE';
 };
 
 const normalizeBaseUrl = (value = '') => (
@@ -59,6 +114,9 @@ const getHistorySearchText = (item = {}) => [
   item.cveId,
   item.defectdojoFindingId,
   item.reason,
+  ...toList(item.cveIds),
+  ...toList(item.defectdojoFindingIds),
+  ...toList(item.endpoints),
 ].join(' ').toLowerCase();
 
 const getActionLabel = (action = '') => {
@@ -77,7 +135,7 @@ const getActionBadgeClass = (action = '') => {
 const getSortValue = (item, key) => {
   if (key === 'product') return `${item.productName || item.productId || ''} ${item.engagementName || item.engagementId || ''}`.toLowerCase();
   if (key === 'finding') return `${item.compactedTitle || item.title || ''}`.toLowerCase();
-  if (key === 'endpoint') return `${item.endpoint || ''}`.toLowerCase();
+  if (key === 'scope') return getReviewFindingCount(item);
   if (key === 'redmine') return Number.parseInt(item.issueId, 10) || 0;
   if (key === 'mitigated') return item.mitigationConfirmedAt ? new Date(item.mitigationConfirmedAt).getTime() : 0;
   return '';
@@ -98,7 +156,7 @@ const getActionCopy = ({ action, count = 1, item }) => {
       message: isBulk
         ? 'This will close the selected Redmine issues and mark their grouped mitigation reviews as closed.'
         : 'This will close the Redmine issue and mark every grouped mitigation review as closed.',
-      confirmLabel: isBulk ? 'Close Selected' : 'Review & Close',
+      confirmLabel: isBulk ? 'Review & Close' : 'Review & Close',
       confirmClass: 'btn-primary',
     };
   }
@@ -164,6 +222,7 @@ const MitigationReview = ({ onBack, config = {} }) => {
   const [historyItems, setHistoryItems] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historySearchTerm, setHistorySearchTerm] = useState('');
+  const [actionReason, setActionReason] = useState('');
 
   const fetchQueue = async () => {
     setLoading(true);
@@ -237,10 +296,10 @@ const MitigationReview = ({ onBack, config = {} }) => {
   const somePageSelected = selectedPageCount > 0 && !allPageSelected;
   const isBusy = Boolean(busyKey);
 
-  const applyAction = async (item, action) => {
+  const applyAction = async (item, action, reason = '') => {
     const res = await apiFetch(`/admin/mitigation-queue/${encodeURIComponent(item.reviewKey)}/actions`, {
       method: 'POST',
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ action, reason }),
     });
 
     if (!res.ok) {
@@ -251,10 +310,10 @@ const MitigationReview = ({ onBack, config = {} }) => {
     return { ok: true };
   };
 
-  const runSingleAction = async (item, action) => {
+  const runSingleAction = async (item, action, reason = '') => {
     setBusyKey(item.reviewKey);
     try {
-      const result = await applyAction(item, action);
+      const result = await applyAction(item, action, reason);
       if (!result.ok) {
         alert(result.error);
         return;
@@ -274,14 +333,14 @@ const MitigationReview = ({ onBack, config = {} }) => {
     }
   };
 
-  const runBulkAction = async (bulkItems, action) => {
+  const runBulkAction = async (bulkItems, action, reason = '') => {
     setBusyKey('bulk');
     const completedKeys = new Set();
     const failures = [];
 
     try {
       for (const item of bulkItems) {
-        const result = await applyAction(item, action);
+        const result = await applyAction(item, action, reason);
         if (result.ok) {
           completedKeys.add(item.reviewKey);
         } else {
@@ -305,6 +364,7 @@ const MitigationReview = ({ onBack, config = {} }) => {
   };
 
   const requestConfirmation = (item, action) => {
+    setActionReason('');
     setPendingAction({
       type: 'single',
       item,
@@ -316,6 +376,7 @@ const MitigationReview = ({ onBack, config = {} }) => {
 
   const requestBulkConfirmation = (action) => {
     if (selectedItems.length === 0) return;
+    setActionReason('');
     setPendingAction({
       type: 'bulk',
       items: selectedItems,
@@ -329,14 +390,21 @@ const MitigationReview = ({ onBack, config = {} }) => {
     const action = pendingAction.action;
     const actionItems = pendingAction.items;
     const type = pendingAction.type;
+    const reason = actionReason.trim();
     setPendingAction(null);
+    setActionReason('');
 
     if (type === 'bulk') {
-      await runBulkAction(actionItems, action);
+      await runBulkAction(actionItems, action, reason);
       return;
     }
 
-    await runSingleAction(actionItems[0], action);
+    await runSingleAction(actionItems[0], action, reason);
+  };
+
+  const cancelPendingAction = () => {
+    setPendingAction(null);
+    setActionReason('');
   };
 
   const toggleSort = (key) => {
@@ -477,8 +545,8 @@ const MitigationReview = ({ onBack, config = {} }) => {
                     <span><strong>When</strong>{formatDate(item.createdAt)}</span>
                     <span><strong>Product</strong>{item.productName || item.productId || 'Unknown'}</span>
                     <span><strong>Engagement</strong>{item.engagementName || item.engagementId || 'Unknown'}</span>
-                    <span><strong>Endpoint</strong>{item.endpoint || 'Not recorded'}</span>
-                    <span><strong>CVE</strong>{item.cveId || 'None'}</span>
+                    <span><strong>Endpoints</strong>{formatHistoryEndpointCount(item)}</span>
+                    <span><strong>CVEs</strong>{formatHistoryCveCount(item)}</span>
                   </div>
                   {item.reason && <p className="review-history-reason">{item.reason}</p>}
                 </article>
@@ -496,16 +564,13 @@ const MitigationReview = ({ onBack, config = {} }) => {
               type="search"
               value={searchTerm}
               onChange={(event) => updateSearchTerm(event.target.value)}
-              placeholder="Search product, Redmine ID, endpoint, CVE..."
+              placeholder="Search issue, finding, product, CVE..."
             />
           </label>
           <div className="review-bulk-actions">
             <span>{selectedKeys.size} selected</span>
             <button type="button" className="btn-primary" disabled={selectedKeys.size === 0 || isBusy} onClick={() => requestBulkConfirmation('close_redmine')}>
-              Close Selected
-            </button>
-            <button type="button" className="btn-danger" disabled={selectedKeys.size === 0 || isBusy} onClick={() => requestBulkConfirmation('ignore')}>
-              Ignore Selected
+              Review & Close
             </button>
           </div>
         </div>
@@ -539,10 +604,10 @@ const MitigationReview = ({ onBack, config = {} }) => {
                       aria-label="Select visible mitigation reviews"
                     />
                   </th>
+                  <th><SortableHeader sortKey="redmine" sortConfig={sortConfig} onSort={toggleSort}>Issue</SortableHeader></th>
+                  <th><SortableHeader sortKey="finding" sortConfig={sortConfig} onSort={toggleSort}>Finding</SortableHeader></th>
+                  <th><SortableHeader sortKey="scope" sortConfig={sortConfig} onSort={toggleSort}>Scope</SortableHeader></th>
                   <th><SortableHeader sortKey="product" sortConfig={sortConfig} onSort={toggleSort}>Product</SortableHeader></th>
-                  <th><SortableHeader sortKey="finding" sortConfig={sortConfig} onSort={toggleSort}>Compacted Finding</SortableHeader></th>
-                  <th><SortableHeader sortKey="endpoint" sortConfig={sortConfig} onSort={toggleSort}>Endpoint</SortableHeader></th>
-                  <th><SortableHeader sortKey="redmine" sortConfig={sortConfig} onSort={toggleSort}>Redmine</SortableHeader></th>
                   <th><SortableHeader sortKey="mitigated" sortConfig={sortConfig} onSort={toggleSort}>Mitigated</SortableHeader></th>
                   <th>Actions</th>
                 </tr>
@@ -561,7 +626,26 @@ const MitigationReview = ({ onBack, config = {} }) => {
                           aria-label={`Select ${item.compactedTitle || item.title || item.issueId || 'review item'}`}
                         />
                       </td>
-                      <td>
+                      <td className="review-issue-cell">
+                        <strong>
+                          <ExternalAnchor href={redmineIssueUrl(item)}>
+                            #{item.issueId || 'Unknown'}
+                          </ExternalAnchor>
+                        </strong>
+                        <span>{item.redmineStatusName || 'Resolved'}</span>
+                      </td>
+                      <td className="review-finding-cell">
+                        <strong>
+                          <ExternalAnchor href={redmineIssueUrl(item)}>
+                            {item.compactedTitle || item.title || 'Compacted finding'}
+                          </ExternalAnchor>
+                        </strong>
+                      </td>
+                      <td className="review-scope-cell">
+                        <strong>{formatReviewScopePrimary(item)}</strong>
+                        <span>{formatReviewScopeSecondary(item)}</span>
+                      </td>
+                      <td className="review-product-cell">
                         <div className="review-cell-stack">
                           <strong>
                             <ExternalAnchor href={productUrl(item)}>
@@ -575,31 +659,11 @@ const MitigationReview = ({ onBack, config = {} }) => {
                           </span>
                         </div>
                       </td>
-                      <td>
-                        <strong>
-                          <ExternalAnchor href={redmineIssueUrl(item)}>
-                            {item.compactedTitle || item.title || 'Compacted finding'}
-                          </ExternalAnchor>
-                        </strong>
-                        <span>{formatSourceCountLabel(item)} · {item.severity || 'Info'}</span>
-                      </td>
-                      <td>{item.endpoint || 'Unknown'}</td>
-                      <td>
-                        <strong>
-                          <ExternalAnchor href={redmineIssueUrl(item)}>
-                            #{item.issueId || 'Unknown'}
-                          </ExternalAnchor>
-                        </strong>
-                        <span>{item.redmineStatusName || 'Resolve'}</span>
-                      </td>
                       <td>{formatDate(item.mitigationConfirmedAt)}</td>
                       <td>
                         <div className="row-actions">
                           <button type="button" className="btn-primary" disabled={busyKey === item.reviewKey || busyKey === 'bulk'} onClick={() => requestConfirmation(item, 'close_redmine')}>
                             Review & Close
-                          </button>
-                          <button type="button" className="icon-btn danger-icon" disabled={busyKey === item.reviewKey || busyKey === 'bulk'} onClick={() => requestConfirmation(item, 'ignore')} aria-label="Ignore review">
-                            <XCircle size={16} />
                           </button>
                         </div>
                       </td>
@@ -636,7 +700,7 @@ const MitigationReview = ({ onBack, config = {} }) => {
                   <Info size={18} />
                   {pendingAction.title}
                 </h2>
-                <button type="button" className="icon-btn" onClick={() => setPendingAction(null)} aria-label="Cancel review action">
+                <button type="button" className="icon-btn" onClick={cancelPendingAction} aria-label="Cancel review action">
                   <XCircle size={16} />
                 </button>
               </div>
@@ -652,8 +716,18 @@ const MitigationReview = ({ onBack, config = {} }) => {
                 </>
               )}
             </div>
+            <label className="review-reason-field">
+              <span>Reviewer note</span>
+              <textarea
+                value={actionReason}
+                onChange={(event) => setActionReason(event.target.value)}
+                rows={4}
+                maxLength={1000}
+                placeholder="Add context for the Redmine note and review history"
+              />
+            </label>
             <div className="modal-actions">
-              <button type="button" className="btn-secondary" onClick={() => setPendingAction(null)}>Cancel</button>
+              <button type="button" className="btn-secondary" onClick={cancelPendingAction}>Cancel</button>
               <button type="button" className={pendingAction.confirmClass} onClick={confirmPendingAction} disabled={isBusy}>
                 {pendingAction.confirmLabel}
               </button>

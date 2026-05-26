@@ -1,0 +1,520 @@
+import { cleanText } from '../../shared/lib/dashboardUtils';
+
+export const PULL_SEVERITY_OPTIONS = ['Critical', 'High', 'Medium', 'Low', 'Info'];
+export const DEFAULT_REDMINE_STATUS_POLL_SECONDS = 60;
+export const MITIGATION_TOAST_DURATION_MS = 10000;
+export const DEFAULT_REDMINE_SYNC_STATUS = {
+  enabled: false,
+  configured: false,
+  intervalSeconds: DEFAULT_REDMINE_STATUS_POLL_SECONDS,
+  running: false,
+  discoveryMode: false,
+  lastStartedAt: null,
+  lastFinishedAt: null,
+  nextRunAt: null,
+  lastError: '',
+  checkedCount: 0,
+  changedCount: 0,
+  redmineMetadataRequests: 0,
+  redmineIssueRequests: 0,
+  redmineProjectIssueRequests: 0,
+  redmineNotFoundCount: 0,
+  redmineErrorCount: 0,
+  syncRecords: 0,
+};
+
+export const REDMINE_PRIORITY_FIELD_BY_SEVERITY = {
+  Critical: 'redminePriorityCriticalId',
+  High: 'redminePriorityHighId',
+  Medium: 'redminePriorityMediumId',
+  Low: 'redminePriorityLowId',
+  Info: 'redminePriorityInfoId',
+  Informational: 'redminePriorityInfoId',
+  None: 'redminePriorityInfoId',
+};
+
+
+export const DEFAULT_PULL_FILTERS = {
+  severity: [],
+  active: '',
+  verified: '',
+  is_mitigated: '',
+  test__engagement__product: '',
+  test__engagement: '',
+};
+
+export const createDefaultConfig = () => ({
+  scanPath: '',
+  defectDojoUrl: '',
+  defectDojoApiKey: '',
+  redmineUrl: '',
+  redmineApiKey: '',
+  redmineProjectId: '',
+  redmineTrackerId: '',
+  redminePriorityId: '',
+  redminePriorityCriticalId: '',
+  redminePriorityHighId: '',
+  redminePriorityMediumId: '',
+  redminePriorityLowId: '',
+  redminePriorityInfoId: '',
+  redmineStatusNewId: '',
+  redmineStatusFeedbackId: '',
+  redmineStatusInProgressId: '',
+  redmineStatusResolveId: '',
+  redmineStatusClosedId: '',
+  redmineStatusPollIntervalSeconds: DEFAULT_REDMINE_STATUS_POLL_SECONDS,
+  pullFilters: { ...DEFAULT_PULL_FILTERS },
+});
+
+export const normalizeSeverityFilterValue = (severity) => {
+  const values = Array.isArray(severity)
+    ? severity
+    : String(severity || '').split(',');
+
+  return Array.from(new Set(values
+    .map(item => String(item || '').trim())
+    .filter(Boolean)
+    .map(item => PULL_SEVERITY_OPTIONS.find(sev => sev.toLowerCase() === item.toLowerCase()))
+    .filter(Boolean)));
+};
+
+export const normalizeConfig = (data = {}) => {
+  const pullFilters = {
+    ...DEFAULT_PULL_FILTERS,
+    ...(data.pullFilters || {}),
+  };
+
+  const pollInterval = Number.parseInt(data.redmineStatusPollIntervalSeconds, 10);
+
+  return {
+    ...createDefaultConfig(),
+    ...data,
+    redmineStatusPollIntervalSeconds: Number.isInteger(pollInterval) && pollInterval > 0
+      ? Math.max(DEFAULT_REDMINE_STATUS_POLL_SECONDS, pollInterval)
+      : pollInterval === 0 ? 0 : DEFAULT_REDMINE_STATUS_POLL_SECONDS,
+    pullFilters: {
+      ...pullFilters,
+      severity: normalizeSeverityFilterValue(pullFilters.severity),
+    },
+  };
+};
+
+export const createPullFiltersDraft = (filters = {}) => ({
+  ...DEFAULT_PULL_FILTERS,
+  ...filters,
+  severity: normalizeSeverityFilterValue(filters.severity),
+});
+
+export const FINDING_DATE_FIELDS = [
+  'date',
+  'last_seen_at',
+  'lastSeenAt',
+  'last_seen',
+  'lastSeen',
+  'found_date',
+  'foundDate',
+  'created',
+  'created_at',
+  'createdAt',
+  'updated',
+  'updated_at',
+  'updatedAt',
+];
+
+export const parseFindingDateTimestamp = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return 0;
+  const timestamp = Date.parse(text);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+};
+
+export const formatFindingDateLabel = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const timestamp = parseFindingDateTimestamp(text);
+  if (!timestamp) return text;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  return new Date(timestamp).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+};
+
+export const getFindingDateCandidate = (finding = {}) => {
+  for (const field of FINDING_DATE_FIELDS) {
+    const value = finding[field];
+    const timestamp = parseFindingDateTimestamp(value);
+    if (timestamp) {
+      return {
+        value,
+        label: formatFindingDateLabel(value),
+        timestamp,
+      };
+    }
+  }
+  return null;
+};
+
+export const formatSyncTimestamp = (value) => (
+  value ? new Date(value).toLocaleString() : 'Not yet'
+);
+
+export const formatTimeoutSeconds = (timeoutMs) => Math.round(timeoutMs / 1000);
+
+export const formatDuration = (milliseconds = 0) => {
+  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+};
+
+export const getSyncProgressMetrics = (progress = {}, now = Date.now()) => {
+  const startedAt = progress.startedAt || now;
+  const elapsedMs = Math.max(0, now - startedAt);
+  const hasActualTotal = Number(progress.total) > 0;
+  const actualPercent = hasActualTotal
+    ? Math.min(100, Math.round((Number(progress.current || 0) / Number(progress.total)) * 100))
+    : 0;
+  const percent = progress.phase === 'Complete'
+    ? 100
+    : hasActualTotal ? actualPercent : 0;
+  const averageItemMs = hasActualTotal && Number(progress.current) > 0
+    ? elapsedMs / Number(progress.current)
+    : 0;
+  const canEstimateRemaining = progress.phase === 'Complete' || (hasActualTotal && Number(progress.current) > 0);
+  const remainingItems = hasActualTotal
+    ? Math.max(0, Number(progress.total) - Number(progress.current || 0))
+    : 0;
+  const remainingMs = progress.phase === 'Complete' ? 0 : averageItemMs * remainingItems;
+
+  return {
+    elapsed: formatDuration(elapsedMs),
+    remaining: hasActualTotal && canEstimateRemaining
+      ? (remainingMs > 0 ? formatDuration(remainingMs) : 'almost done')
+      : hasActualTotal ? 'calculating' : 'waiting for totals',
+    percent,
+    hasActualTotal,
+  };
+};
+
+export const buildSyncAllSummary = (data = {}) => ([
+  {
+    title: 'DefectDojo Pull',
+    items: [
+      ['Findings pulled', data.pull?.count || 0],
+      ['Findings updated', (data.pull?.updated || 0) + (data.pull?.staleActiveUpdated || 0)],
+      ['Still active', data.pull?.stillActive || data.pull?.active || 0],
+    ],
+  },
+  {
+    title: 'Redmine Tickets',
+    items: [
+      ['Checked', data.redmine?.checked || 0],
+      ['Updated', data.redmine?.changed || 0],
+      ['Priority updated', data.redmine?.priorityUpdated || 0],
+      ['Created/updated', data.redmine?.createdOrUpdated || 0],
+      ['Failed', data.redmine?.failed || 0],
+    ],
+  },
+  {
+    title: 'Mitigation Review',
+    items: [
+      ['Feedback attempted', data.mitigationRecheck?.attemptedFeedback || 0],
+      ['Reopened from Resolve', data.mitigationRecheck?.reopened || 0],
+      ['Queued for review', data.mitigationRecheck?.reviewQueued || 0],
+      ['Skipped no linked findings', data.mitigationRecheck?.skippedNoLinkedFindings || 0],
+      ['Skipped no active findings', data.mitigationRecheck?.skippedNoActiveLinkedFindings || 0],
+    ],
+  },
+]);
+
+export const runWithTimeout = async (task, timeoutMs, timeoutMessage) => {
+  if (!timeoutMs || timeoutMs <= 0) return task();
+
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await task(controller.signal);
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new Error(timeoutMessage || `Request timed out after ${formatTimeoutSeconds(timeoutMs)} seconds`, { cause: err });
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+};
+
+export const normalizeFetchedFindings = (data) => {
+  if (!Array.isArray(data)) return null;
+
+  return data.map(finding => {
+    const fixedFinding = { ...finding };
+
+    if (Array.isArray(fixedFinding.endpoints) && fixedFinding.endpoints.some(ep => typeof ep !== 'object')) {
+      const combinedText = `${fixedFinding.title || ''} ${fixedFinding.description || ''} ${fixedFinding.impact || ''} ${fixedFinding.mitigation || ''}`;
+      const urlMatches = combinedText.match(/([a-z0-9]+):\/\/([^/\s?#]+)/gi) || [];
+
+      if (urlMatches.length > 0) {
+        const fullUrl = urlMatches[0];
+        const protocolMatch = fullUrl.match(/^([a-z0-9]+):\/\//i);
+        const protocol = protocolMatch ? protocolMatch[1].toLowerCase() : null;
+        const hostPort = fullUrl.replace(/^[a-z0-9]+:\/\//i, '').replace(/\/$/, '');
+        const [host, port] = hostPort.split(':');
+        const finalPort = port || (protocol === 'https' ? '443' : (protocol === 'http' ? '80' : null));
+
+        fixedFinding.endpoints = fixedFinding.endpoints.map(endpoint => {
+          if (typeof endpoint !== 'object') {
+            return {
+              id: endpoint,
+              host: host.trim(),
+              port: finalPort,
+              protocol,
+              is_fallback: true
+            };
+          }
+          return endpoint;
+        });
+      } else {
+        const ipMatches = combinedText.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) || [];
+        if (ipMatches.length > 0) {
+          fixedFinding.endpoints = fixedFinding.endpoints.map(endpoint => {
+            if (typeof endpoint !== 'object') {
+              return { id: endpoint, host: ipMatches[0], is_fallback: true };
+            }
+            return endpoint;
+          });
+        }
+      }
+    }
+
+    return fixedFinding;
+  });
+};
+
+export const UPGRADE_TARGET_RE = /upgrade\s+to\s+(.+?)\s+(?:version\s+)?([0-9][0-9a-z.-]*)\s*(?:or\s+later)?\.?/i;
+export const TITLE_VERSION_RE = /^(.+?)\s+.*?(?:<|version)\s+([0-9][0-9a-z.-]*)/i;
+export const LESS_THAN_VERSION_RE = /<\s*([0-9][0-9a-z.-]*)/i;
+
+export const cleanBlockText = (value) => (
+  String(value || '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(line => line.trimEnd())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+);
+
+export const DEFECTDOJO_EVIDENCE_LINE_RE = /^(?:URL|URI|Endpoint|Host|Hostname|Port|Protocol|Path|Service|Installed version|Detected version|Current version|Fixed version|Affected version)\s*:/i;
+
+export const compactDefectDojoText = (value) => {
+  const text = cleanBlockText(value);
+  if (!text) return '';
+
+  return cleanBlockText(
+    text
+      .split('\n')
+      .filter(line => !DEFECTDOJO_EVIDENCE_LINE_RE.test(line.trim()))
+      .join('\n')
+      .replace(/\busing the following request\s*:\s*https?:\/\/\S+/i, 'using a request to the affected endpoint')
+      .replace(/\s*This produced the following truncated output[\s\S]*$/i, '\n\nEvidence output omitted. See DefectDojo finding for raw truncated output.')
+  );
+};
+
+export const cleanSoftwareName = (value) => (
+  cleanText(value)
+    .replace(/[.:;,-]+$/g, '')
+    .trim()
+);
+
+export const parseUpgradeText = (value) => {
+  const upgradeMatch = cleanText(value).match(UPGRADE_TARGET_RE);
+  if (!upgradeMatch) return null;
+
+  const software = cleanSoftwareName(upgradeMatch[1]);
+  const parsedVersion = upgradeMatch[2].replace(/\.$/, '');
+  return {
+    software,
+    version: parsedVersion,
+    title: `Upgrade to ${software} version ${parsedVersion} or later.`,
+  };
+};
+
+export const normalizeForGrouping = (value) => (
+  cleanText(value)
+    .toLowerCase()
+    .replace(UPGRADE_TARGET_RE, (_match, software) => `upgrade to ${cleanSoftwareName(software).toLowerCase()} version <version> or later`)
+    .replace(/\bversion\s+[0-9][0-9a-z.-]*/gi, 'version <version>')
+);
+
+export const tokenizeVersion = (value) => (
+  String(value || '0')
+    .split(/[._+-]/)
+    .map(part => {
+      const numeric = Number.parseInt(part, 10);
+      return Number.isNaN(numeric) ? part.toLowerCase() : numeric;
+    })
+);
+
+export const compareVersions = (a, b) => {
+  const left = tokenizeVersion(a);
+  const right = tokenizeVersion(b);
+  const maxLength = Math.max(left.length, right.length);
+
+  for (let i = 0; i < maxLength; i += 1) {
+    const leftPart = left[i] ?? 0;
+    const rightPart = right[i] ?? 0;
+
+    if (typeof leftPart === 'number' && typeof rightPart === 'number') {
+      if (leftPart !== rightPart) return leftPart > rightPart ? 1 : -1;
+      continue;
+    }
+
+    const comparison = String(leftPart).localeCompare(String(rightPart), undefined, { numeric: true });
+    if (comparison !== 0) return comparison;
+  }
+
+  return 0;
+};
+
+export const getMitigationText = (finding) => cleanText(
+  finding.mitigation
+  || finding.solution
+  || finding.remediation
+  || ''
+);
+
+export const getDescriptionText = (finding) => compactDefectDojoText(finding.description || '');
+
+export const getImpactText = (finding) => compactDefectDojoText(finding.impact || '');
+
+export const firstPresent = (...values) => {
+  for (const value of values) {
+    if (value && typeof value === 'object') continue;
+    const cleaned = cleanText(value);
+    const urlIdMatch = cleaned.match(/\/(\d+)\/?$/);
+    if (urlIdMatch) return urlIdMatch[1];
+    if (cleaned) return cleaned;
+  }
+  return '';
+};
+
+export const firstNamePresent = (...values) => {
+  for (const value of values) {
+    if (value && typeof value === 'object') continue;
+    const cleaned = cleanText(value);
+    if (cleaned && !/^\d+$/.test(cleaned)) return cleaned;
+  }
+  return '';
+};
+
+export const firstCleanText = (...values) => {
+  for (const value of values) {
+    const cleaned = cleanText(value);
+    if (cleaned && cleaned.toLowerCase() !== 'n/a') return cleaned;
+  }
+  return '';
+};
+
+export const getDefectDojoRoute = (finding) => {
+  const explicitRoute = finding.defectdojo_route && typeof finding.defectdojo_route === 'object'
+    ? finding.defectdojo_route
+    : {};
+  const test = finding.test && typeof finding.test === 'object' ? finding.test : {};
+  const engagement = finding.engagement && typeof finding.engagement === 'object'
+    ? finding.engagement
+    : (test.engagement && typeof test.engagement === 'object' ? test.engagement : {});
+  const product = finding.product && typeof finding.product === 'object'
+    ? finding.product
+    : (engagement.product && typeof engagement.product === 'object' ? engagement.product : {});
+
+  return {
+    projectId: firstPresent(
+      finding.product_id,
+      finding.productId,
+      finding.defectDojoProjectId,
+      finding.defectdojoProjectId,
+      explicitRoute.projectId,
+      finding.product,
+      product.id,
+      finding.test__engagement__product,
+      engagement.product_id,
+      test.product_id
+    ),
+    projectName: firstNamePresent(
+      finding.product_name,
+      finding.productName,
+      finding.defectDojoProjectName,
+      finding.defectdojoProjectName,
+      explicitRoute.projectName,
+      product.name,
+      finding.product,
+      engagement.product_name,
+      test.product_name
+    ),
+    engagementId: firstPresent(
+      finding.engagement_id,
+      finding.engagementId,
+      finding.defectDojoEngagementId,
+      finding.defectdojoEngagementId,
+      explicitRoute.engagementId,
+      finding.engagement,
+      engagement.id,
+      finding.test__engagement,
+      test.engagement_id
+    ),
+    engagementName: firstNamePresent(
+      finding.engagement_name,
+      finding.engagementName,
+      finding.defectDojoEngagementName,
+      finding.defectdojoEngagementName,
+      explicitRoute.engagementName,
+      engagement.name,
+      finding.engagement,
+      test.engagement_name
+    ),
+    productKey: firstPresent(
+      finding.productKey,
+      finding.product_key,
+      explicitRoute.productKey
+    ),
+    engagementKey: firstPresent(
+      finding.engagementKey,
+      finding.engagement_key,
+      explicitRoute.engagementKey
+    ),
+  };
+};
+
+export const getEntityRouteKey = (prefix, id, name) => {
+  const cleanedId = cleanText(id);
+  if (cleanedId) return `${prefix}:id:${cleanedId}`;
+  const cleanedName = cleanText(name);
+  return cleanedName ? `${prefix}:name:${cleanedName.toLowerCase()}` : '';
+};
+
+export const asArray = (value) => {
+  if (Array.isArray(value)) return value;
+  if (value instanceof Set) return Array.from(value);
+  if (value === undefined || value === null || value === '') return [];
+  return [value];
+};
+
+export const asFindingIdArray = (value) => {
+  if (typeof value === 'string') return value.split(/[\s,]+/).filter(Boolean);
+  return asArray(value);
+};
+
+export const sortStrings = (values) => asArray(values)
+  .map(value => cleanText(value))
+  .filter(Boolean)
+  .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+export const sortFindingIds = (ids = []) => (
+  sortStrings(new Set(asFindingIdArray(ids).map(id => cleanText(id)).filter(Boolean)))
+    .map(id => (/^\d+$/.test(id) ? Number.parseInt(id, 10) : id))
+);

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, CalendarDays, Check, ChevronDown, Clock, RefreshCw, Search, X, XCircle } from 'lucide-react';
-import { apiFetch } from '../../services/api';
+import { BarChart3, CalendarDays, Check, ChevronDown, Clock, History, RefreshCw, Search, X, XCircle } from 'lucide-react';
+import { apiFetch } from '../../shared/api/api';
+import '../findings/FindingsPage.css';
+import './SyncHistory.css';
 
 const SEVERITIES = ['Critical', 'High', 'Medium', 'Low', 'Info'];
 const METRICS = [
@@ -151,11 +153,11 @@ const SearchableMultiSelect = ({
       : `${selectedOptions.length} selected`;
 
   return (
-    <div ref={containerRef} className={`history-popup-filter ${isOpen ? 'open' : ''}`}>
-      <span className="history-popup-label">{label}</span>
+    <div ref={containerRef} className={`sh-popup-filter ${isOpen ? 'open' : ''}`}>
+      <span className="sh-popup-label">{label}</span>
       <button
         type="button"
-        className="history-popup-trigger"
+        className="sh-popup-trigger"
         aria-haspopup="dialog"
         aria-expanded={isOpen}
         onClick={() => {
@@ -171,8 +173,8 @@ const SearchableMultiSelect = ({
       </button>
 
       {isOpen && (
-        <div className="history-filter-popover" role="dialog" aria-label={`${label} selector`}>
-          <div className="history-filter-search">
+        <div className="sh-filter-popover" role="dialog" aria-label={`${label} selector`}>
+          <div className="sh-filter-search">
             <Search size={15} />
             <input
               type="search"
@@ -182,13 +184,13 @@ const SearchableMultiSelect = ({
               onChange={(event) => setSearch(event.target.value)}
             />
             {search && (
-              <button type="button" className="history-search-clear" onClick={() => setSearch('')} aria-label={`Clear ${label} search`}>
+              <button type="button" className="sh-search-clear" onClick={() => setSearch('')} aria-label={`Clear ${label} search`}>
                 <X size={14} />
               </button>
             )}
           </div>
 
-          <div className="history-filter-popover-actions">
+          <div className="sh-filter-popover-actions">
             <button type="button" className="btn-secondary" disabled={value.length === 0} onClick={() => onChange([])}>Clear</button>
             <button
               type="button"
@@ -202,9 +204,9 @@ const SearchableMultiSelect = ({
             </button>
           </div>
 
-          <div className="history-filter-option-list" role="listbox" aria-multiselectable="true">
+          <div className="sh-filter-option-list" role="listbox" aria-multiselectable="true">
             {filteredOptions.length === 0 ? (
-              <p className="history-filter-empty">No matches</p>
+              <p className="sh-filter-empty">No matches</p>
             ) : filteredOptions.map(option => {
               const checked = selectedSet.has(option.value);
               return (
@@ -213,11 +215,11 @@ const SearchableMultiSelect = ({
                   type="button"
                   role="option"
                   aria-selected={checked}
-                  className={`history-filter-option ${checked ? 'selected' : ''}`}
+                  className={`sh-filter-option ${checked ? 'selected' : ''}`}
                   onClick={() => toggleValue(option.value)}
                 >
-                  <span className="history-filter-checkmark">{checked && <Check size={14} />}</span>
-                  <span className="history-filter-option-copy">
+                  <span className="sh-filter-checkmark">{checked && <Check size={14} />}</span>
+                  <span className="sh-filter-option-copy">
                     <strong>{option.label}</strong>
                     <small>{option.count || 0} runs</small>
                   </span>
@@ -234,10 +236,10 @@ const SearchableMultiSelect = ({
 const MetricDelta = ({ label, before, after }) => {
   const delta = toNumber(after) - toNumber(before);
   return (
-    <div className="history-delta-card">
+    <div className="sh-delta-card">
       <span>{label}</span>
       <strong>{toNumber(before)} → {toNumber(after)}</strong>
-      <b className={`history-delta ${deltaClass(delta)}`}>{deltaLabel(delta)}</b>
+      <b className={`sh-delta ${deltaClass(delta)}`}>{deltaLabel(delta)}</b>
     </div>
   );
 };
@@ -249,37 +251,37 @@ const SeverityBreakdown = ({ before, after, section, title }) => {
   const hasData = getBreakdownTotal(before, section) > 0 || total > 0;
 
   return (
-    <section className="severity-breakdown-section">
+    <section className="sh-severity-breakdown">
       <h3>{title}</h3>
       {!hasData ? (
         <p className="detail-empty-text">No severity breakdown recorded.</p>
       ) : (
         <>
-          <div className="severity-stacked-bar">
+          <div className="sh-severity-bar">
             {SEVERITIES.map(severity => {
               const value = toNumber(afterData[severity]);
               if (value === 0) return null;
               const percent = (value / (total || 1)) * 100;
               return (
-                <div 
-                  key={severity} 
-                  className={`severity-bar-segment bg-${severity.toLowerCase()}`}
+                <div
+                  key={severity}
+                  className={`sh-severity-bar-seg bg-${severity.toLowerCase()}`}
                   style={{ width: `${percent}%` }}
                   title={`${severity}: ${value}`}
                 />
               );
             })}
           </div>
-          <div className="severity-breakdown-grid">
+          <div className="sh-severity-grid">
             {SEVERITIES.map(severity => {
               const beforeValue = toNumber(beforeData[severity]);
               const afterValue = toNumber(afterData[severity]);
               const delta = afterValue - beforeValue;
               return (
-                <div key={severity} className="severity-breakdown-item">
+                <div key={severity} className="sh-severity-item">
                   <span className={`severity-badge badge-${severity.toLowerCase()}`}>{severity}</span>
                   <strong>{beforeValue} → {afterValue}</strong>
-                  <b className={`history-delta ${deltaClass(delta)}`}>{deltaLabel(delta)}</b>
+                  <b className={`sh-delta ${deltaClass(delta)}`}>{deltaLabel(delta)}</b>
                 </div>
               );
             })}
@@ -291,15 +293,15 @@ const SeverityBreakdown = ({ before, after, section, title }) => {
 };
 
 const AutoComparePanel = ({ before, after }) => (
-  <section className="history-auto-compare">
-    <div className="history-section-title-row">
+  <section className="sh-auto-compare">
+    <div className="sh-section-title-row">
       <div>
         <p className="eyebrow">Auto Compare</p>
         <h3>{getRunLabel(before)} → {getRunLabel(after)}</h3>
       </div>
-      <span className="history-muted">{getRunScopeLabel(after)}</span>
+      <span className="sh-muted">{getRunScopeLabel(after)}</span>
     </div>
-    <div className="history-delta-grid compact">
+    <div className="sh-delta-grid compact">
       {METRICS.map(([key, label]) => (
         <MetricDelta key={key} label={label} before={before[key]} after={after[key]} />
       ))}
@@ -313,24 +315,24 @@ const SyncHistoryDetailModal = ({ selected, autoCompareItems, onClose }) => {
 
   return (
     <div className="modal-overlay" role="presentation" onClick={onClose}>
-      <div className="modal-content history-detail-modal" role="dialog" aria-modal="true" aria-labelledby="history-detail-title" onClick={event => event.stopPropagation()}>
+      <div className="modal-content sh-detail-modal" role="dialog" aria-modal="true" aria-labelledby="sh-detail-title" onClick={event => event.stopPropagation()}>
         <div className="modal-title-row">
           <div>
             <p className="eyebrow">Sync Run Details</p>
-            <h2 id="history-detail-title" className="modal-heading-with-icon">{selected.syncType}</h2>
+            <h2 id="sh-detail-title" className="modal-heading-with-icon">{selected.syncType}</h2>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close sync run details">
             <XCircle size={16} />
           </button>
         </div>
 
-        <div className="history-detail-modal-body">
+        <div className="sh-detail-body">
           <div className="detail-status-row">
-            <span className={`status-pill ${selected.status}`}>{selected.status}</span>
-            <span className="history-run-badge">{getRunLabel(selected)}</span>
+            <span className={`sh-status-pill ${selected.status}`}>{selected.status}</span>
+            <span className="sh-run-badge">{getRunLabel(selected)}</span>
             <span>{selected.triggeredBy || 'system'}</span>
           </div>
-          <div className="history-metrics">
+          <div className="sh-metrics-grid">
             {METRICS.map(([key, label]) => (
               <span key={key}>{label} <strong>{selected[key] || 0}</strong></span>
             ))}
@@ -346,8 +348,8 @@ const SyncHistoryDetailModal = ({ selected, autoCompareItems, onClose }) => {
           {autoCompareItems.length === 2 ? (
             <AutoComparePanel before={autoCompareItems[0]} after={autoCompareItems[1]} />
           ) : (
-            <section className="history-auto-compare muted">
-              <div className="history-section-title-row">
+            <section className="sh-auto-compare muted">
+              <div className="sh-section-title-row">
                 <div>
                   <p className="eyebrow">Auto Compare</p>
                   <h3>No previous matching run</h3>
@@ -529,106 +531,126 @@ const SyncHistory = ({ onBack }) => {
   };
 
   return (
-    <div className="history-view">
-      <div className="view-toolbar">
-        <div>
-          <p className="eyebrow">Sync History</p>
-          <h1>Product and engagement sync log</h1>
+    <>
+      {/* ─── Hero Header ─── */}
+      <header className="findings-hero">
+        <div className="findings-hero-inner">
+          <div className="findings-hero-icon-wrap">
+            <span className="findings-hero-ring" />
+            <span className="findings-hero-ring findings-hero-ring--delay" />
+            <History size={28} />
+          </div>
+          <div className="findings-hero-copy">
+            <p className="eyebrow">Sync History</p>
+            <h1>Product and engagement sync log</h1>
+            <p className="findings-hero-sub">
+              {visibleItems.length} of {items.length} sync runs visible
+            </p>
+          </div>
         </div>
-        <div className="view-toolbar-actions">
-          <button type="button" className="btn-secondary" onClick={fetchHistory} disabled={loading}>
-            <RefreshCw size={16} className={loading ? 'spin' : ''} />
-            Refresh
-          </button>
-          <button type="button" className="btn-secondary" onClick={onBack}>Back</button>
-        </div>
-      </div>
+      </header>
 
-      <section className="history-topbar glass-panel" aria-label="Sync history controls">
-        <div className="history-filter-bar" aria-label="Sync history filters">
-          <div className="history-topbar-heading">
-            <h3 className="sidebar-heading">Filters</h3>
-            <span className="history-muted">{visibleItems.length} of {items.length} runs</span>
-          </div>
-          <div className="history-filter-group">
-            <label htmlFor="history-date-preset">Date range</label>
-            <select id="history-date-preset" value={datePreset} onChange={(event) => setDatePreset(event.target.value)}>
-              <option value="7">Last 7 days</option>
-              <option value="30">Last 30 days</option>
-              <option value="custom">Custom</option>
-              <option value="all">All</option>
-            </select>
-          </div>
-          {datePreset === 'custom' && (
-            <>
-              <div className="history-filter-group">
-                <label htmlFor="history-start-date">Start</label>
-                <input id="history-start-date" type="date" value={customStart} max={customEnd || undefined} onChange={(event) => setCustomStart(event.target.value)} />
-              </div>
-              <div className="history-filter-group">
-                <label htmlFor="history-end-date">End</label>
-                <input id="history-end-date" type="date" value={customEnd} min={customStart || undefined} onChange={(event) => setCustomEnd(event.target.value)} />
-              </div>
-            </>
-          )}
-          <SearchableMultiSelect
-            label="Product"
-            value={productFilters}
-            options={productOptions}
-            onChange={handleProductFiltersChange}
-            isOpen={openFilter === 'product'}
-            onToggle={() => setOpenFilter(prev => (prev === 'product' ? null : 'product'))}
-            onClose={() => setOpenFilter(null)}
-            emptyLabel="All products"
-            placeholder="Search products..."
-          />
-          <SearchableMultiSelect
-            label="Engagement"
-            value={engagementFilters}
-            options={engagementOptions}
-            onChange={setEngagementFilters}
-            isOpen={openFilter === 'engagement'}
-            onToggle={() => setOpenFilter(prev => (prev === 'engagement' ? null : 'engagement'))}
-            onClose={() => setOpenFilter(null)}
-            emptyLabel="All engagements"
-            placeholder="Search engagements..."
-          />
-          <button type="button" className="btn-secondary reset-btn" onClick={resetFilters}>Reset Filters</button>
-        </div>
+      {/* ─── Main Content ─── */}
+      <main className="main-content findings-main sh-main">
 
-        <section className="history-compare-bar" aria-label="Compare selected sync runs">
-          <div>
-            <h3 className="sidebar-heading">Compare</h3>
-            <p className="compare-status">{compareIds.length}/2 selected</p>
-          </div>
-          <p className="history-muted">Open a run for auto-compare with the previous matching product/engagement/type.</p>
-          <div className="compare-actions">
-            <button type="button" className="btn-primary" disabled={compareIds.length !== 2} onClick={() => setShowCompare(true)}>
-              <BarChart3 size={16} />
-              Compare
+        {/* ── Filter Panel ── */}
+        <section className="sh-filter-panel" aria-label="Sync history controls">
+          <div className="findings-command-bar sh-filter-bar">
+            <div className="sh-filter-heading">
+              <h3>Filters</h3>
+              <span className="sh-muted">{visibleItems.length} of {items.length} runs</span>
+            </div>
+            <div className="sh-filter-group">
+              <label htmlFor="sh-date-preset">Date range</label>
+              <select id="sh-date-preset" value={datePreset} onChange={(event) => setDatePreset(event.target.value)}>
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="custom">Custom</option>
+                <option value="all">All</option>
+              </select>
+            </div>
+            {datePreset === 'custom' && (
+              <>
+                <div className="sh-filter-group">
+                  <label htmlFor="sh-start-date">Start</label>
+                  <input id="sh-start-date" type="date" value={customStart} max={customEnd || undefined} onChange={(event) => setCustomStart(event.target.value)} />
+                </div>
+                <div className="sh-filter-group">
+                  <label htmlFor="sh-end-date">End</label>
+                  <input id="sh-end-date" type="date" value={customEnd} min={customStart || undefined} onChange={(event) => setCustomEnd(event.target.value)} />
+                </div>
+              </>
+            )}
+            <SearchableMultiSelect
+              label="Product"
+              value={productFilters}
+              options={productOptions}
+              onChange={handleProductFiltersChange}
+              isOpen={openFilter === 'product'}
+              onToggle={() => setOpenFilter(prev => (prev === 'product' ? null : 'product'))}
+              onClose={() => setOpenFilter(null)}
+              emptyLabel="All products"
+              placeholder="Search products..."
+            />
+            <SearchableMultiSelect
+              label="Engagement"
+              value={engagementFilters}
+              options={engagementOptions}
+              onChange={setEngagementFilters}
+              isOpen={openFilter === 'engagement'}
+              onToggle={() => setOpenFilter(prev => (prev === 'engagement' ? null : 'engagement'))}
+              onClose={() => setOpenFilter(null)}
+              emptyLabel="All engagements"
+              placeholder="Search engagements..."
+            />
+            <button type="button" className="btn-secondary sh-reset-btn" onClick={resetFilters}>Reset</button>
+            <button type="button" className="btn-secondary sh-refresh-btn" onClick={fetchHistory} disabled={loading}>
+              <RefreshCw size={14} className={loading ? 'spin' : ''} />
+              Refresh
             </button>
-            <button type="button" className="btn-secondary" disabled={compareIds.length === 0} onClick={() => setCompareIds([])}>Clear</button>
+            <button type="button" className="btn-secondary sh-back-btn" onClick={onBack}>Back</button>
+          </div>
+
+          <div className="sh-compare-bar">
+            <div className="sh-compare-info">
+              <h3>Compare</h3>
+              <span className="sh-muted">{compareIds.length}/2 selected · Open a run for auto-compare</span>
+            </div>
+            <div className="sh-compare-actions">
+              <button type="button" className="btn-primary" disabled={compareIds.length !== 2} onClick={() => setShowCompare(true)}>
+                <BarChart3 size={14} />
+                Compare
+              </button>
+              <button type="button" className="btn-secondary" disabled={compareIds.length === 0} onClick={() => setCompareIds([])}>Clear</button>
+            </div>
           </div>
         </section>
-      </section>
 
-      <div className="history-layout-3col">
-        <main className="history-main-content">
-          <div className="history-list">
+        {/* ── History List ── */}
+        <section className="sh-list-container">
+          <div className="sh-list">
             {visibleItems.length === 0 ? (
-              <div className="empty-state compact-empty">
-                <Clock size={32} className="empty-state-icon" />
+              <div className="sh-empty" role="status">
+                <div className="sh-empty-icon-wrap">
+                  <span className="sh-empty-pulse" />
+                  <Clock size={40} />
+                </div>
                 <h2>{items.length === 0 ? 'No sync history yet' : 'No sync runs match filters'}</h2>
+                <p>{items.length === 0 ? 'Sync data will appear here after your first pull.' : 'Try adjusting the date range or clearing filters.'}</p>
               </div>
             ) : groupedItems.map(([label, groupItems]) => (
-              <div key={label} className="history-date-group">
-                <div className="history-date-heading">
-                  <CalendarDays size={16} />
+              <div key={label} className="sh-date-group">
+                <div className="sh-date-heading">
+                  <CalendarDays size={14} />
                   <span>{label}</span>
                 </div>
-                {groupItems.map(item => (
-                  <div key={item.id} className={`history-row-wrap ${selected?.id === item.id ? 'selected' : ''}`}>
-                    <label className="history-compare-check">
+                {groupItems.map((item, idx) => (
+                  <div
+                    key={item.id}
+                    className={`sh-row-wrap sh-card-enter ${selected?.id === item.id ? 'selected' : ''}`}
+                    style={{ animationDelay: `${Math.min(idx * 35, 400)}ms` }}
+                  >
+                    <label className="sh-compare-check">
                       <input
                         type="checkbox"
                         checked={compareIds.includes(item.id)}
@@ -638,34 +660,36 @@ const SyncHistory = ({ onBack }) => {
                     </label>
                     <button
                       type="button"
-                      className="history-row"
+                      className="sh-row"
                       onClick={() => setSelected(item)}
                       aria-haspopup="dialog"
                       aria-label={`Open details for ${getRunLabel(item)} ${item.syncType}`}
                     >
-                      <div className="history-row-title">
+                      <div className="sh-row-title">
                         <strong>{item.syncType}</strong>
-                        <span className="history-run-badge">{getRunLabel(item)}</span>
+                        <span className="sh-run-badge">{getRunLabel(item)}</span>
                       </div>
-                      <span>{item.productName || item.productId || 'All products'} / {item.engagementName || item.engagementId || 'All engagements'}</span>
-                      <span className={`status-pill ${item.status}`}>{item.status}</span>
-                      <small>{formatDate(item.startedAt)}</small>
+                      <span className="sh-row-scope">{item.productName || item.productId || 'All products'} / {item.engagementName || item.engagementId || 'All engagements'}</span>
+                      <div className="sh-row-footer">
+                        <span className={`sh-status-pill ${item.status}`}>{item.status}</span>
+                        <small>{formatDate(item.startedAt)}</small>
+                      </div>
                     </button>
                   </div>
                 ))}
               </div>
             ))}
           </div>
-        </main>
-      </div>
+        </section>
+      </main>
 
       <SyncHistoryDetailModal selected={selected} autoCompareItems={autoCompareItems} onClose={() => setSelected(null)} />
 
       {showCompare && compareItems.length === 2 && (
         <div className="modal-overlay" role="presentation" onClick={() => setShowCompare(false)}>
-          <div className="modal-content history-compare-modal" role="dialog" aria-modal="true" aria-labelledby="history-compare-title" onClick={event => event.stopPropagation()}>
+          <div className="modal-content sh-compare-modal" role="dialog" aria-modal="true" aria-labelledby="sh-compare-title" onClick={event => event.stopPropagation()}>
             <div className="modal-title-row">
-              <h2 id="history-compare-title" className="modal-heading-with-icon">
+              <h2 id="sh-compare-title" className="modal-heading-with-icon">
                 <BarChart3 size={18} />
                 Compare sync runs
               </h2>
@@ -673,20 +697,20 @@ const SyncHistory = ({ onBack }) => {
                 <XCircle size={16} />
               </button>
             </div>
-            <div className="history-compare-summary">
-              <div className="history-compare-run-label">
+            <div className="sh-compare-summary">
+              <div className="sh-compare-run-label">
                 <b>First</b>
                 <span>{getRunLabel(compareItems[0])}</span>
                 <small>{formatDate(compareItems[0].startedAt)}</small>
               </div>
               <strong>to</strong>
-              <div className="history-compare-run-label">
+              <div className="sh-compare-run-label">
                 <b>Second</b>
                 <span>{getRunLabel(compareItems[1])}</span>
                 <small>{formatDate(compareItems[1].startedAt)}</small>
               </div>
             </div>
-            <div className="history-delta-grid">
+            <div className="sh-delta-grid">
               {METRICS.map(([key, label]) => (
                 <MetricDelta key={key} label={label} before={compareItems[0][key]} after={compareItems[1][key]} />
               ))}
@@ -697,7 +721,7 @@ const SyncHistory = ({ onBack }) => {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
 

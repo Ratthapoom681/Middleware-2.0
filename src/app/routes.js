@@ -1,0 +1,32 @@
+export const APP_ROUTE_IDS = {
+  dashboard: 'dashboard',
+  findings: 'findings',
+  mitigationReview: 'mitigation-review',
+  productDashboard: 'product-dashboard',
+  productFindings: 'product-findings',
+  products: 'products',
+  settings: 'settings',
+  syncHistory: 'sync-history',
+  users: 'users',
+};
+
+const APP_ROUTES = {
+  '#findings': { id: APP_ROUTE_IDS.findings, hash: '#findings', requiresAdmin: false },
+  '#product-dashboard': { id: APP_ROUTE_IDS.productDashboard, hash: '#product-dashboard', requiresAdmin: false },
+  '#product-findings': { id: APP_ROUTE_IDS.productFindings, hash: '#product-findings', requiresAdmin: false },
+  '#products': { id: APP_ROUTE_IDS.products, hash: '#products', requiresAdmin: false },
+  '': { id: APP_ROUTE_IDS.dashboard, hash: '', requiresAdmin: false },
+  '#mitigation-review': { id: APP_ROUTE_IDS.mitigationReview, hash: '#mitigation-review', requiresAdmin: true },
+  '#settings': { id: APP_ROUTE_IDS.settings, hash: '#settings', requiresAdmin: true },
+  '#sync-history': { id: APP_ROUTE_IDS.syncHistory, hash: '#sync-history', requiresAdmin: true },
+  '#users': { id: APP_ROUTE_IDS.users, hash: '#users', requiresAdmin: true },
+};
+
+export const resolveAppRoute = (hash = '') => {
+  const [routeHash, queryString = ''] = String(hash || '').split('?');
+  const route = APP_ROUTES[routeHash] || APP_ROUTES[''];
+  return {
+    ...route,
+    query: new URLSearchParams(queryString),
+  };
+};

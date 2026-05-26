@@ -1,6 +1,6 @@
 // Finding compaction and Redmine ticket generation.
 
-const { asArray, asFindingIdArray, cleanRouteValue } = require('./utils.cjs');
+const { asArray, asFindingIdArray, cleanRouteValue } = require('../lib/utils.cjs');
 
 const AUTO_UPGRADE_TARGET_RE = /upgrade\s+to\s+(.+?)\s+(?:version\s+)?([0-9][0-9a-z.-]*)\s*(?:or\s+later)?\.?/i;
 const AUTO_TITLE_VERSION_RE = /^(.+?)\s+.*?(?:<|version)\s+([0-9][0-9a-z.-]*)/i;

@@ -2,7 +2,7 @@
 
 const axios = require('axios');
 const crypto = require('crypto');
-const { cleanRouteValue, asArray, normalizeFindingIds } = require('./utils.cjs');
+const { cleanRouteValue, asArray, normalizeFindingIds } = require('../lib/utils.cjs');
 
 const REDMINE_ISSUE_SEARCH_LIMIT = 100;
 const REDMINE_ISSUE_SEARCH_MAX_PAGES = 5;
@@ -19,8 +19,8 @@ const getRedmineIssueUrl = (baseUrl, issue) => (
 
 const appendSyncMetadata = (description, syncKey, findingIds = []) => {
     const metadata = [];
-    if (syncKey) metadata.push(`DefectDojo Sync Key: ${syncKey}`);
-    if (findingIds.length > 0) metadata.push(`DefectDojo Finding IDs: ${findingIds.join(', ')}`);
+    if (syncKey) metadata.push(`Vulnerability Management Engine: ${syncKey}`);
+    if (findingIds.length > 0) metadata.push(`Vulnerability Management Engine IDs: ${findingIds.join(', ')}`);
     if (metadata.length === 0) return description;
     return `${description}\n\n---\n${metadata.join('\n')}`;
 };
@@ -81,6 +81,32 @@ const isRedmineProjectReferenceError = (error) => {
 
     return isRedmineNotFoundError(error)
         || ([400, 422].includes(status) && /project/i.test(detailText));
+};
+
+const extractMissingRedmineProjectNameFromError = (error = {}) => {
+    const details = error.response?.data || error.message || '';
+    if (details && typeof details === 'object') {
+        const directValue = cleanRouteValue(
+            details.project
+            || details.projectName
+            || details.project_name
+            || details.identifier
+            || details.name
+        );
+        if (directValue) return directValue;
+
+        const errorText = asArray(details.errors || details.error || details.details)
+            .map(item => (typeof item === 'string' ? item : JSON.stringify(item)))
+            .join(' ');
+        const quotedProject = errorText.match(/project[^"'`]*["'`]([^"'`]+)["'`]/i);
+        if (quotedProject?.[1]) return cleanRouteValue(quotedProject[1]);
+    }
+
+    const detailText = typeof details === 'string'
+        ? details
+        : JSON.stringify(details || {});
+    const quotedProject = detailText.match(/project[^"'`]*["'`]([^"'`]+)["'`]/i);
+    return cleanRouteValue(quotedProject?.[1] || '');
 };
 
 const getMissingRedmineProjectLabel = ({ configuredProjectId = '', route = {}, fallback = '' } = {}) => (
@@ -442,7 +468,7 @@ const extractRedmineIssueFindingIds = (issue = {}) => {
 
 const extractRedmineIssueSyncKey = (issue = {}) => {
     const description = String(issue.description || '');
-    const match = description.match(/DefectDojo Sync Key:\s*([^\r\n]+)/i);
+    const match = description.match(/Vulnerability Management Engine:\s*([^\r\n]+)/i);
     return match ? cleanRouteValue(match[1]) : '';
 };
 
@@ -735,6 +761,7 @@ module.exports = {
     getProjectIssueValue,
     isRedmineNotFoundError,
     isRedmineProjectReferenceError,
+    extractMissingRedmineProjectNameFromError,
     getMissingRedmineProjectLabel,
     buildMissingRedmineProject,
     buildRedmineProjectMissingStatus,
