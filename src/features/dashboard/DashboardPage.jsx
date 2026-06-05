@@ -1,6 +1,6 @@
 import { AlertTriangle, Database, RefreshCw } from 'lucide-react';
 import DashboardOverviewCards from './DashboardOverviewCards';
-import '../products/ProductsPage.css';
+import { PageHeader, PageMain } from '../../shared/ui/Page';
 
 const DashboardPage = ({
   bulkOpeningRedmine,
@@ -16,26 +16,16 @@ const DashboardPage = ({
   redmineSyncLabel,
   redmineSyncStatus,
   redmineSyncTitle,
+  syncAllCount,
   uniqueProducts,
   user,
 }) => (
   <>
-    <header className="products-hero dashboard-hero">
-      <div className="products-hero-inner dashboard-hero-inner">
-        <div className="products-hero-icon-wrap">
-          <span className="products-hero-ring" />
-          <span className="products-hero-ring products-hero-ring--delay" />
-          <AlertTriangle size={28} />
-        </div>
-
-        <div className="products-hero-copy">
-          <p className="eyebrow">DefectDojo Viewer</p>
-          <h1>Security Dashboard</h1>
-          <p className="products-hero-sub">
-            Unified vulnerability and ticket management overview.
-          </p>
-        </div>
-
+    <PageHeader
+      icon={AlertTriangle}
+      eyebrow="User"
+      title="Security Dashboard"
+      actions={(
         <div className="dashboard-hero-actions" aria-label="Dashboard sync status">
           <span className="user-pill">
             User: {user.username} {user.role === 'admin' ? '(Admin)' : ''}
@@ -64,14 +54,14 @@ const DashboardPage = ({
             title="Choose DefectDojo pull filters, then sync every compacted ticket in Redmine"
           >
             <RefreshCw size={14} className={bulkOpeningRedmine ? 'spin' : ''} />
-            {bulkOpeningRedmine ? 'Syncing...' : `Sync All (${compactedFindingsForStats.length})`}
-          </button>
+            {bulkOpeningRedmine ? 'Syncing...' : `Sync All (${syncAllCount ?? compactedFindingsForStats.length})`}
+            </button>
           )}
         </div>
-      </div>
-    </header>
+      )}
+    />
 
-    <main className="main-content">
+    <PageMain>
       <DashboardOverviewCards
         compactedFindings={compactedFindingsForStats}
         loading={dashboardLoading}
@@ -81,7 +71,7 @@ const DashboardPage = ({
       />
 
       {findingsContent}
-    </main>
+    </PageMain>
   </>
 );
 

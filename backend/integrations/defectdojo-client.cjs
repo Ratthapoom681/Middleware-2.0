@@ -26,7 +26,8 @@ const CONFIG_FIELDS = [
     'redmineStatusResolveId',
     'redmineStatusClosedId',
     'redmineStatusPollIntervalSeconds',
-    'pullFilters'
+    'pullFilters',
+    'notifyIpMappings'
 ];
 
 const buildFindingFilterQuery = (filters = {}, severity = '') => {

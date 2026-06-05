@@ -2,6 +2,7 @@ export const APP_ROUTE_IDS = {
   dashboard: 'dashboard',
   findings: 'findings',
   mitigationReview: 'mitigation-review',
+  notifyManagement: 'management-dashboard',
   productDashboard: 'product-dashboard',
   productFindings: 'product-findings',
   products: 'products',
@@ -11,12 +12,14 @@ export const APP_ROUTE_IDS = {
 };
 
 const APP_ROUTES = {
+  '#dashboard': { id: APP_ROUTE_IDS.dashboard, hash: '#dashboard', requiresAdmin: false },
   '#findings': { id: APP_ROUTE_IDS.findings, hash: '#findings', requiresAdmin: false },
   '#product-dashboard': { id: APP_ROUTE_IDS.productDashboard, hash: '#product-dashboard', requiresAdmin: false },
   '#product-findings': { id: APP_ROUTE_IDS.productFindings, hash: '#product-findings', requiresAdmin: false },
   '#products': { id: APP_ROUTE_IDS.products, hash: '#products', requiresAdmin: false },
-  '': { id: APP_ROUTE_IDS.dashboard, hash: '', requiresAdmin: false },
+  '': { id: APP_ROUTE_IDS.dashboard, hash: '#dashboard', requiresAdmin: false },
   '#mitigation-review': { id: APP_ROUTE_IDS.mitigationReview, hash: '#mitigation-review', requiresAdmin: true },
+  '#management-dashboard': { id: APP_ROUTE_IDS.notifyManagement, hash: '#management-dashboard', requiresAdmin: true },
   '#settings': { id: APP_ROUTE_IDS.settings, hash: '#settings', requiresAdmin: true },
   '#sync-history': { id: APP_ROUTE_IDS.syncHistory, hash: '#sync-history', requiresAdmin: true },
   '#users': { id: APP_ROUTE_IDS.users, hash: '#users', requiresAdmin: true },

@@ -1,189 +1,144 @@
-/* ============================================================
-   FINDINGS PAGE — Redesigned Layout & Visual Design
-   ============================================================ */
-
-/* ── Hero Header ── */
-.findings-hero {
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  grid-column: 2;
-  grid-row: 1;
-  padding: 1.5rem 2rem 1.25rem;
-  background: var(--bg-glass-strong);
-  border-bottom: 1px solid var(--border);
-  backdrop-filter: blur(16px);
-  overflow: hidden;
-}
-
-.findings-hero::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    135deg,
-    rgba(99, 102, 241, 0.08) 0%,
-    transparent 50%,
-    rgba(139, 92, 246, 0.05) 100%
-  );
-  pointer-events: none;
-}
-
-.findings-hero-inner {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 1.25rem;
-  max-width: 1440px;
-  margin: 0 auto;
-}
-
-.findings-hero-icon-wrap {
-  position: relative;
-  flex: 0 0 auto;
-  width: 3.25rem;
-  height: 3.25rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.9rem;
-  background: var(--accent-gradient);
-  color: #fff;
-  box-shadow:
-    0 4px 16px rgba(99, 102, 241, 0.28),
-    0 0 0 4px rgba(99, 102, 241, 0.08);
-}
-
-.findings-hero-ring {
-  position: absolute;
-  inset: -6px;
-  border-radius: 1.15rem;
-  border: 2px solid rgba(99, 102, 241, 0.2);
-  animation: heroRingPulse 3s ease-in-out infinite;
-  pointer-events: none;
-}
-
-.findings-hero-ring--delay {
-  inset: -12px;
-  border-radius: 1.35rem;
-  animation-delay: 0.6s;
-  border-color: rgba(139, 92, 246, 0.12);
-}
-
-@keyframes heroRingPulse {
-  0%, 100% {
-    opacity: 0.5;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.04);
-  }
-}
-
-.findings-hero-copy {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.findings-hero-copy h1 {
-  margin: 0;
-  color: var(--text-main);
-  font-size: 1.35rem;
-  font-weight: 900;
-  line-height: 1.2;
-}
-
-.findings-hero-sub {
-  margin: 0.2rem 0 0;
-  color: var(--text-muted);
-  font-size: 0.82rem;
-  font-weight: 600;
-}
-
-.findings-hero-metrics {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-}
-
-.findings-hero-metric {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.08rem;
-  min-width: 3.8rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.65rem;
-  border: 1px solid var(--border);
-  background: var(--bg-subtle);
-}
-
-.findings-hero-metric strong {
-  color: var(--text-main);
-  font-size: 1.25rem;
-  font-weight: 900;
-  line-height: 1;
-}
-
-.findings-hero-metric span {
-  color: var(--text-muted);
-  font-size: 0.62rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.findings-hero-metric--critical {
-  border-color: var(--critical-border);
-  background: var(--critical-bg);
-}
-
-.findings-hero-metric--critical strong {
-  color: var(--critical-text);
-}
-
-.findings-hero-metric--high {
-  border-color: var(--high-border);
-  background: var(--high-bg);
-}
-
-.findings-hero-metric--high strong {
-  color: var(--high-text);
-}
-
-/* ── Main Layout ── */
+/* Findings page content */
 .findings-main {
   display: flex;
   flex-direction: column;
   gap: 1rem;
 }
 
-/* ── Command Bar ── */
-.findings-command-bar {
-  position: relative;
-  z-index: 120;
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 0.85rem;
+/* ── Search Options Panel ── */
+.findings-filter-panel {
+  overflow: visible;
   border: 1px solid var(--border);
   border-radius: 0.85rem;
   background: var(--bg-glass);
-  backdrop-filter: blur(8px);
   box-shadow: var(--shadow-sm);
+}
+
+.findings-filter-toggle {
+  width: 100%;
+  min-height: 4.6rem;
+  padding: 0.9rem 1rem;
+  border: 0;
+  border-radius: inherit;
+  background: var(--bg-subtle);
+  color: var(--text-main);
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.85rem;
+  text-align: left;
+}
+
+.findings-filter-panel.open .findings-filter-toggle {
+  border-bottom: 1px solid var(--border-subtle);
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.findings-filter-toggle:hover {
+  background: var(--bg-subtle-hover);
+}
+
+.findings-filter-toggle:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.findings-filter-toggle-icon {
+  width: 2.35rem;
+  height: 2.35rem;
+  border-radius: 0.55rem;
+  background: var(--bg-active);
+  color: var(--primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.findings-filter-toggle-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.findings-filter-toggle-copy strong {
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: 1rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.findings-filter-toggle-copy small {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.findings-filter-count {
+  min-width: 2.1rem;
+  height: 1.65rem;
+  padding: 0 0.65rem;
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-main);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.findings-filter-chevron {
+  color: var(--text-muted);
+  transition: transform 0.16s ease;
+}
+
+.findings-filter-panel.open .findings-filter-chevron {
+  transform: rotate(180deg);
+}
+
+.findings-filter-body {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.9rem 1rem 1rem;
+}
+
+/* ── Command Bar ── */
+.findings-command-bar {
+  --findings-control-height: 2.15rem;
+  position: relative;
+  z-index: auto;
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) minmax(14rem, 22rem) max-content;
+  align-items: center;
+  justify-content: stretch;
+  gap: 0.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   overflow: visible;
 }
 
 .findings-search {
   flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
-  min-height: 2.55rem;
-  padding: 0 0.5rem 0 0.8rem;
+  min-height: var(--findings-control-height);
+  height: var(--findings-control-height);
+  padding: 0 0.55rem 0 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 0.65rem;
-  background: var(--bg-input);
+  border-radius: 0;
+  background: var(--bg-card);
   color: var(--text-muted);
   display: flex;
   align-items: center;
@@ -192,10 +147,8 @@
 }
 
 .findings-search:focus-within {
-  border-color: var(--border-focus);
-  box-shadow:
-    0 0 0 3px rgba(99, 102, 241, 0.12),
-    0 0 20px rgba(99, 102, 241, 0.06);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
   background: var(--bg-card);
 }
 
@@ -216,10 +169,10 @@
 
 .findings-search-clear {
   flex: 0 0 auto;
-  width: 1.8rem;
-  height: 1.8rem;
+  width: 1.65rem;
+  height: 1.65rem;
   border: 0;
-  border-radius: 0.45rem;
+  border-radius: 0;
   background: transparent;
   color: var(--text-muted);
   display: inline-flex;
@@ -238,8 +191,8 @@
   flex: 0 0 auto;
   padding: 0.15rem 0.4rem;
   border: 1px solid var(--border);
-  border-radius: 0.3rem;
-  background: var(--bg-subtle);
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
   font-family: inherit;
   font-size: 0.62rem;
@@ -255,10 +208,12 @@
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  padding: 0.38rem 0.7rem;
-  border-radius: 999px;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-subtle);
+  min-height: var(--findings-control-height);
+  height: var(--findings-control-height);
+  padding: 0 0.7rem;
+  border-radius: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
   color: var(--text-main);
   font-size: 0.8rem;
   font-weight: 850;
@@ -275,110 +230,26 @@
 }
 
 .findings-command-bar .scope-menu {
-  flex: 0 1 380px;
-}
-
-.finding-state-filter {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  min-height: 2.55rem;
-  padding: 0.25rem;
-  border: 1px solid var(--border);
-  border-radius: 0.65rem;
-  background: var(--bg-input);
-}
-
-.finding-state-option {
-  min-width: 4.75rem;
-  min-height: 2rem;
-  padding: 0.3rem 0.5rem;
-  border: 1px solid transparent;
-  border-radius: 0.5rem;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  font-size: 0.76rem;
-  font-weight: 850;
-  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
-}
-
-.finding-state-option:hover {
-  color: var(--text-main);
-  background: var(--bg-subtle-hover);
-}
-
-.finding-state-option.active {
-  border-color: var(--border-focus);
-  background: var(--bg-active);
-  color: var(--text-main);
-}
-
-.finding-state-option strong {
-  min-width: 1.3rem;
-  padding: 0.08rem 0.35rem;
-  border-radius: 999px;
-  background: var(--bg-subtle);
-  color: var(--text-main);
-  font-size: 0.72rem;
-  font-weight: 950;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.25;
-}
-
-.finding-state-option.active strong {
-  background: rgba(99, 102, 241, 0.18);
-  color: var(--primary);
-}
-
-.redmine-status-filter {
-  flex: 0 0 12rem;
-  min-width: 10rem;
-  min-height: 2.55rem;
-  padding: 0.3rem 0.45rem 0.3rem 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: 0.65rem;
-  background: var(--bg-input);
-  color: var(--text-muted);
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-}
-
-.redmine-status-filter span {
-  flex: 0 0 auto;
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  font-weight: 850;
-}
-
-.redmine-status-filter select {
-  min-width: 0;
   width: 100%;
-  border: 0;
-  outline: 0;
-  background: var(--bg-input);
-  color: var(--text-main);
-  font: inherit;
-  font-size: 0.8rem;
-  font-weight: 800;
-  cursor: pointer;
-  color-scheme: dark;
+  min-width: 0;
 }
 
-.redmine-status-filter select:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
+.findings-command-bar .scope-trigger,
+.findings-command-bar .scope-popover,
+.findings-command-bar .scope-search,
+.findings-command-bar .scope-option {
+  border-radius: 0;
 }
 
-.redmine-status-filter option {
+.findings-command-bar .scope-trigger {
+  min-height: var(--findings-control-height);
+  height: var(--findings-control-height);
   background: var(--bg-card);
-  color: var(--text-main);
+}
+
+.findings-command-bar .scope-trigger:hover,
+.findings-command-bar .scope-trigger[aria-expanded="true"] {
+  background: var(--bg-subtle);
 }
 
 /* ── Severity Filter ── */
@@ -535,6 +406,73 @@
   gap: 1rem;
 }
 
+.findings-list-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100vh - 11rem);
+  overflow: hidden;
+  padding: 0.75rem;
+}
+
+.findings-table-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+  margin-top: 0;
+  padding: 0.75rem 0 0;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-glass);
+}
+
+.findings-page-summary,
+.findings-page-controls > span,
+.findings-page-size span {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.findings-page-size,
+.findings-page-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.findings-page-size {
+  margin-left: auto;
+}
+
+.findings-page-size select {
+  min-height: 2.15rem;
+  padding: 0 1.85rem 0 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--bg-card);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.findings-page-size select:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.findings-page-btn {
+  min-height: 2.15rem;
+  padding: 0 0.65rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
 /* ── Staggered Card Entrance ── */
 .findings-card-enter {
   animation: findingCardEnter 0.32s ease-out both;
@@ -608,10 +546,411 @@
 }
 
 /* ============================================================
+   FINDINGS PAGE — Data Table
+   ============================================================ */
+
+/* ── Table Container ── */
+.findings-table {
+  --findings-table-min-width: 1240px;
+  --findings-table-grid: 88px 156px 104px minmax(240px, 1.8fr) 104px 112px 148px 116px 168px;
+  flex: 1 1 auto;
+  min-height: 28rem;
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  background: var(--bg-glass);
+  box-shadow: var(--shadow-sm);
+  overflow-x: auto;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) var(--bg-subtle);
+}
+
+.findings-table::-webkit-scrollbar {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.findings-table::-webkit-scrollbar-track {
+  background: var(--bg-subtle);
+}
+
+.findings-table::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 0.2rem solid var(--bg-subtle);
+  border-radius: 999px;
+}
+
+.findings-table::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* ── Table Header ── */
+.findings-table-header {
+  display: grid;
+  grid-template-columns: var(--findings-table-grid);
+  align-items: center;
+  gap: 0;
+  min-width: var(--findings-table-min-width);
+  padding: 0;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+}
+
+.findings-table-header-cell {
+  padding: 0.7rem 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* ── Table Body ── */
+.findings-table-body {
+  display: flex;
+  flex-direction: column;
+  min-width: var(--findings-table-min-width);
+}
+
+/* ── Table Row ── */
+.findings-table-row {
+  display: grid;
+  grid-template-columns: var(--findings-table-grid);
+  align-items: center;
+  gap: 0;
+  min-width: var(--findings-table-min-width);
+  min-height: 3.8rem;
+  padding: 0;
+  border-radius: 0;
+  border-top: 0;
+  border-right: 0;
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.findings-table-row:last-child {
+  border-bottom: none;
+}
+
+/* Severity left-border accent */
+.findings-table-row.severity-critical { border-left-color: var(--critical); }
+.findings-table-row.severity-high     { border-left-color: var(--high); }
+.findings-table-row.severity-medium   { border-left-color: var(--medium); }
+.findings-table-row.severity-low      { border-left-color: var(--low); }
+.findings-table-row.severity-info     { border-left-color: var(--info); }
+
+/* Alternating rows */
+.findings-table-row:nth-child(even) {
+  background: rgba(148, 163, 184, 0.03);
+}
+
+/* Hover state */
+.findings-table-row:hover {
+  background: var(--bg-active);
+  border-left-color: var(--primary);
+}
+
+/* Selected state */
+.findings-table-row.selected {
+  background: var(--bg-active);
+  border-left-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--bg-active-border);
+}
+
+.findings-table-row:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
+/* ── Table Cells ── */
+.findings-table-cell {
+  padding: 0.65rem 0.75rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* ID Cell */
+.findings-table-cell.cell-id {
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.findings-table-cell.cell-id.has-id {
+  color: var(--primary);
+  opacity: 0.85;
+}
+
+/* Company Cell */
+.findings-table-cell.cell-company {
+  color: var(--text-main);
+  font-size: 0.78rem;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Severity Cell */
+.findings-table-cell.cell-severity {
+  display: flex;
+  align-items: center;
+}
+
+.findings-table-cell.cell-severity .severity-badge {
+  position: relative;
+  min-width: 5.75rem;
+  justify-content: flex-start;
+  gap: 0.35rem;
+  padding-left: 0.55rem;
+  border-radius: 0.35rem;
+  font-size: 0.68rem;
+}
+
+.findings-table-cell.cell-severity .severity-badge::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.findings-table-cell.cell-severity .badge-critical {
+  background: var(--critical-bg);
+  color: var(--critical-text);
+  border-color: var(--critical-border);
+}
+
+.findings-table-cell.cell-severity .badge-high {
+  background: var(--high-bg);
+  color: var(--high-text);
+  border-color: var(--high-border);
+}
+
+.findings-table-cell.cell-severity .badge-medium {
+  background: var(--medium-bg);
+  color: var(--medium-text);
+  border-color: var(--medium-border);
+}
+
+.findings-table-cell.cell-severity .badge-low {
+  background: var(--low-bg);
+  color: var(--low-text);
+  border-color: var(--low-border);
+}
+
+.findings-table-cell.cell-severity .badge-info {
+  background: var(--info-bg);
+  color: var(--info-text);
+  border-color: var(--info-border);
+}
+
+/* Name Cell */
+.findings-table-cell.cell-name {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.cell-name-title {
+  color: var(--text-main);
+  font-size: 0.88rem;
+  font-weight: 800;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-name-subtitle {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Finding Count & Endpoints Count Cells */
+.findings-table-cell.cell-finding,
+.findings-table-cell.cell-endpoints {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.findings-table-cell.cell-finding svg,
+.findings-table-cell.cell-endpoints svg {
+  color: var(--info);
+  flex: 0 0 auto;
+}
+
+/* CVE/CWE Cell */
+.findings-table-cell.cell-cve-cwe {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.cve-cwe-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.38rem;
+  border-radius: 0.3rem;
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.cve-cwe-tag.cve {
+  background: var(--critical-bg);
+  color: var(--critical-text);
+  border: 1px solid var(--critical-border);
+}
+
+.cve-cwe-tag.cwe {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border: 1px solid var(--warning-border);
+}
+
+.cve-cwe-separator {
+  color: var(--text-muted);
+  font-size: 0.6rem;
+  opacity: 0.5;
+}
+
+.cell-empty {
+  color: var(--text-muted);
+  opacity: 0.4;
+  font-size: 0.78rem;
+}
+
+/* Date Cell */
+.findings-table-cell.cell-date {
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Status Cell */
+.findings-table-cell.cell-status {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.findings-table-cell.cell-status .redmine-sync-badge,
+.findings-table-cell.cell-status .status-pill {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  justify-content: center;
+}
+
+.findings-table-cell.cell-status .redmine-action {
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+}
+
+/* Status pill for non-redmine fallback */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.35rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  line-height: 1;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.status-pill.status-active {
+  color: var(--critical-text);
+  background: var(--critical-bg);
+  border: 1px solid var(--critical-border);
+}
+
+.status-pill.status-mitigated {
+  color: var(--success-text);
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+}
+
+.status-pill.status-mixed {
+  color: var(--warning-text);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+}
+
+/* ============================================================
    FINDINGS PAGE — Responsive Overrides
    ============================================================ */
 
+@media (max-width: 1180px) {
+  .findings-command-bar {
+    grid-template-columns: minmax(14rem, 1fr) minmax(14rem, 22rem) max-content;
+  }
+
+  .findings-search,
+  .findings-command-bar .scope-menu {
+    grid-column: auto;
+  }
+
+  .findings-result-count {
+    grid-column: auto;
+    margin-left: auto;
+  }
+}
+
+.findings-list {
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
+}
+
 @media (max-width: 1080px) {
+  .findings-table {
+    --findings-table-min-width: 1120px;
+    --findings-table-grid: 84px 148px 100px minmax(220px, 1.8fr) 0fr 108px 144px 112px 164px;
+  }
+
   .severity-filter-panel {
     grid-template-columns: 1fr;
   }
@@ -627,38 +966,17 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .findings-hero-metrics {
-    display: none;
+  /* Hide Finding column on medium screens */
+  .findings-table-header-cell:nth-child(5),
+  .findings-table-row .cell-finding {
+    overflow: hidden;
+    width: 0;
+    padding: 0;
+    opacity: 0;
   }
 }
 
 @media (max-width: 820px) {
-  .findings-hero {
-    position: static;
-    grid-column: 1;
-    grid-row: 2;
-    padding: 1.1rem 1rem;
-  }
-
-  .findings-hero-inner {
-    flex-wrap: wrap;
-    gap: 0.85rem;
-  }
-
-  .findings-hero-icon-wrap {
-    width: 2.75rem;
-    height: 2.75rem;
-    border-radius: 0.75rem;
-  }
-
-  .findings-hero-copy h1 {
-    font-size: 1.15rem;
-  }
-
-  .findings-hero-metrics {
-    display: none;
-  }
-
   .findings-main {
     grid-column: 1;
     grid-row: 3;
@@ -666,30 +984,18 @@
   }
 
   .findings-command-bar {
-    flex-wrap: wrap;
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .findings-search {
-    width: 100%;
-    flex-basis: 100%;
-  }
-
+  .findings-search,
   .findings-command-bar .scope-menu {
-    flex-basis: 100%;
+    grid-column: 1;
   }
 
-  .finding-state-filter {
-    width: 100%;
-    justify-content: stretch;
-  }
-
-  .finding-state-option {
-    flex: 1 1 0;
-  }
-
-  .redmine-status-filter {
-    flex-basis: 100%;
-    width: 100%;
+  .findings-result-count {
+    grid-column: 1;
+    width: fit-content;
+    margin-left: 0;
   }
 
   .severity-filter-options {
@@ -702,44 +1008,148 @@
     padding-right: 0;
   }
 
+  .findings-list-panel {
+    max-height: calc(100vh - 9rem);
+  }
+
+  .findings-table {
+    --findings-table-min-width: 0;
+    min-height: 24rem;
+    overflow-x: visible;
+    overflow-y: auto;
+  }
+
+  .findings-table-header,
+  .findings-table-body,
+  .findings-table-row {
+    min-width: 0;
+  }
+
   .findings-search-kbd {
     display: none;
+  }
+
+  /* Stack table rows as cards on narrow screens */
+  .findings-table-header {
+    display: none;
+  }
+
+  .findings-table-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 0.65rem;
+    padding: 0.75rem;
+    border-radius: 0.65rem;
+    border: 1px solid var(--border);
+    border-left: 3px solid;
+    margin-bottom: 0.45rem;
+  }
+
+  .findings-table-row:last-child {
+    margin-bottom: 0;
+  }
+
+  .findings-table-cell {
+    padding: 0;
+  }
+
+  .findings-table-cell.cell-id {
+    order: 5;
+  }
+
+  .findings-table-cell.cell-company {
+    order: 2;
+    flex: 1 1 9rem;
+  }
+
+  .findings-table-cell.cell-severity {
+    order: 1;
+  }
+
+  .findings-table-cell.cell-name {
+    order: 3;
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .findings-table-cell.cell-finding {
+    order: 4;
+    width: auto;
+  }
+
+  .findings-table-cell.cell-endpoints {
+    order: 6;
+  }
+
+  .findings-table-cell.cell-cve-cwe {
+    order: 7;
+  }
+
+  .findings-table-cell.cell-date {
+    order: 8;
+  }
+
+  .findings-table-cell.cell-status {
+    order: 9;
+    margin-left: auto;
+    display: flex;
+    justify-content: flex-end;
   }
 }
 
 @media (max-width: 640px) {
-  .findings-hero {
-    padding: 0.85rem 0.75rem;
-  }
-
-  .findings-hero-ring {
-    display: none;
-  }
-
-  .findings-hero-copy h1 {
-    font-size: 1.05rem;
-  }
-
-  .findings-hero-sub {
-    display: none;
-  }
-
   .findings-command-bar {
-    padding: 0.6rem;
+    padding: 0;
     gap: 0.5rem;
   }
 
-  .finding-state-filter {
-    min-height: 2.4rem;
+  .findings-filter-toggle {
+    min-height: 4rem;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 0.65rem;
+    padding: 0.75rem;
   }
 
-  .finding-state-option {
-    min-width: 0;
-    padding: 0.28rem 0.4rem;
+  .findings-filter-toggle-icon {
+    width: 2rem;
+    height: 2rem;
   }
 
-  .redmine-status-filter {
-    min-height: 2.4rem;
+  .findings-filter-count {
+    min-width: 1.8rem;
+    height: 1.45rem;
+    padding: 0 0.5rem;
+  }
+
+  .findings-filter-chevron {
+    display: none;
+  }
+
+  .findings-filter-toggle-copy strong {
+    font-size: 0.92rem;
+  }
+
+  .findings-filter-toggle-copy small {
+    font-size: 0.72rem;
+  }
+
+  .findings-filter-body {
+    padding: 0.75rem;
+  }
+
+  .findings-table-footer {
+    align-items: stretch;
+  }
+
+  .findings-page-summary,
+  .findings-page-size,
+  .findings-page-controls {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .findings-page-controls {
+    justify-content: space-between;
   }
 
   .severity-filter-panel {

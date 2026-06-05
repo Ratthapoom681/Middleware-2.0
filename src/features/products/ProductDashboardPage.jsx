@@ -1,5 +1,6 @@
 import { ArrowLeft, Layers, PackageSearch, ShieldAlert } from 'lucide-react';
 import SummaryCards from '../dashboard/SummaryCards';
+import { PageHeader, PageMain } from '../../shared/ui/Page';
 import './ProductDashboardPage.css';
 
 const ProductDashboardPage = ({
@@ -15,18 +16,12 @@ const ProductDashboardPage = ({
   if (!product) {
     return (
       <>
-        <header className="pd-hero">
-          <div className="pd-hero-inner">
-            <div className="pd-hero-icon-wrap">
-              <PackageSearch size={28} />
-            </div>
-            <div className="pd-hero-copy">
-              <p className="eyebrow">Product Dashboard</p>
-              <h1>Product not found</h1>
-            </div>
-          </div>
-        </header>
-        <main className="main-content pd-main">
+        <PageHeader
+          icon={PackageSearch}
+          eyebrow="Product Dashboard"
+          title="Product not found"
+        />
+        <PageMain className="pd-main">
           <div className="products-empty" role="status">
             <div className="products-empty-icon-wrap">
               <span className="products-empty-pulse" />
@@ -38,7 +33,7 @@ const ProductDashboardPage = ({
               <ArrowLeft size={14} /> Back to Products
             </button>
           </div>
-        </main>
+        </PageMain>
       </>
     );
   }
@@ -48,22 +43,13 @@ const ProductDashboardPage = ({
 
   return (
     <>
-      {/* ─── Hero Header ─── */}
-      <header className="pd-hero">
-        <div className="pd-hero-inner">
-          <div className="pd-hero-icon-wrap">
-            <span className="pd-hero-ring" />
-            <span className="pd-hero-ring pd-hero-ring--delay" />
-            <PackageSearch size={28} />
-          </div>
-          <div className="pd-hero-copy">
-            <p className="eyebrow">Product Dashboard</p>
-            <h1>{product.name}</h1>
-            <p className="pd-hero-sub">
-              {compactedCount} compacted finding{compactedCount !== 1 ? 's' : ''} · {engagementCount} engagement{engagementCount !== 1 ? 's' : ''}
-            </p>
-          </div>
-          <div className="pd-hero-actions">
+      <PageHeader
+        icon={PackageSearch}
+        eyebrow="Product Dashboard"
+        title={product.name}
+        description={`${compactedCount} compacted finding${compactedCount !== 1 ? 's' : ''} - ${engagementCount} engagement${engagementCount !== 1 ? 's' : ''}`}
+        actions={(
+          <>
             <button type="button" className="btn-secondary" onClick={onBackToProducts}>
               <ArrowLeft size={14} />
               Products
@@ -72,17 +58,13 @@ const ProductDashboardPage = ({
               <ShieldAlert size={14} />
               View Findings
             </button>
-          </div>
-        </div>
-      </header>
+          </>
+        )}
+      />
 
-      {/* ─── Main Content ─── */}
-      <main className="main-content pd-main">
-
-        {/* ── Summary Cards ── */}
+      <PageMain className="pd-main">
         <SummaryCards summary={summary} />
 
-        {/* ── Severity Mix ── */}
         <section className="pd-section" aria-labelledby="pd-severity-title">
           <div className="pd-section-header">
             <div>
@@ -104,7 +86,6 @@ const ProductDashboardPage = ({
           </div>
         </section>
 
-        {/* ── Engagements ── */}
         <section className="pd-section" aria-labelledby="pd-engagements-title">
           <div className="pd-section-header">
             <div>
@@ -155,7 +136,7 @@ const ProductDashboardPage = ({
             </div>
           )}
         </section>
-      </main>
+      </PageMain>
     </>
   );
 };

@@ -1,4 +1,5 @@
 import { Box, PackageSearch } from 'lucide-react';
+import { PageHeader, PageMain } from '../../shared/ui/Page';
 import './ProductsPage.css';
 
 const ProductsPage = ({ onSelectEngagement, onSelectProduct, scopeProducts }) => {
@@ -11,40 +12,19 @@ const ProductsPage = ({ onSelectEngagement, onSelectProduct, scopeProducts }) =>
 
   return (
     <>
-      {/* ─── Hero Header ─── */}
-      <header className="products-hero">
-        <div className="products-hero-inner">
-          <div className="products-hero-icon-wrap">
-            <span className="products-hero-ring" />
-            <span className="products-hero-ring products-hero-ring--delay" />
-            <PackageSearch size={28} />
-          </div>
-          <div className="products-hero-copy">
-            <p className="eyebrow">DefectDojo Scope</p>
-            <h1>Products</h1>
-            <p className="products-hero-sub">
-              Browse products and drill into engagement-level findings.
-            </p>
-          </div>
-          <div className="products-hero-metrics">
-            <div className="products-hero-metric">
-              <strong>{scopeProducts.length}</strong>
-              <span>Products</span>
-            </div>
-            <div className="products-hero-metric">
-              <strong>{totalEngagements}</strong>
-              <span>Engagements</span>
-            </div>
-            <div className="products-hero-metric products-hero-metric--accent">
-              <strong>{totalFindings}</strong>
-              <span>Findings</span>
-            </div>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        icon={PackageSearch}
+        eyebrow="DefectDojo Scope"
+        title="Products"
+        description="Browse products and drill into engagement-level findings."
+        metrics={[
+          { label: 'Products', value: scopeProducts.length },
+          { label: 'Engagements', value: totalEngagements },
+          { label: 'Findings', value: totalFindings, tone: 'accent' },
+        ]}
+      />
 
-      {/* ─── Main Content ─── */}
-      <main className="main-content products-main">
+      <PageMain className="products-main">
         {scopeProducts.length > 0 ? (
           <section className="products-card-grid" aria-label="Product list">
             {scopeProducts.map((product, idx) => (
@@ -102,7 +82,7 @@ const ProductsPage = ({ onSelectEngagement, onSelectProduct, scopeProducts }) =>
             <p>Run a sync or pull data from DefectDojo to populate products.</p>
           </div>
         )}
-      </main>
+      </PageMain>
     </>
   );
 };

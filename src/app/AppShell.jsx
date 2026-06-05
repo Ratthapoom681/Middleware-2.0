@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   Bell,
+  BellRing,
   History,
   LogOut,
   RefreshCw,
@@ -21,13 +22,13 @@ const AppShell = ({
   onRefresh,
   user,
 }) => {
-  const isDashboard = !currentHash;
+  const isDashboard = !currentHash || currentHash === '#dashboard';
   const navItems = [
     {
       label: 'Dashboard',
       icon: AlertTriangle,
       active: isDashboard,
-      onClick: () => onNavigate(''),
+      onClick: () => onNavigate('#dashboard'),
     },
     ...(user?.role === 'admin' ? [
       {
@@ -35,6 +36,12 @@ const AppShell = ({
         icon: History,
         active: currentHash === '#sync-history',
         onClick: () => onNavigate('#sync-history'),
+      },
+      {
+        label: 'Management Dashboard',
+        icon: BellRing,
+        active: currentHash === '#management-dashboard',
+        onClick: () => onNavigate('#management-dashboard'),
       },
       {
         label: 'Mitigation Review',
@@ -71,7 +78,6 @@ const AppShell = ({
           </span>
           <span>
             <strong>DefectDojo</strong>
-            <small>Viewer</small>
           </span>
         </div>
 

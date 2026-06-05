@@ -43,6 +43,27 @@ export const DEFAULT_PULL_FILTERS = {
   test__engagement: '',
 };
 
+export const normalizeNotifyIpMappings = (value = []) => {
+  const entries = Array.isArray(value) ? value : [];
+  const seen = new Set();
+
+  return entries
+    .map(item => ({
+      productValue: cleanText(item?.productValue),
+      productName: cleanText(item?.productName),
+      domainName: cleanText(item?.domainName || item?.domain || item?.fqdn || item?.dnsName),
+      host: cleanText(item?.host || item?.ip),
+      label: cleanText(item?.label || item?.name),
+    }))
+    .filter(item => item.productValue && item.host && item.label)
+    .filter(item => {
+      const key = `${item.productValue.toLowerCase()}::${item.host.toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
 export const createDefaultConfig = () => ({
   scanPath: '',
   defectDojoUrl: '',
@@ -64,6 +85,7 @@ export const createDefaultConfig = () => ({
   redmineStatusClosedId: '',
   redmineStatusPollIntervalSeconds: DEFAULT_REDMINE_STATUS_POLL_SECONDS,
   pullFilters: { ...DEFAULT_PULL_FILTERS },
+  notifyIpMappings: [],
 });
 
 export const normalizeSeverityFilterValue = (severity) => {
@@ -96,6 +118,7 @@ export const normalizeConfig = (data = {}) => {
       ...pullFilters,
       severity: normalizeSeverityFilterValue(pullFilters.severity),
     },
+    notifyIpMappings: normalizeNotifyIpMappings(data.notifyIpMappings),
   };
 };
 

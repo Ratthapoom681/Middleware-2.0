@@ -4,6 +4,8 @@ import {
   RefreshCw, 
   Filter,
   ExternalLink,
+  FileText,
+  Server,
   X,
   ShieldCheck,
   Search,
@@ -29,10 +31,12 @@ import {
 import FindingsPage from '../features/findings/FindingsPage';
 import ProductDashboardPage from '../features/products/ProductDashboardPage';
 import ProductsPage from '../features/products/ProductsPage';
+import NotifyManagementPage from '../features/notify/NotifyManagementPage';
 import SyncHistory from '../features/sync-history/SyncHistory';
 import MitigationReview from '../features/admin/MitigationReview/MitigationReview';
 import UserManagement from '../features/admin/UserManagement/UserManagement';
 import AppShell from './AppShell';
+import { PageHeader, PageMain } from '../shared/ui/Page';
 import { APP_ROUTE_IDS, resolveAppRoute } from './routes';
 import {
   PULL_SEVERITY_OPTIONS,
@@ -160,6 +164,7 @@ const findingMatchesEngagementScope = (engagementValue, finding = {}) => {
 };
 
 const getRedmineSummaryBucket = (sync = {}) => {
+  if (!sync) return '';
   const status = normalizeRedmineStatus(sync.status || sync.issue?.status?.name);
   if (sync.action === 'existing_closed' || sync.isClosed || ['closed', 'done'].includes(status)) return 'ticketClosed';
   if (['resolve', 'resolved'].includes(status)) return 'ticketResolve';
@@ -169,13 +174,6 @@ const getRedmineSummaryBucket = (sync = {}) => {
   return '';
 };
 
-const FINDING_STATE_FILTERS = ['open', 'closed', 'all'];
-
-const normalizeFindingStateFilter = (value) => {
-  const normalized = cleanText(value).toLowerCase();
-  return FINDING_STATE_FILTERS.includes(normalized) ? normalized : 'open';
-};
-
 const REDMINE_STATUS_FILTER_OPTIONS = [
   { id: 'all', label: 'All Redmine' },
   { id: 'new', label: 'New' },
@@ -183,16 +181,16 @@ const REDMINE_STATUS_FILTER_OPTIONS = [
   { id: 'feedback', label: 'Feedback' },
   { id: 'resolve', label: 'Resolve' },
   { id: 'closed', label: 'Closed' },
-  { id: 'unlinked', label: 'No Ticket' },
-  { id: 'not_found', label: 'Not Found' },
-  { id: 'error', label: 'Error' },
-  { id: 'other', label: 'Other' },
 ];
 
 const normalizeRedmineStatusFilter = (value) => {
   const normalized = cleanText(value).toLowerCase().replace(/[\s-]+/g, '_');
   return REDMINE_STATUS_FILTER_OPTIONS.some(option => option.id === normalized) ? normalized : 'all';
 };
+
+const normalizeSeverityRouteFilter = (value) => (
+  PULL_SEVERITY_OPTIONS.find(severity => severity.toLowerCase() === cleanText(value).toLowerCase()) || 'All'
+);
 
 const getRedmineStatusFilterLabel = (statusKey) => (
   REDMINE_STATUS_FILTER_OPTIONS.find(option => option.id === statusKey)?.label || 'Other'
@@ -210,22 +208,17 @@ const getRedmineStatusFilterKey = (sync = {}) => {
   const redmineSync = sync || {};
   const action = cleanText(redmineSync.action).toLowerCase();
   const status = normalizeRedmineStatus(redmineSync.status || redmineSync.issue?.status?.name);
-  if (!action && !status && !redmineSync.issueId) return 'unlinked';
-  if (action === 'not_found') return 'not_found';
-  if (action === 'check_failed') return 'error';
   if (isFindingClosedFromRedmine(redmineSync)) return 'closed';
   if (['resolve', 'resolved'].includes(status)) return 'resolve';
   if (status === 'feedback') return 'feedback';
   if (status === 'in progress') return 'in_progress';
   if (status === 'new' || action === 'created') return 'new';
-  return status || action || redmineSync.issueId ? 'other' : 'unlinked';
 };
 
 function App() {
   const [findings, setFindings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [activeFilter, setActiveFilter] = useState('All');
-  const [findingStateFilter, setFindingStateFilter] = useState('open');
   const [redmineStatusFilter, setRedmineStatusFilter] = useState('all');
   const [selectedProductId, setSelectedProductId] = useState('');
   const [selectedEngagementId, setSelectedEngagementId] = useState('');
@@ -317,13 +310,15 @@ function App() {
     const query = new URLSearchParams(queryString);
     const productId = query.get('productId') || '';
     const engagementId = query.get('engagementId') || '';
-    const stateFilter = normalizeFindingStateFilter(query.get('state'));
     const redmineStatus = normalizeRedmineStatusFilter(query.get('redmineStatus') || query.get('redmine'));
+    const severity = normalizeSeverityRouteFilter(query.get('severity'));
+    const search = query.get('q') || query.get('search') || '';
     queueMicrotask(() => {
       setSelectedProductId(productId);
       setSelectedEngagementId(engagementId);
-      setFindingStateFilter(stateFilter);
       setRedmineStatusFilter(redmineStatus);
+      setActiveFilter(severity);
+      setCompactedSearch(search);
       setCompactedCveFindings(null);
       setCompactedCveScopeKey('');
     });
@@ -339,7 +334,6 @@ function App() {
       setCompactedCveScopeKey('');
       setCompactedSearch('');
       setActiveFilter('All');
-      setFindingStateFilter('open');
       setRedmineStatusFilter('all');
     });
   }, [currentRoute.id]);
@@ -347,7 +341,6 @@ function App() {
   useEffect(() => {
     if (currentRoute.id !== APP_ROUTE_IDS.dashboard) return;
     queueMicrotask(() => {
-      setFindingStateFilter('open');
       setRedmineStatusFilter('all');
     });
   }, [currentRoute.id]);
@@ -1010,7 +1003,7 @@ function App() {
 
   useEffect(() => {
     if (currentRoute.requiresAdmin && user?.role !== 'admin') {
-      setHashRoute('');
+      setHashRoute('#dashboard');
     }
   }, [currentRoute.requiresAdmin, user]);
 
@@ -1362,13 +1355,6 @@ function App() {
     return chooseDashboardRedmineSync(localSync, finding.serverRedmineSync);
   }, [chooseDashboardRedmineSync, getTicketActionId, redmineSyncByTicket]);
 
-  const findingMatchesStateFilter = useCallback((finding, stateFilter = findingStateFilter) => {
-    const normalizedState = normalizeFindingStateFilter(stateFilter);
-    if (normalizedState === 'all') return true;
-    const isClosed = isFindingClosedFromRedmine(getFindingRedmineSync(finding));
-    return normalizedState === 'closed' ? isClosed : !isClosed;
-  }, [findingStateFilter, getFindingRedmineSync]);
-
   const findingMatchesRedmineStatusFilter = useCallback((finding, statusFilter = redmineStatusFilter) => {
     const normalizedStatus = normalizeRedmineStatusFilter(statusFilter);
     if (normalizedStatus === 'all') return true;
@@ -1408,72 +1394,140 @@ function App() {
     return parts.join(' / ') || 'No route';
   };
 
+  const formatCompanyName = (finding) => {
+    const route = getDefectDojoRoute(finding);
+    return cleanText(
+      route.projectName
+      || finding.defectDojoProjectName
+      || finding.productName
+      || finding.company
+      || route.projectId
+      || finding.defectDojoProjectId
+    ) || 'Unknown';
+  };
+
+  const formatFindingTableRedmineStatus = (sync) => {
+    const statusText = cleanText(sync?.status || sync?.issue?.status?.name);
+    if (statusText) return statusText.toUpperCase();
+
+    const actionText = cleanText(sync?.action).toLowerCase();
+    if (actionText === 'created') return 'NEW';
+    if (actionText === 'existing_open') return 'OPEN';
+    if (actionText === 'existing_closed') return 'CLOSED';
+    if (actionText === 'closed_with_new_findings') return 'NEW FINDINGS';
+    if (actionText === 'not_found') return 'NOT FOUND';
+    if (actionText === 'check_failed') return 'ERROR';
+
+    const fallbackLabel = cleanText(getRedmineSyncLabel(sync))
+      .replace(/^redmine\s+/i, '')
+      .split('→')[0]
+      .replace(/\s+->\s+.*$/, '');
+
+    return fallbackLabel ? fallbackLabel.toUpperCase() : 'SYNCED';
+  };
+
   const getFindingCveCount = (finding) => finding.allCVEs?.length || 0;
   const getFindingCweCount = (finding) => finding.allCWEs?.length || finding.cweIds?.length || 0;
 
   const renderFindingRow = (finding, idx) => {
     const findingRedmineSync = getFindingRedmineSync(finding);
+    const redmineIssueId = cleanText(findingRedmineSync?.issueId || findingRedmineSync?.issue?.id);
     const endpointCount = finding.allEndpoints?.length || 0;
     const cveCount = getFindingCveCount(finding);
     const cweCount = getFindingCweCount(finding);
     const sourceFindingCount = getCompactedFindingCount(finding);
     const selected = isSelectedFinding(finding, idx);
+    const severity = cleanText(finding.severity || 'Info');
+    const severityClass = severity.toLowerCase();
+    const statusLabel = cleanText(finding.currentStatus).toLowerCase() || 'active';
+    const displayStatusLabel = statusLabel === 'mixed'
+      ? 'Mixed'
+      : statusLabel === 'mitigated'
+        ? 'Mitigated'
+        : 'Active';
+    const rowStyle = { animationDelay: `${Math.min(idx * 40, 600)}ms` };
 
     return (
-    <article
-      key={getFindingIdentity(finding, idx)}
-      className={`finding-row ${selected ? 'selected' : ''}`}
-      onClick={() => setSelectedFinding(finding)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          setSelectedFinding(finding);
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      aria-selected={selected}
-      aria-label={`View details for ${finding.title || 'finding'}`}
-    >
-      <div className="finding-row-main">
-        <span className={`severity-badge badge-${(finding.severity || 'Info').toLowerCase()}`}>
-          {finding.severity || 'Info'}
-        </span>
-        <div className="finding-row-content">
-          <h3>{finding.title}</h3>
-          <p>{formatRouteSummary(finding)}</p>
+      <article
+        key={getFindingIdentity(finding, idx)}
+        className={`finding-row findings-table-row severity-${severityClass} findings-card-enter ${selected ? 'selected' : ''}`}
+        onClick={() => setSelectedFinding(finding)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setSelectedFinding(finding);
+          }
+        }}
+        role="row"
+        tabIndex={0}
+        aria-selected={selected}
+        aria-label={`View details for ${finding.title || 'finding'}`}
+        style={rowStyle}
+      >
+        <div className={`findings-table-cell cell-id ${redmineIssueId ? 'has-id' : ''}`} role="cell" data-label="ID">
+          {redmineIssueId ? `#${redmineIssueId}` : <span className="cell-empty">-</span>}
         </div>
-      </div>
-      <div className="finding-row-meta" aria-label="Finding summary">
-        <span>{formatCountLabel(sourceFindingCount, 'finding')}</span>
-        <span>{formatCountLabel(endpointCount, 'endpoint')}</span>
-        <span>{formatCountLabel(cveCount, 'CVE')}</span>
-        <span>{formatCountLabel(cweCount, 'CWE')}</span>
-        <span>{finding.date || 'No date'}</span>
-        {findingRedmineSync && (
-          <span className={getRedmineSyncBadgeClass(findingRedmineSync)}>
-            {getRedmineSyncLabel(findingRedmineSync)}
+        <div className="findings-table-cell cell-company" role="cell" data-label="Company">
+          {formatCompanyName(finding)}
+        </div>
+        <div className="findings-table-cell cell-severity" role="cell" data-label="Severity">
+          <span className={`severity-badge badge-${severityClass}`}>
+            {severity}
           </span>
-        )}
-      </div>
-      {user?.role === 'admin' && (
-        <div className="finding-actions">
-          <button
-            type="button"
-            className="icon-btn redmine-action"
-            onClick={(e) => {
-              e.stopPropagation();
-              openRedmineIssue(finding);
-            }}
-            disabled={bulkOpeningRedmine || openingRedmineId === getTicketActionId(finding)}
-            title="Open issue in Redmine"
-            aria-label={`Open Redmine issue for ${finding.title || 'finding'}`}
-          >
-            <ExternalLink size={18} />
-          </button>
         </div>
-      )}
-    </article>
+        <div className="findings-table-cell cell-name" role="cell" data-label="Name">
+          <strong className="cell-name-title">{finding.title || 'Untitled finding'}</strong>
+          <small className="cell-name-subtitle">{formatRouteSummary(finding)}</small>
+        </div>
+        <div className="findings-table-cell cell-finding" role="cell" data-label="Finding">
+          <FileText size={14} aria-hidden="true" />
+          <span>{sourceFindingCount}</span>
+        </div>
+        <div className="findings-table-cell cell-endpoints" role="cell" data-label="Endpoints">
+          <Server size={14} aria-hidden="true" />
+          <span>{endpointCount || <span className="cell-empty">-</span>}</span>
+        </div>
+        <div className="findings-table-cell cell-cve-cwe" role="cell" data-label="CVEs/CWEs">
+          {cveCount > 0 || cweCount > 0 ? (
+            <>
+              <span className="cve-cwe-tag cve">{cveCount} CVE</span>
+              <span className="cve-cwe-separator" aria-hidden="true">·</span>
+              <span className="cve-cwe-tag cwe">{cweCount} CWE</span>
+            </>
+          ) : (
+            <span className="cell-empty">-</span>
+          )}
+        </div>
+        <div className="findings-table-cell cell-date" role="cell" data-label="Date">
+          {finding.date || <span className="cell-empty">-</span>}
+        </div>
+        <div className="findings-table-cell cell-status" role="cell" data-label="Status">
+          {findingRedmineSync ? (
+            <span className={getRedmineSyncBadgeClass(findingRedmineSync)}>
+              {formatFindingTableRedmineStatus(findingRedmineSync)}
+            </span>
+          ) : (
+            <span className={`status-pill status-${statusLabel}`}>
+              {displayStatusLabel}
+            </span>
+          )}
+          {user?.role === 'admin' && (
+            <button
+              type="button"
+              className="icon-btn redmine-action"
+              onClick={(e) => {
+                e.stopPropagation();
+                openRedmineIssue(finding);
+              }}
+              disabled={bulkOpeningRedmine || openingRedmineId === getTicketActionId(finding)}
+              title="Open issue in Redmine"
+              aria-label={`Open Redmine issue for ${finding.title || 'finding'}`}
+            >
+              <ExternalLink size={16} />
+            </button>
+          )}
+        </div>
+      </article>
     );
   };
 
@@ -1684,12 +1738,9 @@ function App() {
     });
   }, [compactedCveFindings, compactedCveScopeKey, currentCompactedCveScopeKey, selectedEngagementId, selectedProductId]);
   const baseDisplayFindings = scopedCompactedCveFindings ?? fallbackCompactedFindings;
-  const stateFilteredBaseDisplayFindings = useMemo(() => (
-    baseDisplayFindings.filter(finding => findingMatchesStateFilter(finding))
-  ), [baseDisplayFindings, findingMatchesStateFilter]);
   const redmineStatusFilteredBaseDisplayFindings = useMemo(() => (
-    stateFilteredBaseDisplayFindings.filter(finding => findingMatchesRedmineStatusFilter(finding))
-  ), [findingMatchesRedmineStatusFilter, stateFilteredBaseDisplayFindings]);
+    baseDisplayFindings.filter(finding => findingMatchesRedmineStatusFilter(finding))
+  ), [baseDisplayFindings, findingMatchesRedmineStatusFilter]);
   const compactedSearchTokens = useMemo(() => (
     cleanText(compactedSearch).toLowerCase().split(/\s+/).filter(Boolean)
   ), [compactedSearch]);
@@ -1739,44 +1790,44 @@ function App() {
   }, [compactedSearchTokens, getFindingRedmineSync, redmineStatusFilteredBaseDisplayFindings]);
   const compactedSearchActive = compactedSearchTokens.length > 0;
   const compactedFindingsForStats = allCompactedFindings;
+  const dashboardCompactedFindingsForStats = redmineStatusFilteredBaseDisplayFindings;
+  const dashboardScopedProducts = useMemo(() => {
+    if (!selectedProductId && !selectedEngagementId) return uniqueProducts;
+    const productNames = new Set();
+    dashboardCompactedFindingsForStats.forEach(finding => {
+      const route = getDefectDojoRoute(finding);
+      const productName = route.projectName
+        || finding.defectDojoProjectName
+        || route.projectId
+        || finding.defectDojoProjectId;
+      if (productName) productNames.add(String(productName));
+    });
+    return Array.from(productNames);
+  }, [dashboardCompactedFindingsForStats, selectedEngagementId, selectedProductId, uniqueProducts]);
   const dashboardRedmineSummary = useMemo(() => {
     const redmine = createDashboardSummary().redmine;
-    compactedFindingsForStats.forEach(finding => {
+    dashboardCompactedFindingsForStats.forEach(finding => {
       const redmineBucket = getRedmineSummaryBucket(getFindingRedmineSync(finding));
       if (redmineBucket) redmine[redmineBucket] += 1;
     });
     return redmine;
-  }, [compactedFindingsForStats, getFindingRedmineSync]);
+  }, [dashboardCompactedFindingsForStats, getFindingRedmineSync]);
   const compactedFindingsForSeverity = useMemo(() => {
     if (!selectedProductId && !selectedEngagementId) return allCompactedFindings;
     return getCompactedFindings(productEngagementScopedFindings);
   }, [allCompactedFindings, getCompactedFindings, productEngagementScopedFindings, selectedEngagementId, selectedProductId]);
-  const findingStateCounts = useMemo(() => {
-    const counts = { open: 0, closed: 0, all: compactedFindingsForSeverity.length };
-    compactedFindingsForSeverity.forEach(finding => {
-      if (isFindingClosedFromRedmine(getFindingRedmineSync(finding))) {
-        counts.closed += 1;
-      } else {
-        counts.open += 1;
-      }
-    });
-    return counts;
-  }, [compactedFindingsForSeverity, getFindingRedmineSync]);
-  const stateFilteredCompactedFindingsForSeverity = useMemo(() => (
-    compactedFindingsForSeverity.filter(finding => findingMatchesStateFilter(finding))
-  ), [compactedFindingsForSeverity, findingMatchesStateFilter]);
   const redmineStatusCounts = useMemo(() => {
     const counts = Object.fromEntries(REDMINE_STATUS_FILTER_OPTIONS.map(option => [option.id, 0]));
-    stateFilteredCompactedFindingsForSeverity.forEach(finding => {
+    compactedFindingsForSeverity.forEach(finding => {
       const statusKey = getRedmineStatusFilterKey(getFindingRedmineSync(finding));
       counts[statusKey] = (counts[statusKey] || 0) + 1;
       counts.all += 1;
     });
     return counts;
-  }, [getFindingRedmineSync, stateFilteredCompactedFindingsForSeverity]);
+  }, [compactedFindingsForSeverity, getFindingRedmineSync]);
   const redmineStatusFilteredCompactedFindingsForSeverity = useMemo(() => (
-    stateFilteredCompactedFindingsForSeverity.filter(finding => findingMatchesRedmineStatusFilter(finding))
-  ), [findingMatchesRedmineStatusFilter, stateFilteredCompactedFindingsForSeverity]);
+    compactedFindingsForSeverity.filter(finding => findingMatchesRedmineStatusFilter(finding))
+  ), [compactedFindingsForSeverity, findingMatchesRedmineStatusFilter]);
   const compactedSeverityCounts = useMemo(() => {
     const counts = Object.fromEntries(PULL_SEVERITY_OPTIONS.map(severity => [severity, 0]));
     redmineStatusFilteredCompactedFindingsForSeverity.forEach(finding => {
@@ -1785,19 +1836,6 @@ function App() {
     });
     return counts;
   }, [redmineStatusFilteredCompactedFindingsForSeverity]);
-  const displayFindingGroups = useMemo(() => {
-    const groups = new Map();
-    displayFindings.forEach(finding => {
-      const route = getDefectDojoRoute(finding);
-      const productName = route.projectName || finding.defectDojoProjectName || 'Unknown product';
-      if (!groups.has(productName)) groups.set(productName, []);
-      groups.get(productName).push(finding);
-    });
-    return Array.from(groups.entries())
-      .map(([productName, productFindings]) => ({ productName, productFindings }))
-      .sort((left, right) => left.productName.localeCompare(right.productName, undefined, { numeric: true }));
-  }, [displayFindings]);
-
   const scopeProducts = useMemo(() => {
     const scopeProductMap = new Map();
     const scopeEngagementMap = new Map();
@@ -1931,13 +1969,17 @@ function App() {
     : selectedProductId
       ? selectedScopeProduct?.name || selectedProductId
       : 'All Products';
-  const scopeDescription = isScopePending
+  const scopeBaseDescription = isScopePending
     ? 'Updating scope...'
     : selectedEngagementId
       ? 'Engagement scope'
       : selectedProductId
         ? 'Product scope'
         : `${scopeProducts.length} product${scopeProducts.length !== 1 ? 's' : ''}`;
+  const redmineFilterLabel = redmineStatusFilter === 'all'
+    ? 'All Redmine'
+    : `${getRedmineStatusFilterLabel(redmineStatusFilter)} (${redmineStatusCounts[redmineStatusFilter] || 0})`;
+  const scopeDescription = `${scopeBaseDescription} · ${redmineFilterLabel}`;
   const productDashboardProductId = currentRoute.id === APP_ROUTE_IDS.productDashboard
     ? currentRoute.query.get('productId') || ''
     : '';
@@ -2053,7 +2095,6 @@ function App() {
       setSelectedEngagementId(engagementValue);
       setSelectedFinding(null);
       setActiveFilter('All');
-      setFindingStateFilter('open');
       setRedmineStatusFilter('all');
     });
     setHashRoute(`#product-findings${params.toString() ? `?${params.toString()}` : ''}`);
@@ -2075,24 +2116,9 @@ function App() {
       setSelectedEngagementId('');
       setSelectedFinding(null);
       setActiveFilter('All');
-      setFindingStateFilter('open');
       setRedmineStatusFilter('all');
     });
     setHashRoute('#findings');
-  };
-  const handleFindingStateChange = (stateFilter) => {
-    const normalizedState = normalizeFindingStateFilter(stateFilter);
-    setFindingStateFilter(normalizedState);
-    if (currentRoute.id !== APP_ROUTE_IDS.productFindings) return;
-
-    const queryString = String(currentHash || '').split('?')[1] || '';
-    const query = new URLSearchParams(queryString);
-    if (normalizedState === 'open') {
-      query.delete('state');
-    } else {
-      query.set('state', normalizedState);
-    }
-    setHashRoute(`#product-findings${query.toString() ? `?${query.toString()}` : ''}`);
   };
   const handleRedmineStatusChange = (statusFilter) => {
     const normalizedStatus = normalizeRedmineStatusFilter(statusFilter);
@@ -2140,7 +2166,7 @@ function App() {
             aria-label="Close scope menu"
             tabIndex={-1}
           />
-          <div className="scope-popover" id="dashboard-scope-menu" role="menu" aria-label="Select dashboard product scope">
+          <div className="scope-popover" id="dashboard-scope-menu" role="menu" aria-label="Select scope and Redmine status">
             <label className="scope-search">
               <span className="sr-only">Search products and engagements</span>
               <Search size={15} aria-hidden="true" />
@@ -2152,6 +2178,28 @@ function App() {
                 autoFocus
               />
             </label>
+
+            {/* ── Redmine Status Section ── */}
+            <div className="scope-section-label">Redmine Status</div>
+            <div className="scope-redmine-pills" role="group" aria-label="Filter by Redmine status">
+              {REDMINE_STATUS_FILTER_OPTIONS.map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={`scope-redmine-pill${redmineStatusFilter === option.id ? ' active' : ''}`}
+                  onClick={() => handleRedmineStatusChange(option.id)}
+                  aria-pressed={redmineStatusFilter === option.id}
+                >
+                  {option.label}
+                  <span className="scope-redmine-pill-count">{redmineStatusCounts[option.id] || 0}</span>
+                </button>
+              ))}
+            </div>
+
+            <hr className="scope-section-divider" />
+
+            {/* ── Product Scope Section ── */}
+            <div className="scope-section-label">Product Scope</div>
             <button
               type="button"
               className={`scope-option scope-product-row ${!selectedProductId && !selectedEngagementId ? 'active' : ''}`}
@@ -2504,6 +2552,29 @@ function App() {
     );
   }
 
+  if (currentRoute.id === APP_ROUTE_IDS.notifyManagement) {
+    if (user?.role !== 'admin') {
+      return null;
+    }
+    return renderShell(
+      <>
+        <NotifyManagementPage
+          compactedFindings={allCompactedFindings}
+          config={config}
+          onRefresh={async () => {
+            await Promise.all([
+              fetchFindings({ silent: true }),
+              fetchDashboardData({ silent: true }),
+            ]);
+          }}
+          onSaveConfig={updateConfig}
+          products={scopeProducts}
+        />
+        {renderMitigationReviewToast()}
+      </>
+    );
+  }
+
   if (currentRoute.id === APP_ROUTE_IDS.findings || currentRoute.id === APP_ROUTE_IDS.productFindings) {
     return renderShell(
       <FindingsPage
@@ -2515,23 +2586,14 @@ function App() {
         compactedSearch={compactedSearch}
         compactedSearchActive={compactedSearchActive}
         compactedSeverityCounts={compactedSeverityCounts}
-        displayFindingGroups={displayFindingGroups}
         displayFindings={displayFindings}
-        findingStateCounts={findingStateCounts}
-        findingStateFilter={findingStateFilter}
         onClearSearch={() => setCompactedSearch('')}
         onOpenSyncAllFilters={openSyncAllFilters}
-        onFindingStateChange={handleFindingStateChange}
-        onRedmineStatusChange={handleRedmineStatusChange}
         onSearchChange={setCompactedSearch}
-        redmineStatusCounts={redmineStatusCounts}
-        redmineStatusFilter={redmineStatusFilter}
-        redmineStatusOptions={REDMINE_STATUS_FILTER_OPTIONS}
         renderFindingDetailModal={renderFindingDetailModal}
         renderFindingRow={renderFindingRow}
         renderMitigationReviewToast={renderMitigationReviewToast}
         renderScopeMenu={renderScopeMenu}
-        selectedProductId={selectedProductId}
         setActiveFilter={setActiveFilter}
         severityOptions={PULL_SEVERITY_OPTIONS}
         user={user}
@@ -2545,15 +2607,14 @@ function App() {
     }
     return renderShell(
       <>
-        <header className="top-bar">
-          <div className="top-bar-title">
-            <Users size={22} />
-            <span>User Management</span>
-          </div>
-        </header>
-        <main className="main-content">
+        <PageHeader
+          icon={Users}
+          eyebrow="Administration"
+          title="User Management"
+        />
+        <PageMain>
           <UserManagement user={user} />
-        </main>
+        </PageMain>
         {renderMitigationReviewToast()}
       </>
     );
@@ -2565,13 +2626,12 @@ function App() {
     }
     return renderShell(
       <>
-        <header className="top-bar">
-          <div className="top-bar-title">
-            <Settings size={22} />
-            <span>Configuration & Settings</span>
-          </div>
-        </header>
-        <main className="main-content settings-main">
+        <PageHeader
+          icon={Settings}
+          eyebrow="Administration"
+          title="Configuration & Settings"
+        />
+        <PageMain className="settings-main" narrow>
           <SettingsView 
             config={config} 
             onSaveConfig={async (newConfig) => {
@@ -2584,7 +2644,6 @@ function App() {
                 setFindings([]);
                 setSelectedProductId('');
                 setSelectedEngagementId('');
-                setFindingStateFilter('open');
                 setRedmineStatusFilter('all');
                 setRedmineSyncByTicket({});
                 setCompactedCveFindings([]);
@@ -2609,7 +2668,7 @@ function App() {
             onRestoreConfigBackup={restoreConfigBackup}
             user={user}
           />
-        </main>
+        </PageMain>
         {renderMitigationReviewToast()}
       </>
     );
@@ -2619,7 +2678,7 @@ function App() {
     if (user?.role !== 'admin') return null;
     return renderShell(
       <>
-        <SyncHistory onBack={() => setHashRoute('')} />
+        <SyncHistory onBack={() => setHashRoute('#dashboard')} />
         {renderMitigationReviewToast()}
       </>
     );
@@ -2629,15 +2688,14 @@ function App() {
     if (user?.role !== 'admin') return null;
     return renderShell(
       <>
-        <header className="top-bar">
-          <div className="top-bar-title">
-            <ShieldCheck size={22} />
-            <span>Mitigation Review</span>
-          </div>
-        </header>
-        <main className="main-content">
-          <MitigationReview onBack={() => setHashRoute('')} config={config} />
-        </main>
+        <PageHeader
+          icon={ShieldCheck}
+          eyebrow="Administration"
+          title="Mitigation Review"
+        />
+        <PageMain>
+          <MitigationReview onBack={() => setHashRoute('#dashboard')} config={config} />
+        </PageMain>
         {renderMitigationReviewToast()}
       </>
     );
@@ -2647,7 +2705,7 @@ function App() {
     <>
       <DashboardPage
         bulkOpeningRedmine={bulkOpeningRedmine}
-        compactedFindingsForStats={compactedFindingsForStats}
+        compactedFindingsForStats={dashboardCompactedFindingsForStats}
         dashboardLoading={dashboardLoading}
         dashboardRedmineSummary={dashboardRedmineSummary}
         dashboardSummary={dashboardSummary}
@@ -2663,23 +2721,14 @@ function App() {
             compactedSearch={compactedSearch}
             compactedSearchActive={compactedSearchActive}
             compactedSeverityCounts={compactedSeverityCounts}
-            displayFindingGroups={displayFindingGroups}
             displayFindings={displayFindings}
             embedded
-            findingStateCounts={findingStateCounts}
-            findingStateFilter={findingStateFilter}
             onClearSearch={() => setCompactedSearch('')}
-            onFindingStateChange={handleFindingStateChange}
-            onRedmineStatusChange={handleRedmineStatusChange}
             onSearchChange={setCompactedSearch}
-            redmineStatusCounts={redmineStatusCounts}
-            redmineStatusFilter={redmineStatusFilter}
-            redmineStatusOptions={REDMINE_STATUS_FILTER_OPTIONS}
             renderFindingDetailModal={renderFindingDetailModal}
             renderFindingRow={renderFindingRow}
             renderMitigationReviewToast={() => null}
             renderScopeMenu={renderScopeMenu}
-            selectedProductId={selectedProductId}
             setActiveFilter={setActiveFilter}
             severityOptions={PULL_SEVERITY_OPTIONS}
           />
@@ -2687,7 +2736,8 @@ function App() {
         redmineSyncLabel={redmineSyncLabel}
         redmineSyncStatus={redmineSyncStatus}
         redmineSyncTitle={redmineSyncTitle}
-        uniqueProducts={uniqueProducts}
+        syncAllCount={compactedFindingsForStats.length}
+        uniqueProducts={dashboardScopedProducts}
         user={user}
       />
       {renderMitigationReviewToast()}

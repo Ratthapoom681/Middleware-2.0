@@ -1,5 +1,22 @@
-import { Filter, Layers, Search, ShieldAlert, ShieldCheck, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  Layers,
+  Search,
+  ShieldAlert,
+  ShieldCheck,
+  SlidersHorizontal,
+  X,
+} from 'lucide-react';
+import { PageHeader, PageMain } from '../../shared/ui/Page';
 import './FindingsPage.css';
+
+const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
+const DEFAULT_PAGE_SIZE = 10;
+const FINDINGS_TABLE_COLUMNS = ['ID', 'Company', 'Severity', 'Name', 'Finding', 'Endpoints', 'CVEs/CWEs', 'Date', 'Status'];
 
 const FindingsPage = ({
   activeFilter,
@@ -8,185 +25,169 @@ const FindingsPage = ({
   compactedSearch,
   compactedSearchActive,
   compactedSeverityCounts,
-  displayFindingGroups,
   displayFindings,
   embedded = false,
-  findingStateCounts = { open: 0, closed: 0, all: 0 },
-  findingStateFilter = 'open',
   onClearSearch,
-  onFindingStateChange = () => {},
-  onRedmineStatusChange = () => {},
   onSearchChange,
-  redmineStatusCounts = {},
-  redmineStatusFilter = 'all',
-  redmineStatusOptions = [],
   renderFindingDetailModal,
   renderFindingRow,
   renderMitigationReviewToast,
   renderScopeMenu,
-  selectedProductId,
   setActiveFilter,
   severityOptions,
 }) => {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(true);
   const totalSeverityCount = compactedFindingsForSeverity.length;
-  const findingStateOptions = [
-    { id: 'open', label: 'Open', count: findingStateCounts.open || 0 },
-    { id: 'closed', label: 'Closed', count: findingStateCounts.closed || 0 },
-    { id: 'all', label: 'All', count: findingStateCounts.all || 0 },
-  ];
+  const totalRows = displayFindings.length;
+  const pageCount = Math.max(1, Math.ceil(totalRows / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageStartIndex = (currentPage - 1) * pageSize;
+  const firstResult = totalRows === 0 ? 0 : pageStartIndex + 1;
+  const lastResult = Math.min(totalRows, pageStartIndex + pageSize);
+  const pagedDisplayFindings = useMemo(
+    () => displayFindings.slice(pageStartIndex, pageStartIndex + pageSize),
+    [displayFindings, pageSize, pageStartIndex]
+  );
   const getSeverityPercent = (count) => (
     totalSeverityCount > 0 ? Math.max(4, Math.round((count / totalSeverityCount) * 100)) : 0
   );
   const emptyMessage = compactedSearchActive
     ? 'No compacted findings match the current search. Try broadening your query.'
-    : findingStateFilter === 'closed'
-      ? 'No closed Redmine-linked findings match the current filters.'
-      : findingStateFilter === 'open'
-        ? 'No open findings match the current filters. Try All to include closed tickets.'
-        : 'No findings found for the selected filters.';
+    : 'No findings found for the selected filters.';
 
   const findingsContent = (
     <>
-      {/* ── Command Bar ── */}
-      <div className="findings-command-bar">
-        <label className="findings-search">
-          <span className="sr-only">Search compacted findings</span>
-          <Search size={16} aria-hidden="true" />
-          <input
-            type="search"
-            value={compactedSearch}
-            onChange={(event) => onSearchChange(event.target.value)}
-            placeholder="Search title, CVE, endpoint, Redmine..."
-          />
-          {compactedSearchActive && (
-            <button
-              type="button"
-              className="findings-search-clear"
-              onClick={onClearSearch}
-              aria-label="Clear compacted findings search"
-              title="Clear search"
-            >
-              <X size={14} />
-            </button>
-          )}
-          <kbd className="findings-search-kbd">Ctrl K</kbd>
-        </label>
-
-        {renderScopeMenu()}
-
-        <div className="finding-state-filter" role="group" aria-label="Filter findings by Redmine state">
-          {findingStateOptions.map(option => {
-            const isActive = findingStateFilter === option.id;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                className={`finding-state-option${isActive ? ' active' : ''}`}
-                onClick={() => onFindingStateChange(option.id)}
-                aria-pressed={isActive}
-              >
-                <span>{option.label}</span>
-                <strong>{option.count}</strong>
-              </button>
-            );
-          })}
-        </div>
-
-        <label className="redmine-status-filter">
-          <span>Redmine</span>
-          <select
-            value={redmineStatusFilter}
-            onChange={(event) => onRedmineStatusChange(event.target.value)}
-            aria-label="Filter findings by Redmine status"
-          >
-            {redmineStatusOptions.map(option => (
-              <option key={option.id} value={option.id}>
-                {option.label} ({redmineStatusCounts[option.id] || 0})
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <span className="findings-result-count">
-          <Layers size={14} />
-          {compactedSearchActive
-            ? `${displayFindings.length} of ${baseDisplayFindings.length}`
-            : `${displayFindings.length}`}
-          <span className="findings-result-count-label">
-            {' '}row{displayFindings.length !== 1 ? 's' : ''}
+      <section className={`findings-filter-panel${filterPanelOpen ? ' open' : ''}`} aria-labelledby="findings-filter-title">
+        <button
+          type="button"
+          className="findings-filter-toggle"
+          onClick={() => setFilterPanelOpen(open => !open)}
+          aria-expanded={filterPanelOpen}
+          aria-controls="findings-filter-body"
+        >
+          <span className="findings-filter-toggle-icon">
+            <SlidersHorizontal size={18} aria-hidden="true" />
           </span>
-        </span>
-      </div>
+          <span className="findings-filter-toggle-copy">
+            <strong id="findings-filter-title">Search Options</strong>
+          </span>
+          <ChevronDown className="findings-filter-chevron" size={18} aria-hidden="true" />
+        </button>
 
-      {/* ── Severity Filter ── */}
-      <div className="severity-filter-panel" aria-label="Filter by severity">
-        <div className="severity-filter-head">
-          <span>Severity</span>
-          <strong>{totalSeverityCount} total</strong>
-        </div>
-        <div className="severity-filter-options">
-          <button
-            type="button"
-            className={`severity-filter-option all${activeFilter === 'All' ? ' active' : ''}`}
-            onClick={() => setActiveFilter('All')}
-            aria-pressed={activeFilter === 'All'}
-          >
-            <Filter size={14} />
-            <span>All</span>
-            <strong>{totalSeverityCount}</strong>
-          </button>
+        {filterPanelOpen && (
+          <div className="findings-filter-body" id="findings-filter-body">
+            {/* ── Command Bar ── */}
+            <div className="findings-command-bar">
+              <label className="findings-search">
+                <span className="sr-only">Search compacted findings</span>
+                <Search size={16} aria-hidden="true" />
+                <input
+                  type="search"
+                  value={compactedSearch}
+                  onChange={(event) => {
+                    setPage(1);
+                    onSearchChange(event.target.value);
+                  }}
+                  placeholder="Search title, CVE, endpoint, Redmine..."
+                />
+                {compactedSearchActive && (
+                  <button
+                    type="button"
+                    className="findings-search-clear"
+                    onClick={() => {
+                      setPage(1);
+                      onClearSearch();
+                    }}
+                    aria-label="Clear compacted findings search"
+                    title="Clear search"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+                <kbd className="findings-search-kbd">Ctrl K</kbd>
+              </label>
 
-          {severityOptions.map(severity => {
-            const count = compactedSeverityCounts[severity] || 0;
-            const isActive = activeFilter === severity;
-            return (
-              <button
-                key={severity}
-                type="button"
-                className={`severity-filter-option ${severity.toLowerCase()}${isActive ? ' active' : ''}`}
-                onClick={() => setActiveFilter(severity)}
-                aria-pressed={isActive}
-              >
-                <span className="severity-filter-dot" aria-hidden="true" />
-                <span className="severity-filter-label">{severity}</span>
-                <strong>{count}</strong>
-                <span className="severity-filter-meter" aria-hidden="true">
-                  <span style={{ width: `${getSeverityPercent(count)}%` }} />
+              {renderScopeMenu()}
+
+              <span className="findings-result-count">
+                <Layers size={14} />
+                {compactedSearchActive
+                  ? `${displayFindings.length} of ${baseDisplayFindings.length}`
+                  : `${displayFindings.length}`}
+                <span className="findings-result-count-label">
+                  {' '}row{displayFindings.length !== 1 ? 's' : ''}
                 </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+              </span>
+            </div>
+
+            {/* ── Severity Filter ── */}
+            <div className="severity-filter-panel" aria-label="Filter by severity">
+              <div className="severity-filter-head">
+                <span>Severity</span>
+                <strong>{totalSeverityCount} total</strong>
+              </div>
+              <div className="severity-filter-options">
+                <button
+                  type="button"
+                  className={`severity-filter-option all${activeFilter === 'All' ? ' active' : ''}`}
+                  onClick={() => {
+                    setPage(1);
+                    setActiveFilter('All');
+                  }}
+                  aria-pressed={activeFilter === 'All'}
+                >
+                  <Filter size={14} />
+                  <span>All</span>
+                  <strong>{totalSeverityCount}</strong>
+                </button>
+
+                {severityOptions.map(severity => {
+                  const count = compactedSeverityCounts[severity] || 0;
+                  const isActive = activeFilter === severity;
+                  return (
+                    <button
+                      key={severity}
+                      type="button"
+                      className={`severity-filter-option ${severity.toLowerCase()}${isActive ? ' active' : ''}`}
+                      onClick={() => {
+                        setPage(1);
+                        setActiveFilter(severity);
+                      }}
+                      aria-pressed={isActive}
+                    >
+                      <span className="severity-filter-dot" aria-hidden="true" />
+                      <span className="severity-filter-label">{severity}</span>
+                      <strong>{count}</strong>
+                      <span className="severity-filter-meter" aria-hidden="true">
+                        <span style={{ width: `${getSeverityPercent(count)}%` }} />
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
 
       {/* ── Findings List ── */}
       <section className="findings-container" aria-label="Finding review workspace">
         <div className="findings-list-panel">
-          <div className="findings-list">
+          <div className="findings-table" role="table" aria-label="Compacted findings">
+            <div className="findings-table-header" role="row">
+              {FINDINGS_TABLE_COLUMNS.map(column => (
+                <div key={column} className="findings-table-header-cell" role="columnheader">
+                  {column}
+                </div>
+              ))}
+            </div>
+            <div className="findings-table-body" role="rowgroup">
             {displayFindings.length > 0 ? (
-              !selectedProductId && displayFindingGroups.length > 1 ? (
-                displayFindingGroups.map(({ productName, productFindings }) => (
-                  <div key={productName} className="product-group">
-                    <div className="product-group-header">
-                      <h2>{productName}</h2>
-                      <span className="product-group-count">
-                        {productFindings.length} finding{productFindings.length !== 1 ? 's' : ''}
-                      </span>
-                    </div>
-                    {productFindings.map((finding, idx) => (
-                      <div key={finding.id || idx} className="findings-card-enter" style={{ animationDelay: `${Math.min(idx * 40, 600)}ms` }}>
-                        {renderFindingRow(finding, idx)}
-                      </div>
-                    ))}
-                  </div>
-                ))
-              ) : (
-                displayFindings.map((finding, idx) => (
-                  <div key={finding.id || idx} className="findings-card-enter" style={{ animationDelay: `${Math.min(idx * 40, 600)}ms` }}>
-                    {renderFindingRow(finding, idx)}
-                  </div>
-                ))
-              )
+              pagedDisplayFindings.map((finding, idx) => (
+                renderFindingRow(finding, pageStartIndex + idx)
+              ))
             ) : (
               <div className="findings-empty" role="status">
                 <div className="findings-empty-icon-wrap">
@@ -197,7 +198,53 @@ const FindingsPage = ({
                 <p>{emptyMessage}</p>
               </div>
             )}
+            </div>
           </div>
+          {displayFindings.length > 0 && (
+            <div className="findings-table-footer">
+              <span className="findings-page-summary">
+                Showing {firstResult} to {lastResult} of {totalRows} result{totalRows !== 1 ? 's' : ''}
+              </span>
+              <label className="findings-page-size">
+                <span>Rows per page</span>
+                <select
+                  value={pageSize}
+                  onChange={(event) => {
+                    setPageSize(Number(event.target.value));
+                    setPage(1);
+                  }}
+                  aria-label="Rows per page"
+                >
+                  {PAGE_SIZE_OPTIONS.map(size => (
+                    <option key={size} value={size}>{size}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="findings-page-controls" aria-label="Findings pagination">
+                <button
+                  type="button"
+                  className="btn-secondary findings-page-btn"
+                  onClick={() => setPage(Math.max(1, currentPage - 1))}
+                  disabled={currentPage <= 1}
+                  aria-label="Previous findings page"
+                >
+                  <ChevronLeft size={16} />
+                  Previous
+                </button>
+                <span>Page {currentPage} of {pageCount}</span>
+                <button
+                  type="button"
+                  className="btn-secondary findings-page-btn"
+                  onClick={() => setPage(Math.min(pageCount, currentPage + 1))}
+                  disabled={currentPage >= pageCount}
+                  aria-label="Next findings page"
+                >
+                  Next
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </section>
     </>
@@ -206,12 +253,6 @@ const FindingsPage = ({
   if (embedded) {
     return (
       <section className="dashboard-section dashboard-findings-section findings-main" aria-labelledby="dashboard-findings-title">
-        <div className="dashboard-section-header">
-          <div>
-            <h2 id="dashboard-findings-title">Compacted Findings</h2>
-            <span>Review grouped vulnerabilities and open ticket details from the dashboard.</span>
-          </div>
-        </div>
         {findingsContent}
         {renderFindingDetailModal()}
       </section>
@@ -220,28 +261,16 @@ const FindingsPage = ({
 
   return (
     <>
-      {/* ─── Hero Header ─── */}
-      <header className="findings-hero">
-        <div className="findings-hero-inner">
-          <div className="findings-hero-icon-wrap">
-            <span className="findings-hero-ring" />
-            <span className="findings-hero-ring findings-hero-ring--delay" />
-            <ShieldAlert size={28} />
-          </div>
-          <div className="findings-hero-copy">
-            <p className="eyebrow">Compacted Findings</p>
-            <h1>Ticket Management</h1>
-            <p className="findings-hero-sub">
-              Manage security findings vulnerability.
-            </p>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        icon={ShieldAlert}
+        eyebrow="Compacted Findings"
+        title="Ticket Management"
+        description="Manage security findings and Redmine ticket workflow."
+      />
 
-      {/* ─── Main Content ─── */}
-      <main className="main-content findings-main">
+      <PageMain className="findings-main">
         {findingsContent}
-      </main>
+      </PageMain>
 
       {renderFindingDetailModal()}
       {renderMitigationReviewToast()}

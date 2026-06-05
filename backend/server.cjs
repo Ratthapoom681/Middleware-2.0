@@ -159,7 +159,8 @@ let config = {
         is_mitigated: 'false',
         test__engagement__product: '',
         test__engagement: ''
-    }
+    },
+    notifyIpMappings: []
 };
 const configPath = path.join(DATA_DIR, 'config.json');
 const configBackupDir = path.join(DATA_DIR, 'config-backups');
@@ -485,6 +486,26 @@ const extractConfigFromBackupPayload = payload => {
     if (!isPlainObject(payload)) return null;
     return isPlainObject(payload.config) ? payload.config : payload;
 };
+const normalizeNotifyIpMappings = value => {
+    const entries = Array.isArray(value) ? value : [];
+    const seen = new Set();
+
+    return entries
+        .map(item => ({
+            productValue: cleanRouteValue(item?.productValue),
+            productName: cleanRouteValue(item?.productName),
+            domainName: cleanRouteValue(item?.domainName || item?.domain || item?.fqdn || item?.dnsName),
+            host: cleanRouteValue(item?.host || item?.ip),
+            label: cleanRouteValue(item?.label || item?.name)
+        }))
+        .filter(item => item.productValue && item.host && item.label)
+        .filter(item => {
+            const key = `${item.productValue.toLowerCase()}::${item.host.toLowerCase()}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+};
 const createConfigBackupExport = ({fileName, label = 'manual', sourceConfig = config, createdAt} = {}) => ({
     kind: CONFIG_BACKUP_KIND,
     version: CONFIG_BACKUP_VERSION,
@@ -526,6 +547,7 @@ const normalizeConfigObject = (data = {}) => {
         ...config.pullFilters,
         ...nextConfig.pullFilters || ({})
     });
+    nextConfig.notifyIpMappings = normalizeNotifyIpMappings(nextConfig.notifyIpMappings);
     if (nextConfig.scanPath && !path.isAbsolute(nextConfig.scanPath)) {
         nextConfig.scanPath = path.resolve(nextConfig.scanPath);
     }
