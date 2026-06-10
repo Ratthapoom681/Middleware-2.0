@@ -223,7 +223,7 @@ export default function LoginPage({ onLoginSuccess }) {
   }
 
   return (
-    <div className="page-container">
+    <div className="page-container login-page">
 
       {/* ── LEFT: LOGIN CARD ── */}
       <div className="left-panel">

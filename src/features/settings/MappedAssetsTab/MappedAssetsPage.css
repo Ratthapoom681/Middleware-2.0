@@ -171,12 +171,12 @@
 
 .notify-cell-domain {
   color: var(--text-muted);
-  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-family: var(--font-mono);
 }
 
 .notify-cell-host {
   color: var(--text-main);
-  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
@@ -249,7 +249,7 @@
 }
 
 .port-overflow-popover span {
-  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 0.74rem;
 }
 
@@ -599,7 +599,7 @@
 }
 
 .notify-inline-input.mono {
-  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 

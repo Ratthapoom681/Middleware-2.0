@@ -11,12 +11,12 @@ colors:
   border: "#2d3748"
 typography:
   display:
-    fontFamily: "Inter, system-ui, sans-serif"
+    fontFamily: "Prompt, system-ui, sans-serif"
     fontSize: "clamp(1.6rem, 3vw, 2.35rem)"
     fontWeight: 800
     lineHeight: 1.1
   body:
-    fontFamily: "Inter, system-ui, sans-serif"
+    fontFamily: "Prompt, system-ui, sans-serif"
     fontSize: "0.88rem"
     fontWeight: 400
     lineHeight: 1.5
@@ -79,11 +79,11 @@ The palette is composed of high-contrast cobalt blue accents layered over deep s
 
 ## 3. Typography
 
-**Display Font:** Inter, system-ui, -apple-system, sans-serif
-**Body Font:** Inter, system-ui, -apple-system, sans-serif
-**Label/Mono Font:** Fira Code, Courier New, monospace
+**Display Font:** Prompt, system-ui, -apple-system, sans-serif
+**Body Font:** Prompt, system-ui, -apple-system, sans-serif
+**Technical Font:** ui-monospace, SFMono-Regular, Consolas, Liberation Mono, monospace
 
-The typography system relies entirely on weight contrast and strict line-heights to differentiate display hierarchies.
+The typography system relies on shared font tokens, weight contrast, and strict line-heights to differentiate display hierarchies. Use Prompt for normal interface text and the mono stack only for technical values such as logs, JSON, CVEs, endpoints, and identifiers.
 
 ### Hierarchy
 * **Display** (800, clamp(1.6rem, 3vw, 2.35rem), 1.1): Page heroes and main dashboard titles.
@@ -129,5 +129,5 @@ The elevation system relies primarily on flat, tonal layering (different shades 
 ### Don't:
 * **Don't** use decorative gradients on text or card backgrounds.
 * **Don't** use side-stripe borders (e.g. `border-left` thicker than 1px) to highlight cards or alerts.
-* **Don't** mix multiple font families. Stick to the Inter stack.
+* **Don't** mix multiple UI font families. Stick to the Prompt stack, with monospace reserved for technical values.
 * **Don't** use card nesting. Establishing card hierarchies inside other cards is prohibited.

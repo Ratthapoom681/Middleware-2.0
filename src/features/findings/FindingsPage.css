@@ -79,7 +79,7 @@
 
 /* DataTable cell content */
 .data-table-cell.cell-id {
-  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 0.78rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;

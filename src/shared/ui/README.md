@@ -51,3 +51,12 @@ Example:
   </SearchOptionsFilterGroup>
 </SearchOptionsPanel>
 ```
+
+## Typography Utilities
+
+Use the global typography utility classes from `src/styles/index.css` when a shared UI surface needs explicit text treatment instead of page-local font declarations.
+
+- `font-sans` uses the shared Prompt UI font stack.
+- `font-mono` uses the shared technical monospace stack.
+- `text-display`, `text-heading`, `text-title`, `text-body`, and `text-label` map to the app typography scale.
+- `text-code` is for logs, JSON, CVEs, endpoints, IDs, and other technical values.
