@@ -85,11 +85,10 @@ module.exports = function(ctx) {
                     error: 'Config JSON body is required'
                 });
             }
-            const previousScanPath = ctx.getConfig().scanPath;
             const backup = await ctx.writeConfigBackup(ctx.getConfig(), 'pre-import');
             ctx.setConfig(ctx.normalizeConfigObject(importedConfig));
             await ctx.saveConfigToDisk();
-            await ctx.afterConfigChanged(previousScanPath, 'config-imported');
+            await ctx.afterConfigChanged('config-imported');
             res.json({
                 message: 'Configuration imported',
                 config: ctx.getConfig(),
@@ -119,10 +118,9 @@ module.exports = function(ctx) {
                 });
             }
             const currentBackup = await ctx.writeConfigBackup(ctx.getConfig(), 'pre-restore');
-            const previousScanPath = ctx.getConfig().scanPath;
             ctx.setConfig(ctx.normalizeConfigObject(restoredConfig));
             await ctx.saveConfigToDisk();
-            await ctx.afterConfigChanged(previousScanPath, 'config-restored');
+            await ctx.afterConfigChanged('config-restored');
             res.json({
                 message: 'Configuration restored',
                 config: ctx.getConfig(),
@@ -139,11 +137,10 @@ module.exports = function(ctx) {
 
     router.post('/config', async (req, res) => {
         try {
-            const previousScanPath = ctx.getConfig().scanPath;
             const backup = await ctx.writeConfigBackup(ctx.getConfig(), 'pre-save');
             ctx.setConfig(ctx.normalizeConfigObject(req.body || ({})));
             await ctx.saveConfigToDisk();
-            await ctx.afterConfigChanged(previousScanPath, 'config-saved');
+            await ctx.afterConfigChanged('config-saved');
             res.json({
                 message: 'Configuration updated',
                 config: ctx.getConfig(),

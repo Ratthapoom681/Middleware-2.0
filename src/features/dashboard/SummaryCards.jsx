@@ -1,3 +1,5 @@
+import './Dashboard.css';
+
 const SummaryCards = ({ summary }) => {
   const defectDojo = summary?.defectDojo || {};
   const redmine = summary?.redmine || {};

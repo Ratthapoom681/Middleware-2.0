@@ -24,7 +24,7 @@ const { REDMINE_ISSUE_SEARCH_LIMIT, REDMINE_ISSUE_SEARCH_MAX_PAGES, getRedmineHe
 const { AUTO_UPGRADE_TARGET_RE, AUTO_TITLE_VERSION_RE, AUTO_LESS_THAN_VERSION_RE, AUTO_SEVERITY_RANK, normalizeAutoText, normalizeAutoGroupText, highestSeverity, isStoredFindingMitigated, isStoredFindingActive, cleanAutoBlockText, compactAutoDefectDojoText, getAutoDescriptionText, getAutoImpactText, getAutoMitigationText, getAutoStrictFindingKey, parseAutoUpgradeText, parseAutoUpgradeTarget, getAutoLegacyCompactGroupKey, getAutoKnownNoCveFamily, tokenizeAutoVersion, compareAutoVersions, firstAutoRouteValue, firstAutoRouteName, getAutoDefectDojoRoute, stableAutoHash, sortAutoStrings, sortAutoFindingIds, collectAutoCveIds, resolveAutoCompactionFamily, extractAutoTextSourceEvidenceLines, normalizeAutoTextSourceKey, getAutoCompactionDetailKey, buildAutoFindingFingerprint, buildAutoLegacyFindingGroupKey, buildAutoCompactedSyncKey, buildAutoCompactedLegacySyncKey, extractAutoTitleVersion, chooseAutoDisplayTitle, getAutoSoftwareFamilyTitle, parseAutoTitleUpgradeTarget, collectAutoTicketUpgradeTargets, getAutoTicketUpgradeTarget, buildAutoActionRequiredSubject, addAutoTextSource, getAutoEndpointParts, getAutoEndpointLabel, getAutoEndpointHost, groupAutoEndpointDetailsByCves, sortAutoSourceGroupsByTitleVersion, finalizeAutoEndpointDetails, sortAutoTextSources, finalizeAutoSourceGroups, formatAutoTextSourceLabel, formatAutoEvidenceLine, formatAutoSourceGroupAssets, formatAutoSourceFindingAssets, getAutoEndpointPort, formatAutoAffectedAssetsAndPorts, formatAutoTicketTextSection, formatAutoRouteValue, formatAutoDefectDojoContext, buildAutoSourceTitlesBlock, buildAutoCveBlock, formatAutoSourceGroupTextBlock, normalizeAutoTextSource, collectAutoAppendixSources, formatAutoQuoteBlock, formatAutoAppendixTextBlock, buildAutoSourceGroupSection, buildAutoSourceGroupsBlock, buildAutoActionRequiredMarkdown, buildAutoSuperTicketMarkdown, buildBackendCompactedRedmineTicketRefs } = compaction;
 
 // Special cases for auth
-const { hashPassword, verifyPassword, readUsersFromDisk, createDefaultAdminUser, createRequireAuth, requireAdmin } = auth;
+const { hashPassword, verifyPassword, normalizeUserStatus, normalizeUserRecord, buildPublicUser, readUsersFromDisk, createDefaultAdminUser, createRequireAuth, requireAdmin } = auth;
 
 
 const logCapture = createLogCapture();
@@ -55,6 +55,7 @@ const loadUsers = async () => {
     let shouldPersistUsers = false;
     if (database.isEnabled()) {
         users = await database.loadUsers();
+        users = users.map(normalizeUserRecord).filter(user => user.username);
         if (users.length === 0) {
             users = readUsersFromDisk();
             if (users.length > 0) {
@@ -65,6 +66,7 @@ const loadUsers = async () => {
     } else {
         users = readUsersFromDisk();
     }
+    users = users.map(normalizeUserRecord).filter(user => user.username);
     if (users.length === 0) {
         users.push(createDefaultAdminUser());
         console.log('Created default admin user (password: admin)');
@@ -74,10 +76,10 @@ const loadUsers = async () => {
 };
 const saveUsers = async () => {
     if (database.isEnabled()) {
-        await database.saveUsers(users);
+        await database.saveUsers(users.map(normalizeUserRecord));
         return;
     }
-    await fs.writeJson(usersPath, users, {
+    await fs.writeJson(usersPath, users.map(normalizeUserRecord), {
         spaces: 2
     });
 };
@@ -133,7 +135,6 @@ const createSyncAllProgressBroadcaster = () => {
     };
 };
 let config = {
-    scanPath: 'C:\\Users\\ifilm\\เดสก์ท็อป\\Scan CSV File\\TestApiJson',
     defectDojoUrl: '',
     defectDojoApiKey: '',
     redmineUrl: '',
@@ -164,6 +165,7 @@ let config = {
 };
 const configPath = path.join(DATA_DIR, 'config.json');
 const configBackupDir = path.join(DATA_DIR, 'config-backups');
+const findingsStorePath = path.join(DATA_DIR, 'findings.json');
 const redmineSyncStorePath = path.join(DATA_DIR, 'sync-state.json');
 let redmineSyncStore = {
     version: REDMINE_SYNC_STORE_VERSION,
@@ -172,12 +174,9 @@ let redmineSyncStore = {
 };
 let redmineSyncStoreSaveQueue = Promise.resolve();
 let findingsCache = {
-    scanPath: '',
     signature: '',
     findings: []
 };
-let scanPathWatcher = null;
-let scanPathWatchDebounce = null;
 let redmineSyncPollTimer = null;
 let redmineSyncPollRunning = false;
 let syncAllRunning = false;
@@ -208,7 +207,6 @@ let redmineSyncScheduler = {
 const redmineProjectResolveCache = new Map();
 const emptyFindingsCache = () => {
     findingsCache = {
-        scanPath: '',
         signature: '',
         findings: []
     };
@@ -224,14 +222,10 @@ const resetRedmineSyncStore = async () => {
         spaces: 2
     });
 };
-const clearLocalScanFiles = async () => {
-    if (!config.scanPath || !await fs.pathExists(config.scanPath)) return 0;
-    const files = await fs.readdir(config.scanPath);
-    const jsonFiles = files.filter(f => f.endsWith('.json'));
-    for (const file of jsonFiles) {
-        await fs.remove(path.join(config.scanPath, file));
-    }
-    return jsonFiles.length;
+const clearLocalFindingsStore = async () => {
+    if (!await fs.pathExists(findingsStorePath)) return 0;
+    await fs.remove(findingsStorePath);
+    return 1;
 };
 const getStoredSyncProjectName = (record = {}) => record.resolvedProject?.project?.name || record.resolvedProject?.name || record.resolvedProject?.identifier || record.resolvedProject?.id || record.projectName || '';
 const buildStoredRedmineSyncRecord = ({action, issue = {}, issueId, issueUrl, isClosed, status, statusId, resolvedProject, projectMissing = false, findingIds = [], legacySyncKeys = [], route = {}, subject = '', cveId = '', lastCheckError = ''}) => ({
@@ -436,46 +430,9 @@ const writeStoredRedmineSyncRecord = async (syncKey, record, {notify = true, sav
     if (notify) broadcastDashboardSync('redmine-sync-updated');
     return storedRecord;
 };
-const scheduleScanPathBroadcast = reason => {
-    if (scanPathWatchDebounce) clearTimeout(scanPathWatchDebounce);
-    scanPathWatchDebounce = setTimeout(() => {
-        emptyFindingsCache();
-        broadcastDashboardSync(reason);
-    }, 250);
-};
-const closeScanPathWatcher = () => {
-    if (scanPathWatcher) {
-        scanPathWatcher.close();
-        scanPathWatcher = null;
-    }
-    if (scanPathWatchDebounce) {
-        clearTimeout(scanPathWatchDebounce);
-        scanPathWatchDebounce = null;
-    }
-};
-const restartScanPathWatcher = async () => {
-    closeScanPathWatcher();
-    if (database.isEnabled()) return;
-    if (!config.scanPath || !await fs.pathExists(config.scanPath)) return;
-    try {
-        scanPathWatcher = fs.watch(config.scanPath, {
-            persistent: false
-        }, (_eventType, fileName) => {
-            if (fileName && !String(fileName).toLowerCase().endsWith('.json')) return;
-            scheduleScanPathBroadcast('scan-store-changed');
-        });
-        console.log(`Watching scan store for dashboard updates: ${config.scanPath}`);
-    } catch (error) {
-        console.warn(`Unable to watch scan store ${config.scanPath}: ${error.message}`);
-    }
-};
-const afterConfigChanged = async (previousScanPath, reason = 'config-updated') => {
+const afterConfigChanged = async (reason = 'config-updated') => {
     startRedmineSyncPoller();
-    if (previousScanPath !== config.scanPath) {
-        emptyFindingsCache();
-        await restartScanPathWatcher();
-        broadcastDashboardSync(reason);
-    }
+    broadcastDashboardSync(reason);
 };
 const getBackupTimestamp = () => new Date().toISOString().replace(/[:.]/g, '-');
 const isSafeConfigBackupFileName = value => {
@@ -484,7 +441,10 @@ const isSafeConfigBackupFileName = value => {
 };
 const extractConfigFromBackupPayload = payload => {
     if (!isPlainObject(payload)) return null;
-    return isPlainObject(payload.config) ? payload.config : payload;
+    const sourceConfig = isPlainObject(payload.config) ? payload.config : payload;
+    const configPayload = {...sourceConfig};
+    delete configPayload.scanPath;
+    return configPayload;
 };
 const normalizeNotifyIpMappings = value => {
     const entries = Array.isArray(value) ? value : [];
@@ -548,9 +508,7 @@ const normalizeConfigObject = (data = {}) => {
         ...nextConfig.pullFilters || ({})
     });
     nextConfig.notifyIpMappings = normalizeNotifyIpMappings(nextConfig.notifyIpMappings);
-    if (nextConfig.scanPath && !path.isAbsolute(nextConfig.scanPath)) {
-        nextConfig.scanPath = path.resolve(nextConfig.scanPath);
-    }
+    delete nextConfig.scanPath;
     const pollInterval = Number.parseInt(nextConfig.redmineStatusPollIntervalSeconds, 10);
     nextConfig.redmineStatusPollIntervalSeconds = Number.isInteger(pollInterval) && pollInterval > 0 ? Math.max(60, pollInterval) : pollInterval === 0 ? 0 : 60;
     return nextConfig;
@@ -639,6 +597,7 @@ const readConfigFromDisk = () => {
 const loadConfig = async () => {
     let storedConfig = null;
     let shouldPersistConfig = false;
+    let legacyScanPath = '';
     if (database.isEnabled()) {
         storedConfig = await database.loadConfig();
         if (storedConfig) {
@@ -652,55 +611,64 @@ const loadConfig = async () => {
         storedConfig = readConfigFromDisk();
         if (storedConfig) console.log('Loaded config from disk');
     }
+    legacyScanPath = storedConfig?.scanPath || '';
     config = normalizeConfigObject(storedConfig || config);
-    if (!path.isAbsolute(config.scanPath)) {
-        config.scanPath = path.resolve(config.scanPath);
-    }
+    await migrateLegacyScanPathFindings(legacyScanPath);
     if (database.isEnabled() && shouldPersistConfig) await saveConfigToDisk();
 };
-const getScanStoreSnapshot = async () => {
-    if (!await fs.pathExists(config.scanPath)) {
-        const error = new Error('Scan path does not exist');
-        error.status = 404;
-        throw error;
+const readFindingsPayload = async filePath => {
+    const content = await fs.readJson(filePath);
+    if (content && Array.isArray(content.findings)) return content.findings;
+    if (Array.isArray(content)) return content;
+    return [];
+};
+const dedupeFindings = findings => {
+    const uniqueFindings = Array.from(new Map(findings.map(finding => [getFindingKey(finding), finding])).values());
+    if (uniqueFindings.length !== findings.length) {
+        console.log(`[DEBUG] Removed ${findings.length - uniqueFindings.length} duplicate local finding records`);
     }
-    const files = await fs.readdir(config.scanPath);
-    const jsonFiles = files.filter(file => file.toLowerCase().endsWith('.json')).sort((a, b) => a.localeCompare(b, undefined, {
-        numeric: true
-    }));
-    const signatureParts = [];
-    for (const file of jsonFiles) {
-        const filePath = path.join(config.scanPath, file);
-        const stats = await fs.stat(filePath);
-        signatureParts.push(`${file}:${stats.size}:${stats.mtimeMs}`);
+    return uniqueFindings;
+};
+const migrateLegacyScanPathFindings = async legacyScanPath => {
+    if (!legacyScanPath || await fs.pathExists(findingsStorePath)) return;
+    const resolvedScanPath = path.isAbsolute(legacyScanPath) ? legacyScanPath : path.resolve(legacyScanPath);
+    if (!await fs.pathExists(resolvedScanPath)) return;
+    try {
+        const files = await fs.readdir(resolvedScanPath);
+        const jsonFiles = files.filter(file => file.toLowerCase().endsWith('.json')).sort((a, b) => a.localeCompare(b, undefined, {
+            numeric: true
+        }));
+        let allFindings = [];
+        for (const file of jsonFiles) {
+            allFindings = [...allFindings, ...await readFindingsPayload(path.join(resolvedScanPath, file))];
+        }
+        if (allFindings.length === 0) return;
+        const uniqueFindings = dedupeFindings(allFindings);
+        await fs.ensureDir(DATA_DIR);
+        await fs.writeJson(findingsStorePath, {
+            findings: uniqueFindings
+        }, {
+            spaces: 2
+        });
+        console.log(`Migrated ${uniqueFindings.length} legacy local findings into ${findingsStorePath}`);
+    } catch (error) {
+        console.warn(`Unable to migrate legacy scan path findings: ${error.message}`);
     }
-    return {
-        jsonFiles,
-        signature: `${config.scanPath}|${signatureParts.join('|')}`
-    };
+};
+const getFindingsStoreSignature = async () => {
+    if (!await fs.pathExists(findingsStorePath)) return 'missing';
+    const stats = await fs.stat(findingsStorePath);
+    return `${findingsStorePath}:${stats.size}:${stats.mtimeMs}`;
 };
 const loadFindingsFromFileStore = async () => {
-    const snapshot = await getScanStoreSnapshot();
-    if (findingsCache.scanPath === config.scanPath && findingsCache.signature === snapshot.signature) {
+    const signature = await getFindingsStoreSignature();
+    if (findingsCache.signature === signature) {
         return findingsCache.findings;
     }
-    let allFindings = [];
-    for (const file of snapshot.jsonFiles) {
-        const filePath = path.join(config.scanPath, file);
-        const content = await fs.readJson(filePath);
-        if (content.findings && Array.isArray(content.findings)) {
-            allFindings = [...allFindings, ...content.findings];
-        } else if (Array.isArray(content)) {
-            allFindings = [...allFindings, ...content];
-        }
-    }
-    const uniqueFindings = Array.from(new Map(allFindings.map(finding => [getFindingKey(finding), finding])).values());
-    if (uniqueFindings.length !== allFindings.length) {
-        console.log(`[DEBUG] Removed ${allFindings.length - uniqueFindings.length} duplicate local finding records`);
-    }
+    const allFindings = signature === 'missing' ? [] : await readFindingsPayload(findingsStorePath);
+    const uniqueFindings = dedupeFindings(allFindings);
     findingsCache = {
-        scanPath: config.scanPath,
-        signature: snapshot.signature,
+        signature,
         findings: uniqueFindings
     };
     return uniqueFindings;
@@ -736,26 +704,20 @@ const saveFindingsToStore = async (findings = [], {syncHistoryId = null} = {}) =
             ...upsertResult
         };
     }
-    const fileName = 'defectdojo_api_data.json';
-    const filePath = path.join(config.scanPath, fileName);
-    await fs.ensureDir(config.scanPath);
+    await fs.ensureDir(DATA_DIR);
     let existingFindings = [];
-    try {
-        existingFindings = await loadFindingsFromFileStore();
-    } catch {
-        existingFindings = [];
-    }
+    existingFindings = await loadFindingsFromFileStore();
     const merged = new Map(existingFindings.map(finding => [getFindingKey(finding), finding]));
     findings.forEach(finding => merged.set(getFindingKey(finding), finding));
     const mergedFindings = Array.from(merged.values());
-    await fs.writeJson(filePath, {
+    await fs.writeJson(findingsStorePath, {
         findings: mergedFindings
     }, {
         spaces: 2
     });
     return {
         storage: 'json',
-        file: fileName,
+        file: path.basename(findingsStorePath),
         inserted: findings.length,
         updated: Math.max(0, mergedFindings.length - findings.length),
         total: mergedFindings.length
@@ -2489,7 +2451,6 @@ const runDefectDojoPull = async ({
             }
         }
         emptyFindingsCache();
-        await restartScanPathWatcher();
         if (broadcastEvent) {
             broadcastDashboardSync('defectdojo-pull-complete');
         }
@@ -2532,10 +2493,13 @@ const runDefectDojoPull = async ({
 
 registerApiRoutes(app, {
     getUsers: () => users,
-    setUsers: (u) => { users = u; },
+    setUsers: (u) => { users = (Array.isArray(u) ? u : []).map(normalizeUserRecord).filter(user => user.username); },
     sessions,
     verifyPassword,
     hashPassword,
+    normalizeUserStatus,
+    normalizeUserRecord,
+    buildPublicUser,
     saveUsers,
     requireAuth,
     requireAdmin,
@@ -2625,7 +2589,7 @@ registerApiRoutes(app, {
     isInProgressStatus,
     isResolveStatus,
     buildBackendCompactedRedmineTicketRefs,
-    clearLocalScanFiles,
+    clearLocalFindingsStore,
     resetRedmineSyncStore,
     emptyFindingsCache
 });
@@ -2662,9 +2626,6 @@ const startServer = async () => {
         app.listen(PORT, () => {
             console.log(`Backend server running at http://localhost:${PORT}`);
             console.log(`Storage mode: ${database.isEnabled() ? 'postgresql' : 'json'}`);
-            restartScanPathWatcher().catch(error => {
-                console.warn(`Initial scan store watcher failed: ${error.message}`);
-            });
             startRedmineSyncPoller();
         });
     } catch (error) {

@@ -1,0 +1,49 @@
+.redmine-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-lg);
+}
+
+.settings-subsection {
+  padding: var(--space-lg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--rounded-sm, 0.6rem);
+  background: var(--bg-subtle);
+}
+
+.settings-subsection h3 {
+  margin: 0 0 var(--space-md);
+  color: var(--text-main);
+  font-size: 0.85rem;
+  font-weight: 850;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-left: 3px solid var(--primary);
+  padding-left: var(--space-sm);
+}
+
+.redmine-status-subsection {
+  grid-column: 1 / -1;
+}
+
+.priority-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-sm) var(--space-md);
+  margin-top: var(--space-md);
+  border-top: 1px dashed var(--border-subtle);
+  padding-top: var(--space-md);
+}
+
+.redmine-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: var(--space-md);
+}
+
+@media (max-width: 768px) {
+  .redmine-settings-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-md);
+  }
+}

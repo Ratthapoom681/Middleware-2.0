@@ -13,11 +13,48 @@ const verifyPassword = (password, hash, salt) => {
     return hash === verifyHash;
 };
 
+const normalizeUserStatus = (status = '') => (
+    String(status || '').trim().toLowerCase() === 'suspended' ? 'suspended' : 'active'
+);
+
+const normalizeUserRecord = (user = {}) => ({
+    username: String(user.username || '').trim(),
+    salt: user.salt || '',
+    hash: user.hash || user.password_hash || '',
+    email: String(user.email || '').trim(),
+    role: String(user.role || 'viewer').trim() || 'viewer',
+    products: Array.isArray(user.products) ? user.products : [],
+    status: normalizeUserStatus(user.status || user.accountStatus),
+    lastLoginAt: user.lastLoginAt || user.last_login_at || ''
+});
+
+const getUserPresenceStatus = (user = {}, sessions = new Map()) => (
+    Array.from(sessions.values()).some(session => session.username === user.username)
+        ? 'online'
+        : 'offline'
+);
+
+const buildPublicUser = (user = {}, sessions = new Map()) => {
+    const normalizedUser = normalizeUserRecord(user);
+    const accountStatus = normalizeUserStatus(normalizedUser.status);
+    const presenceStatus = accountStatus === 'suspended' ? 'offline' : getUserPresenceStatus(normalizedUser, sessions);
+    return {
+        username: normalizedUser.username,
+        email: normalizedUser.email,
+        role: normalizedUser.role,
+        products: normalizedUser.products,
+        status: accountStatus === 'suspended' ? 'suspended' : presenceStatus,
+        accountStatus,
+        presenceStatus,
+        lastLoginAt: normalizedUser.lastLoginAt || ''
+    };
+};
+
 const readUsersFromDisk = (usersPath) => {
     if (fs.existsSync(usersPath)) {
         try {
             const diskUsers = fs.readJsonSync(usersPath);
-            return Array.isArray(diskUsers) ? diskUsers : [];
+            return Array.isArray(diskUsers) ? diskUsers.map(normalizeUserRecord).filter(user => user.username) : [];
         } catch (err) {
             console.error('Error loading users:', err);
         }
@@ -31,8 +68,11 @@ const createDefaultAdminUser = () => {
         username: 'admin',
         salt,
         hash,
+        email: '',
         role: 'admin',
-        products: []
+        products: [],
+        status: 'active',
+        lastLoginAt: ''
     };
 };
 
@@ -63,6 +103,10 @@ const requireAdmin = (req, res, next) => {
 module.exports = {
     hashPassword,
     verifyPassword,
+    normalizeUserStatus,
+    normalizeUserRecord,
+    getUserPresenceStatus,
+    buildPublicUser,
     readUsersFromDisk,
     createDefaultAdminUser,
     createRequireAuth,

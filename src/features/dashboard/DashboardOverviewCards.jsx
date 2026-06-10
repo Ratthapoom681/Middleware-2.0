@@ -50,7 +50,6 @@ const buildSeverityCounts = (findings = []) => {
 const DashboardOverviewCards = ({
   compactedFindings = [],
   loading = false,
-  productCount = 0,
   redmineSummary,
   summary,
 }) => {
@@ -66,10 +65,6 @@ const DashboardOverviewCards = ({
             <ShieldAlert size={24} aria-hidden="true" />
             <div>
               <h2>Vulnerability Status</h2>
-              <p>
-                {compactedFindings.length.toLocaleString()} compacted findings across{' '}
-                {productCount.toLocaleString()} product{productCount !== 1 ? 's' : ''}
-              </p>
             </div>
           </div>
         </div>
@@ -98,7 +93,6 @@ const DashboardOverviewCards = ({
             <CheckCircle2 size={24} aria-hidden="true" />
             <div>
               <h2>Ticket Workflow</h2>
-              <p>Tracks tickets through five remediation stages.</p>
             </div>
           </div>
         </div>
@@ -120,7 +114,6 @@ const DashboardOverviewCards = ({
             <Gauge size={24} aria-hidden="true" />
             <div>
               <h2>Severity &amp; Risk Distribution</h2>
-              <p>Aggregates compacted finding data across all products.</p>
             </div>
           </div>
         </div>

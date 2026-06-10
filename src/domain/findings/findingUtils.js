@@ -65,7 +65,6 @@ export const normalizeNotifyIpMappings = (value = []) => {
 };
 
 export const createDefaultConfig = () => ({
-  scanPath: '',
   defectDojoUrl: '',
   defectDojoApiKey: '',
   redmineUrl: '',

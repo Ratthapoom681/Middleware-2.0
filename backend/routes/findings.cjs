@@ -188,7 +188,7 @@ module.exports = function(ctx) {
         try {
             if (ctx.database.isEnabled()) {
                 await ctx.database.clearAllData();
-                await ctx.clearLocalScanFiles();
+                await ctx.clearLocalFindingsStore();
                 await ctx.resetRedmineSyncStore();
                 ctx.emptyFindingsCache();
                 ctx.broadcastDashboardSync('scan-store-cleared');
@@ -196,12 +196,12 @@ module.exports = function(ctx) {
                     message: 'Database scan, sync, ticket, and review data cleared'
                 });
             }
-            await ctx.clearLocalScanFiles();
+            await ctx.clearLocalFindingsStore();
             await ctx.resetRedmineSyncStore();
             ctx.emptyFindingsCache();
             ctx.broadcastDashboardSync('scan-store-cleared');
             res.json({
-                message: 'Local scan and sync data cleared'
+                message: 'Local findings and sync data cleared'
             });
         } catch (error) {
             console.error('Failed to clear local data:', error);

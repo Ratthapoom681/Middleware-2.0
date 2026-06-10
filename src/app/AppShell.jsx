@@ -1,14 +1,11 @@
 import {
   AlertTriangle,
   Bell,
-  BellRing,
   History,
   LogOut,
   RefreshCw,
   Settings,
-  Users,
 } from 'lucide-react';
-import ThemeToggle from '../shared/ui/ThemeToggle';
 
 const AppShell = ({
   children,
@@ -38,12 +35,6 @@ const AppShell = ({
         onClick: () => onNavigate('#sync-history'),
       },
       {
-        label: 'Management Dashboard',
-        icon: BellRing,
-        active: currentHash === '#management-dashboard',
-        onClick: () => onNavigate('#management-dashboard'),
-      },
-      {
         label: 'Mitigation Review',
         icon: Bell,
         active: currentHash === '#mitigation-review',
@@ -52,15 +43,9 @@ const AppShell = ({
         onClick: onOpenMitigationReview,
       },
       {
-        label: 'Users',
-        icon: Users,
-        active: currentHash === '#users',
-        onClick: () => onNavigate('#users'),
-      },
-      {
         label: 'Settings',
         icon: Settings,
-        active: currentHash === '#settings',
+        active: currentHash.startsWith('#settings'),
         onClick: () => onNavigate('#settings'),
       },
     ] : []),
@@ -111,10 +96,6 @@ const AppShell = ({
         </nav>
 
         <div className="sidebar-footer">
-          <div className="sidebar-theme-row">
-            <span>Theme</span>
-            <ThemeToggle />
-          </div>
           <button
             type="button"
             className="sidebar-nav-item utility"

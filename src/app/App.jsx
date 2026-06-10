@@ -11,11 +11,10 @@ import {
   Search,
   ChevronDown,
   Check,
-  Bell,
-  Users
+  Bell
 } from 'lucide-react';
 import { AUTH_EXPIRED_EVENT, apiFetch, getCurrentUser, openDashboardSyncStream, removeAuthToken, removeCurrentUser } from '../shared/api/api';
-import Login from '../features/auth/Login';
+import LoginPage from '../features/auth/LoginPage';
 import SettingsView from '../features/settings/Settings';
 import DashboardPage from '../features/dashboard/DashboardPage';
 import {
@@ -31,12 +30,11 @@ import {
 import FindingsPage from '../features/findings/FindingsPage';
 import ProductDashboardPage from '../features/products/ProductDashboardPage';
 import ProductsPage from '../features/products/ProductsPage';
-import NotifyManagementPage from '../features/notify/NotifyManagementPage';
 import SyncHistory from '../features/sync-history/SyncHistory';
 import MitigationReview from '../features/admin/MitigationReview/MitigationReview';
-import UserManagement from '../features/admin/UserManagement/UserManagement';
 import AppShell from './AppShell';
 import { PageHeader, PageMain } from '../shared/ui/Page';
+import { DataTableRow, DataTableCell } from '../shared/ui/DataTable/DataTable';
 import { APP_ROUTE_IDS, resolveAppRoute } from './routes';
 import {
   PULL_SEVERITY_OPTIONS,
@@ -182,6 +180,7 @@ const REDMINE_STATUS_FILTER_OPTIONS = [
   { id: 'resolve', label: 'Resolve' },
   { id: 'closed', label: 'Closed' },
 ];
+const FINDINGS_SEVERITY_FILTER_OPTIONS = ['Critical', 'High', 'Medium', 'Low'];
 
 const normalizeRedmineStatusFilter = (value) => {
   const normalized = cleanText(value).toLowerCase().replace(/[\s-]+/g, '_');
@@ -189,7 +188,7 @@ const normalizeRedmineStatusFilter = (value) => {
 };
 
 const normalizeSeverityRouteFilter = (value) => (
-  PULL_SEVERITY_OPTIONS.find(severity => severity.toLowerCase() === cleanText(value).toLowerCase()) || 'All'
+  FINDINGS_SEVERITY_FILTER_OPTIONS.find(severity => severity.toLowerCase() === cleanText(value).toLowerCase()) || 'All'
 );
 
 const getRedmineStatusFilterLabel = (statusKey) => (
@@ -1448,9 +1447,12 @@ function App() {
     const rowStyle = { animationDelay: `${Math.min(idx * 40, 600)}ms` };
 
     return (
-      <article
+      <DataTableRow
         key={getFindingIdentity(finding, idx)}
-        className={`finding-row findings-table-row severity-${severityClass} findings-card-enter ${selected ? 'selected' : ''}`}
+        className={`finding-row findings-table-row findings-card-enter`}
+        interactive={true}
+        selected={selected}
+        tone={severityClass}
         onClick={() => setSelectedFinding(finding)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -1458,36 +1460,33 @@ function App() {
             setSelectedFinding(finding);
           }
         }}
-        role="row"
-        tabIndex={0}
-        aria-selected={selected}
-        aria-label={`View details for ${finding.title || 'finding'}`}
+        ariaLabel={`View details for ${finding.title || 'finding'}`}
         style={rowStyle}
       >
-        <div className={`findings-table-cell cell-id ${redmineIssueId ? 'has-id' : ''}`} role="cell" data-label="ID">
+        <DataTableCell className={`cell-id ${redmineIssueId ? 'has-id' : ''}`} label="ID">
           {redmineIssueId ? `#${redmineIssueId}` : <span className="cell-empty">-</span>}
-        </div>
-        <div className="findings-table-cell cell-company" role="cell" data-label="Company">
+        </DataTableCell>
+        <DataTableCell className="cell-company" label="Company">
           {formatCompanyName(finding)}
-        </div>
-        <div className="findings-table-cell cell-severity" role="cell" data-label="Severity">
+        </DataTableCell>
+        <DataTableCell className="cell-severity" label="Severity">
           <span className={`severity-badge badge-${severityClass}`}>
             {severity}
           </span>
-        </div>
-        <div className="findings-table-cell cell-name" role="cell" data-label="Name">
+        </DataTableCell>
+        <DataTableCell className="cell-name" label="Name">
           <strong className="cell-name-title">{finding.title || 'Untitled finding'}</strong>
           <small className="cell-name-subtitle">{formatRouteSummary(finding)}</small>
-        </div>
-        <div className="findings-table-cell cell-finding" role="cell" data-label="Finding">
+        </DataTableCell>
+        <DataTableCell className="cell-finding" label="Finding">
           <FileText size={14} aria-hidden="true" />
           <span>{sourceFindingCount}</span>
-        </div>
-        <div className="findings-table-cell cell-endpoints" role="cell" data-label="Endpoints">
+        </DataTableCell>
+        <DataTableCell className="cell-endpoints" label="Endpoints">
           <Server size={14} aria-hidden="true" />
           <span>{endpointCount || <span className="cell-empty">-</span>}</span>
-        </div>
-        <div className="findings-table-cell cell-cve-cwe" role="cell" data-label="CVEs/CWEs">
+        </DataTableCell>
+        <DataTableCell className="cell-cve-cwe" label="CVEs/CWEs">
           {cveCount > 0 || cweCount > 0 ? (
             <>
               <span className="cve-cwe-tag cve">{cveCount} CVE</span>
@@ -1497,11 +1496,11 @@ function App() {
           ) : (
             <span className="cell-empty">-</span>
           )}
-        </div>
-        <div className="findings-table-cell cell-date" role="cell" data-label="Date">
+        </DataTableCell>
+        <DataTableCell className="cell-date" label="Date">
           {finding.date || <span className="cell-empty">-</span>}
-        </div>
-        <div className="findings-table-cell cell-status" role="cell" data-label="Status">
+        </DataTableCell>
+        <DataTableCell className="cell-status" label="Status">
           {findingRedmineSync ? (
             <span className={getRedmineSyncBadgeClass(findingRedmineSync)}>
               {formatFindingTableRedmineStatus(findingRedmineSync)}
@@ -1526,8 +1525,8 @@ function App() {
               <ExternalLink size={16} />
             </button>
           )}
-        </div>
-      </article>
+        </DataTableCell>
+      </DataTableRow>
     );
   };
 
@@ -2439,7 +2438,7 @@ function App() {
     : 0;
 
   if (!user) {
-    return <Login onLoginSuccess={handleLoginSuccess} />;
+    return <LoginPage onLoginSuccess={handleLoginSuccess} />;
   }
 
   const renderMitigationReviewToast = () => {
@@ -2556,23 +2555,8 @@ function App() {
     if (user?.role !== 'admin') {
       return null;
     }
-    return renderShell(
-      <>
-        <NotifyManagementPage
-          compactedFindings={allCompactedFindings}
-          config={config}
-          onRefresh={async () => {
-            await Promise.all([
-              fetchFindings({ silent: true }),
-              fetchDashboardData({ silent: true }),
-            ]);
-          }}
-          onSaveConfig={updateConfig}
-          products={scopeProducts}
-        />
-        {renderMitigationReviewToast()}
-      </>
-    );
+    setHashRoute('#settings?tab=mapped-assets');
+    return null;
   }
 
   if (currentRoute.id === APP_ROUTE_IDS.findings || currentRoute.id === APP_ROUTE_IDS.productFindings) {
@@ -2605,19 +2589,8 @@ function App() {
     if (user?.role !== 'admin') {
       return null;
     }
-    return renderShell(
-      <>
-        <PageHeader
-          icon={Users}
-          eyebrow="Administration"
-          title="User Management"
-        />
-        <PageMain>
-          <UserManagement user={user} />
-        </PageMain>
-        {renderMitigationReviewToast()}
-      </>
-    );
+    setHashRoute('#settings?tab=users');
+    return null;
   }
 
   if (currentRoute.id === APP_ROUTE_IDS.settings) {
@@ -2631,7 +2604,7 @@ function App() {
           eyebrow="Administration"
           title="Configuration & Settings"
         />
-        <PageMain className="settings-main" narrow>
+        <PageMain className="settings-main">
           <SettingsView 
             config={config} 
             onSaveConfig={async (newConfig) => {
@@ -2667,6 +2640,14 @@ function App() {
             onDownloadConfigBackup={downloadConfigBackup}
             onRestoreConfigBackup={restoreConfigBackup}
             user={user}
+            compactedFindings={allCompactedFindings}
+            products={scopeProducts}
+            onRefreshMappedAssets={async () => {
+              await Promise.all([
+                fetchFindings({ silent: true }),
+                fetchDashboardData({ silent: true }),
+              ]);
+            }}
           />
         </PageMain>
         {renderMitigationReviewToast()}

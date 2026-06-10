@@ -7,7 +7,6 @@ const { splitDelimitedFilterValue, runWithConcurrency, createProgressLogger } = 
 const DEFECTDOJO_CONTEXT_CONCURRENCY = 5;
 
 const CONFIG_FIELDS = [
-    'scanPath',
     'defectDojoUrl',
     'defectDojoApiKey',
     'redmineUrl',

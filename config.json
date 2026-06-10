@@ -1,5 +1,4 @@
 {
-  "scanPath": "C:\\Users\\ifilm\\เดสก์ท็อป\\Scan CSV File\\TestApiJson",
   "defectDojoUrl": "",
   "defectDojoApiKey": "",
   "redmineUrl": "",
@@ -25,5 +24,6 @@
     "is_mitigated": "false",
     "test__engagement__product": "",
     "test__engagement": ""
-  }
+  },
+  "notifyIpMappings": []
 }

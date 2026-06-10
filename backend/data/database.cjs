@@ -290,8 +290,11 @@ const init = async () => {
             username text PRIMARY KEY CHECK (length(trim(username)) > 0),
             salt text NOT NULL,
             password_hash text NOT NULL,
+            email text NOT NULL DEFAULT '',
             role text NOT NULL CHECK (length(trim(role)) > 0),
             products jsonb NOT NULL DEFAULT '[]'::jsonb,
+            status text NOT NULL DEFAULT 'active',
+            last_login_at timestamptz,
             created_at timestamptz NOT NULL DEFAULT now(),
             updated_at timestamptz NOT NULL DEFAULT now()
         )
@@ -372,7 +375,7 @@ const withTransaction = async (callback) => {
 
 const loadUsers = async () => {
     const { rows } = await pool.query(`
-        SELECT username, salt, password_hash, role, products
+        SELECT username, salt, password_hash, email, role, products, status, last_login_at
         FROM ${TABLES.users}
         ORDER BY username
     `);
@@ -381,8 +384,11 @@ const loadUsers = async () => {
         username: row.username,
         salt: row.salt,
         hash: row.password_hash,
+        email: row.email || '',
         role: row.role,
-        products: normalizeArray(parseJsonValue(row.products, []))
+        products: normalizeArray(parseJsonValue(row.products, [])),
+        status: row.status || 'active',
+        lastLoginAt: toIsoString(row.last_login_at) || ''
     }));
 };
 
@@ -396,21 +402,27 @@ const saveUsers = async (users = []) => {
 
         for (const user of normalizedUsers) {
             await client.query(`
-                INSERT INTO ${TABLES.users} (username, salt, password_hash, role, products)
-                VALUES ($1, $2, $3, $4, $5::jsonb)
+                INSERT INTO ${TABLES.users} (username, salt, password_hash, email, role, products, status, last_login_at)
+                VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
                 ON CONFLICT (username)
                 DO UPDATE SET
                     salt = EXCLUDED.salt,
                     password_hash = EXCLUDED.password_hash,
+                    email = EXCLUDED.email,
                     role = EXCLUDED.role,
                     products = EXCLUDED.products,
+                    status = EXCLUDED.status,
+                    last_login_at = EXCLUDED.last_login_at,
                     updated_at = now()
             `, [
                 user.username,
                 user.salt,
                 user.hash,
+                user.email || '',
                 user.role,
-                JSON.stringify(normalizeArray(user.products))
+                JSON.stringify(normalizeArray(user.products)),
+                user.status || 'active',
+                user.lastLoginAt || null
             ]);
         }
     });

@@ -103,7 +103,7 @@ async function run() {
     {
         const res = await request('GET', '/api/config', null, authHeaders());
         assert('GET /api/config returns 200', res.status === 200, `got ${res.status}`);
-        assert('  has scanPath', typeof res.data?.scanPath === 'string');
+        assert('  omits scanPath', res.data?.scanPath === undefined);
         assert('  has defectDojoUrl', res.data?.defectDojoUrl !== undefined);
         assert('  has redmineUrl', res.data?.redmineUrl !== undefined);
         assert('  has pullFilters', typeof res.data?.pullFilters === 'object');
@@ -112,8 +112,9 @@ async function run() {
 
     // 4b. Save config (with a test value)
     {
-        const res = await request('POST', '/api/config', { ...originalConfig, redmineUrl: 'https://test-redmine.local' }, authHeaders());
+        const res = await request('POST', '/api/config', { ...originalConfig, scanPath: 'C:\\legacy\\scan-path', redmineUrl: 'https://test-redmine.local' }, authHeaders());
         assert('POST /api/config returns 200', res.status === 200, `got ${res.status}: ${res.raw}`);
+        assert('  strips incoming scanPath', res.data?.config?.scanPath === undefined);
     }
 
     // 4c. Verify config was saved
@@ -121,6 +122,7 @@ async function run() {
         const res = await request('GET', '/api/config', null, authHeaders());
         assert('  config persisted redmineUrl', res.data?.redmineUrl === 'https://test-redmine.local',
             `got ${res.data?.redmineUrl}`);
+        assert('  config did not persist scanPath', res.data?.scanPath === undefined);
     }
 
     // 4d. Restore original config
@@ -141,35 +143,90 @@ async function run() {
     {
         const res = await request('POST', '/api/users', {
             username: 'smoke_tester',
+            email: 'smoke@example.com',
             password: 'test123',
             role: 'viewer',
-            products: ['TestProduct']
+            products: ['TestProduct'],
+            status: 'active'
         }, authHeaders());
         assert('POST /api/users (create) returns 200', res.status === 200, `got ${res.status}: ${res.raw}`);
     }
 
     // 5c. Verify user was created
+    let smokeLastLoginAt = '';
     {
         const res = await request('GET', '/api/users', null, authHeaders());
         const found = res.data?.find(u => u.username === 'smoke_tester');
         assert('  smoke_tester exists', !!found);
+        assert('  smoke_tester email is returned', found?.email === 'smoke@example.com');
         assert('  smoke_tester role is viewer', found?.role === 'viewer');
         assert('  smoke_tester has products', Array.isArray(found?.products) && found.products.includes('TestProduct'));
+        assert('  smoke_tester starts active', found?.accountStatus === 'active');
+        assert('  smoke_tester starts offline', found?.status === 'offline' && found?.presenceStatus === 'offline');
+        assert('  smoke_tester has no last login yet', !found?.lastLoginAt);
     }
 
     // 5d. Login as test user
+    let smokeToken = '';
     {
         const res = await request('POST', '/api/login', { username: 'smoke_tester', password: 'test123' });
         assert('  smoke_tester can login', res.status === 200);
+        smokeToken = res.data?.token || '';
+        smokeLastLoginAt = res.data?.user?.lastLoginAt || '';
+        assert('  smoke_tester login returns online status', res.data?.user?.status === 'online');
+        assert('  smoke_tester login records lastLoginAt', Boolean(smokeLastLoginAt));
     }
 
-    // 5e. Delete test user
+    // 5e. Verify presence and logout
+    {
+        const onlineRes = await request('GET', '/api/users', null, authHeaders());
+        const onlineUser = onlineRes.data?.find(u => u.username === 'smoke_tester');
+        assert('  smoke_tester appears online after login', onlineUser?.status === 'online' && onlineUser?.presenceStatus === 'online');
+        assert('  smoke_tester last login is visible', onlineUser?.lastLoginAt === smokeLastLoginAt);
+
+        const logoutRes = await request('POST', '/api/logout', null, { Authorization: `Bearer ${smokeToken}` });
+        assert('  smoke_tester can logout', logoutRes.status === 200);
+
+        const offlineRes = await request('GET', '/api/users', null, authHeaders());
+        const offlineUser = offlineRes.data?.find(u => u.username === 'smoke_tester');
+        assert('  smoke_tester appears offline after logout', offlineUser?.status === 'offline' && offlineUser?.presenceStatus === 'offline');
+        assert('  smoke_tester keeps last login after logout', offlineUser?.lastLoginAt === smokeLastLoginAt);
+    }
+
+    // 5f. Suspend and reactivate test user
+    {
+        const suspendRes = await request('POST', '/api/users', {
+            username: 'smoke_tester',
+            email: 'smoke@example.com',
+            role: 'viewer',
+            products: ['TestProduct'],
+            status: 'suspended'
+        }, authHeaders());
+        assert('  smoke_tester can be suspended', suspendRes.status === 200, `got ${suspendRes.status}: ${suspendRes.raw}`);
+
+        const blockedLogin = await request('POST', '/api/login', { username: 'smoke_tester', password: 'test123' });
+        assert('  suspended smoke_tester cannot login', blockedLogin.status === 403, `got ${blockedLogin.status}`);
+
+        const reactivateRes = await request('POST', '/api/users', {
+            username: 'smoke_tester',
+            email: 'smoke@example.com',
+            role: 'viewer',
+            products: ['TestProduct'],
+            status: 'active'
+        }, authHeaders());
+        assert('  smoke_tester can be reactivated', reactivateRes.status === 200, `got ${reactivateRes.status}: ${reactivateRes.raw}`);
+
+        const relogin = await request('POST', '/api/login', { username: 'smoke_tester', password: 'test123' });
+        assert('  reactivated smoke_tester can login', relogin.status === 200, `got ${relogin.status}`);
+    }
+
+    // 5g. Delete test user
     {
         const res = await request('DELETE', '/api/users/smoke_tester', null, authHeaders());
         assert('DELETE /api/users/smoke_tester returns 200', res.status === 200, `got ${res.status}`);
     }
 
-    // 5f. Verify deleted
+    // 5h. Verify deleted
     {
         const res = await request('GET', '/api/users', null, authHeaders());
         const found = res.data?.find(u => u.username === 'smoke_tester');
@@ -180,10 +237,9 @@ async function run() {
     console.log('\n6. Findings');
     {
         const res = await request('GET', '/api/findings', null, authHeaders());
-        const noData = res.status === 404 && res.data?.error === 'Scan path does not exist';
-        assert('GET /api/findings returns 200 or 404 (no data)', res.status === 200 || noData,
+        assert('GET /api/findings returns 200', res.status === 200,
             `got ${res.status}: ${res.data?.error || ''}`);
-        assert('  is array or no-data response', Array.isArray(res.data) || noData);
+        assert('  is array response', Array.isArray(res.data));
     }
 
     // 7. Logs

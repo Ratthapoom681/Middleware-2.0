@@ -1,6 +1,7 @@
 import { AlertTriangle, Database, RefreshCw } from 'lucide-react';
 import DashboardOverviewCards from './DashboardOverviewCards';
 import { PageHeader, PageMain } from '../../shared/ui/Page';
+import './Dashboard.css';
 
 const DashboardPage = ({
   bulkOpeningRedmine,

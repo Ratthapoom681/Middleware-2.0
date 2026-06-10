@@ -3,28 +3,36 @@ const express = require('express');
 module.exports = function(ctx) {
     const router = express.Router();
 
-    router.post('/login', (req, res) => {
+    router.post('/login', async (req, res) => {
         const {username, password} = req.body;
         const users = ctx.getUsers();
-        const user = users.find(u => u.username === username);
+        const userIndex = users.findIndex(u => u.username === username);
+        const user = userIndex >= 0 ? ctx.normalizeUserRecord(users[userIndex]) : null;
         if (!user || !ctx.verifyPassword(password, user.hash, user.salt)) {
             return res.status(401).json({
                 error: 'Invalid credentials'
             });
         }
+        if (ctx.normalizeUserStatus(user.status) === 'suspended') {
+            return res.status(403).json({
+                error: 'User account is suspended'
+            });
+        }
+        user.lastLoginAt = new Date().toISOString();
+        users[userIndex] = user;
+        await ctx.saveUsers();
         const token = ctx.crypto.randomBytes(32).toString('hex');
         ctx.sessions.set(token, {
             username: user.username,
+            email: user.email,
             role: user.role,
-            products: user.products
+            products: user.products,
+            status: user.status,
+            lastLoginAt: user.lastLoginAt
         });
         res.json({
             token,
-            user: {
-                username: user.username,
-                role: user.role,
-                products: user.products
-            }
+            user: ctx.buildPublicUser(user, ctx.sessions)
         });
     });
 
@@ -39,15 +47,11 @@ module.exports = function(ctx) {
 
     router.get('/users', ctx.requireAuth, ctx.requireAdmin, (req, res) => {
         const users = ctx.getUsers();
-        res.json(users.map(u => ({
-            username: u.username,
-            role: u.role,
-            products: u.products
-        })));
+        res.json(users.map(u => ctx.buildPublicUser(u, ctx.sessions)));
     });
 
     router.post('/users', ctx.requireAuth, ctx.requireAdmin, async (req, res) => {
-        const {username, password, role, products} = req.body;
+        const {username, password, role, products, email, status} = req.body;
         if (!username || !role) {
             return res.status(400).json({
                 error: 'Username and role are required'
@@ -55,9 +59,23 @@ module.exports = function(ctx) {
         }
         const users = ctx.getUsers();
         const existingIndex = users.findIndex(u => u.username === username);
+        const nextStatus = ctx.normalizeUserStatus(status);
+        const nextEmail = String(email || '').trim();
+        const nextProducts = Array.isArray(products) ? products : [];
+        if (req.user.username === username && nextStatus === 'suspended') {
+            return res.status(400).json({
+                error: 'Cannot suspend yourself'
+            });
+        }
         if (existingIndex >= 0) {
-            users[existingIndex].role = role;
-            users[existingIndex].products = Array.isArray(products) ? products : [];
+            const existingUser = ctx.normalizeUserRecord(users[existingIndex]);
+            users[existingIndex] = {
+                ...existingUser,
+                email: nextEmail,
+                role,
+                products: nextProducts,
+                status: nextStatus
+            };
             if (password) {
                 const {salt, hash} = ctx.hashPassword(password);
                 users[existingIndex].salt = salt;
@@ -72,22 +90,34 @@ module.exports = function(ctx) {
                 username,
                 salt,
                 hash,
+                email: nextEmail,
                 role,
-                products: Array.isArray(products) ? products : []
+                products: nextProducts,
+                status: nextStatus,
+                lastLoginAt: ''
             });
         }
         await ctx.saveUsers();
+        const savedUser = users.find(u => u.username === username);
         for (const [token, session] of ctx.sessions.entries()) {
             if (session.username === username) {
-                ctx.sessions.set(token, {
-                    username,
-                    role,
-                    products: Array.isArray(products) ? products : []
-                });
+                if (nextStatus === 'suspended') {
+                    ctx.sessions.delete(token);
+                } else {
+                    ctx.sessions.set(token, {
+                        username,
+                        email: nextEmail,
+                        role,
+                        products: nextProducts,
+                        status: nextStatus,
+                        lastLoginAt: savedUser?.lastLoginAt || ''
+                    });
+                }
             }
         }
         res.json({
-            message: 'User saved successfully'
+            message: 'User saved successfully',
+            user: ctx.buildPublicUser(savedUser, ctx.sessions)
         });
     });
 

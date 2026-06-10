@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Database, RefreshCw, Save, Shield } from 'lucide-react';
+import { Save, Shield, Globe, Sliders, Layers, Users, FolderSync } from 'lucide-react';
+import MappedAssetsPage from './MappedAssetsTab/MappedAssetsPage';
+import UserManagement from './UserManagement/UserManagement';
+import ConnectionTab from './ConnectionTab/ConnectionTab';
+import RedmineStatusTab from './RedmineStatusTab/RedmineStatusTab';
+import BackupTab from './BackupTab/BackupTab';
+import './Settings.css';
 
 const DEFAULT_REDMINE_STATUS_POLL_SECONDS = 60;
 const REDMINE_PRIORITY_FIELDS = [
@@ -33,12 +39,39 @@ const Settings = ({
   onDownloadConfigBackup,
   onRestoreConfigBackup,
   user,
+  compactedFindings,
+  products,
+  onRefreshMappedAssets,
 }) => {
   const [tempConfig, setTempConfig] = useState(config);
   const [savingConfig, setSavingConfig] = useState(false);
   const [rebuildingRedmine, setRebuildingRedmine] = useState(false);
   const [configSaveMessage, setConfigSaveMessage] = useState('');
   const configImportInputRef = useRef(null);
+
+  // Synchronize active tab with URL hash query string
+  const [activeTab, setActiveTab] = useState(() => {
+    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    return params.get('tab') || 'connection';
+  });
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+      const tab = params.get('tab') || 'connection';
+      setActiveTab(tab);
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    const hashWithoutQuery = window.location.hash.split('?')[0] || '#settings';
+    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    params.set('tab', tab);
+    window.location.hash = `${hashWithoutQuery}?${params.toString()}`;
+  };
 
   useEffect(() => {
     queueMicrotask(() => setTempConfig(config));
@@ -101,246 +134,122 @@ const Settings = ({
 
   return (
     <div className="settings-view">
-      <section className="config-section config-section-spaced">
-        <h2 className="section-title">Data Actions</h2>
-        <div className="action-row">
-          <button type="button" className="btn-danger" onClick={onClearData}>
-            <Database size={16} />
-            Clear All Data
+      <div className="settings-container">
+        
+        {/* Left Column: Subpage Tab List */}
+        <aside className="settings-tabs-sidebar" aria-label="Settings navigation">
+          <button
+            type="button"
+            className={`settings-tab-btn ${activeTab === 'connection' ? 'active' : ''}`}
+            onClick={() => handleTabChange('connection')}
+          >
+            <Globe size={18} />
+            <span>Connection</span>
           </button>
           <button
             type="button"
-            className="btn-secondary"
-            onClick={handleRebuildRedmineStatus}
-            disabled={rebuildingRedmine}
+            className={`settings-tab-btn ${activeTab === 'redmine-status' ? 'active' : ''}`}
+            onClick={() => handleTabChange('redmine-status')}
           >
-            <RefreshCw size={16} className={rebuildingRedmine ? 'spin' : ''} />
-            {rebuildingRedmine ? 'Rebuilding...' : 'Rebuild Redmine Status'}
+            <Sliders size={18} />
+            <span>Redmine Status</span>
           </button>
+          <button
+            type="button"
+            className={`settings-tab-btn ${activeTab === 'mapped-assets' ? 'active' : ''}`}
+            onClick={() => handleTabChange('mapped-assets')}
+          >
+            <Layers size={18} />
+            <span>Mapped Assets</span>
+          </button>
+          <button
+            type="button"
+            className={`settings-tab-btn ${activeTab === 'users' ? 'active' : ''}`}
+            onClick={() => handleTabChange('users')}
+          >
+            <Users size={18} />
+            <span>Users</span>
+          </button>
+          <button
+            type="button"
+            className={`settings-tab-btn ${activeTab === 'backup' ? 'active' : ''}`}
+            onClick={() => handleTabChange('backup')}
+          >
+            <FolderSync size={18} />
+            <span>Backup</span>
+          </button>
+        </aside>
+
+        {/* Right Column: Tab Content Pane */}
+        <div className="settings-tab-content">
+          
+          {/* Tab 1: Connection */}
+          {activeTab === 'connection' && (
+            <ConnectionTab tempConfig={tempConfig} setTempConfig={setTempConfig} />
+          )}
+
+          {/* Tab 2: Redmine Status */}
+          {activeTab === 'redmine-status' && (
+            <RedmineStatusTab
+              tempConfig={tempConfig}
+              setTempConfig={setTempConfig}
+              updateRedmineStatusPollInterval={updateRedmineStatusPollInterval}
+              normalizeRedmineStatusPollIntervalDraft={normalizeRedmineStatusPollIntervalDraft}
+              DEFAULT_REDMINE_STATUS_POLL_SECONDS={DEFAULT_REDMINE_STATUS_POLL_SECONDS}
+              REDMINE_PRIORITY_FIELDS={REDMINE_PRIORITY_FIELDS}
+            />
+          )}
+
+          {/* Tab 3: Mapped Assets */}
+          {activeTab === 'mapped-assets' && (
+            <div className="settings-tab-pane embedded-pane">
+              <MappedAssetsPage
+                compactedFindings={compactedFindings}
+                config={config}
+                onRefresh={onRefreshMappedAssets}
+                onSaveConfig={onSaveConfig}
+                products={products}
+                embedded={true}
+              />
+            </div>
+          )}
+
+          {/* Tab 4: Users */}
+          {activeTab === 'users' && (
+            <div className="settings-tab-pane embedded-pane">
+              <UserManagement user={user} />
+            </div>
+          )}
+
+          {/* Tab 5: Backup */}
+          {activeTab === 'backup' && (
+            <BackupTab
+              configBackups={configBackups}
+              selectedConfigBackup={selectedConfigBackup}
+              setSelectedConfigBackup={setSelectedConfigBackup}
+              onBackupConfig={onBackupConfig}
+              onExportConfig={onExportConfig}
+              onImportConfig={onImportConfig}
+              onDownloadConfigBackup={onDownloadConfigBackup}
+              onRestoreConfigBackup={onRestoreConfigBackup}
+              onClearData={onClearData}
+              handleRebuildRedmineStatus={handleRebuildRedmineStatus}
+              rebuildingRedmine={rebuildingRedmine}
+              configImportInputRef={configImportInputRef}
+            />
+          )}
         </div>
-        <p className="field-hint">
-          Clear removes the local Redmine cache. Rebuild checks Redmine read-only against current DefectDojo findings.
-        </p>
-      </section>
-
-      <section className="config-section config-section-spaced">
-        <h2 className="section-title">Backup Config</h2>
-        <div className="action-row">
-          <button type="button" className="btn-secondary" onClick={onBackupConfig}>
-            Backup Now
-          </button>
-          <button type="button" className="btn-secondary" onClick={onExportConfig}>
-            Export JSON
-          </button>
-          <button type="button" className="btn-secondary" onClick={() => configImportInputRef.current?.click()}>
-            Import JSON
-          </button>
-          <input
-            ref={configImportInputRef}
-            type="file"
-            id="config-import"
-            accept="application/json,.json"
-            onChange={onImportConfig}
-            className="sr-only"
-          />
-          <select
-            className="backup-select"
-            aria-label="Saved configuration backups"
-            value={selectedConfigBackup}
-            onChange={(e) => setSelectedConfigBackup(e.target.value)}
-          >
-            <option value="">No saved backups</option>
-            {configBackups.map(backup => (
-              <option key={backup.fileName} value={backup.fileName}>
-                {backup.fileName}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={onDownloadConfigBackup}
-            disabled={!selectedConfigBackup}
-          >
-            Download Selected
-          </button>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={onRestoreConfigBackup}
-            disabled={!selectedConfigBackup}
-          >
-            Restore Selected
-          </button>
-        </div>
-      </section>
-
-      <div className="config-grid">
-        <section className="config-section">
-          <h2 className="section-title">Connection</h2>
-          <div className="form-group">
-            <label htmlFor="defectdojo-url">DefectDojo URL</label>
-            <input
-              id="defectdojo-url"
-              type="text"
-              value={tempConfig.defectDojoUrl}
-              onChange={(e) => setTempConfig({...tempConfig, defectDojoUrl: e.target.value})}
-              placeholder="https://defectdojo.example.com"
-            />
-          </div>
-          <div className="form-group">
-            <label htmlFor="defectdojo-api-key">API Key</label>
-            <input
-              id="defectdojo-api-key"
-              type="password"
-              value={tempConfig.defectDojoApiKey}
-              onChange={(e) => setTempConfig({...tempConfig, defectDojoApiKey: e.target.value})}
-              placeholder="API Token"
-            />
-          </div>
-          <div className="form-group">
-            <label htmlFor="scan-path">Scan Path</label>
-            <input
-              id="scan-path"
-              type="text"
-              value={tempConfig.scanPath}
-              onChange={(e) => setTempConfig({...tempConfig, scanPath: e.target.value})}
-            />
-          </div>
-        </section>
-
-        <section className="config-section redmine-config-section">
-          <h2 className="section-title">Redmine</h2>
-          <div className="redmine-settings-grid">
-            <div className="settings-subsection">
-              <h3>Connection</h3>
-              <div className="form-group">
-                <label htmlFor="redmine-url">Redmine URL</label>
-                <input
-                  id="redmine-url"
-                  type="text"
-                  value={tempConfig.redmineUrl}
-                  onChange={(e) => setTempConfig({ ...tempConfig, redmineUrl: e.target.value })}
-                  placeholder="https://redmine.example.com"
-                />
-              </div>
-              <div className="form-group">
-                <label htmlFor="redmine-api-key">API Key</label>
-                <input
-                  id="redmine-api-key"
-                  type="password"
-                  value={tempConfig.redmineApiKey}
-                  onChange={(e) => setTempConfig({ ...tempConfig, redmineApiKey: e.target.value })}
-                  placeholder="Redmine API Key"
-                />
-              </div>
-              <div className="form-group">
-                <label htmlFor="redmine-status-poll">Status poll interval</label>
-                <input
-                  id="redmine-status-poll"
-                  type="text"
-                  inputMode="numeric"
-                  value={tempConfig.redmineStatusPollIntervalSeconds ?? DEFAULT_REDMINE_STATUS_POLL_SECONDS}
-                  onChange={(e) => updateRedmineStatusPollInterval(e.target.value)}
-                  onBlur={normalizeRedmineStatusPollIntervalDraft}
-                  placeholder={`${DEFAULT_REDMINE_STATUS_POLL_SECONDS} seconds minimum`}
-                />
-                <p className="field-hint">Set to 0 to disable automatic Redmine status polling.</p>
-              </div>
-            </div>
-
-            <div className="settings-subsection">
-              <h3>Priorities</h3>
-              <div className="form-group">
-                <label htmlFor="redmine-priority-default">Default Priority ID</label>
-                <input
-                  id="redmine-priority-default"
-                  type="text"
-                  value={tempConfig.redminePriorityId || ''}
-                  onChange={(e) => setTempConfig({ ...tempConfig, redminePriorityId: e.target.value })}
-                  placeholder="used only when severity is missing"
-                />
-                <p className="field-hint">Set the per-severity IDs below so High, Medium, Low, and Info do not inherit a Critical default.</p>
-              </div>
-              {REDMINE_PRIORITY_FIELDS.map(({ severity, field, label }) => (
-                <div className="form-group" key={field}>
-                  <label htmlFor={`redmine-priority-${severity.toLowerCase()}`}>{label}</label>
-                  <input
-                    id={`redmine-priority-${severity.toLowerCase()}`}
-                    type="text"
-                    value={tempConfig[field] || ''}
-                    onChange={(e) => setTempConfig({ ...tempConfig, [field]: e.target.value })}
-                    placeholder={`Redmine priority ID for ${severity}`}
-                  />
-                </div>
-              ))}
-            </div>
-
-            <div className="settings-subsection redmine-status-subsection">
-              <h3>Status IDs</h3>
-              <div className="redmine-status-grid">
-                <div className="form-group">
-                  <label htmlFor="redmine-status-new">New</label>
-                  <input
-                    id="redmine-status-new"
-                    type="text"
-                    value={tempConfig.redmineStatusNewId || ''}
-                    onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusNewId: e.target.value })}
-                    placeholder="name lookup fallback"
-                  />
-                </div>
-                <div className="form-group">
-                  <label htmlFor="redmine-status-feedback">Feedback</label>
-                  <input
-                    id="redmine-status-feedback"
-                    type="text"
-                    value={tempConfig.redmineStatusFeedbackId || ''}
-                    onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusFeedbackId: e.target.value })}
-                    placeholder="preferred for auto-reopen"
-                  />
-                </div>
-                <div className="form-group">
-                  <label htmlFor="redmine-status-progress">In Progress</label>
-                  <input
-                    id="redmine-status-progress"
-                    type="text"
-                    value={tempConfig.redmineStatusInProgressId || ''}
-                    onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusInProgressId: e.target.value })}
-                    placeholder="fallback for auto-reopen"
-                  />
-                </div>
-                <div className="form-group">
-                  <label htmlFor="redmine-status-resolve">Resolve</label>
-                  <input
-                    id="redmine-status-resolve"
-                    type="text"
-                    value={tempConfig.redmineStatusResolveId || ''}
-                    onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusResolveId: e.target.value })}
-                    placeholder="Resolve/Resolved fallback"
-                  />
-                </div>
-                <div className="form-group">
-                  <label htmlFor="redmine-status-closed">Closed</label>
-                  <input
-                    id="redmine-status-closed"
-                    type="text"
-                    value={tempConfig.redmineStatusClosedId || ''}
-                    onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusClosedId: e.target.value })}
-                    placeholder="required for manual close"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
       </div>
 
-      <div className="settings-footer">
-        {configSaveMessage && <span className="field-hint" role="status">{configSaveMessage}</span>}
-        <button className="btn-primary" onClick={handleSaveConfig} disabled={savingConfig}>
-          <Save size={16} /> {savingConfig ? 'Saving...' : 'Save Configuration'}
-        </button>
-      </div>
+      {/* Render Save Configuration footer only for Connection and Redmine Status tabs */}
+      {(activeTab === 'connection' || activeTab === 'redmine-status') && (
+        <div className="settings-footer">
+          {configSaveMessage && <span className="field-hint" role="status">{configSaveMessage}</span>}
+          <button className="btn-primary" onClick={handleSaveConfig} disabled={savingConfig}>
+            <Save size={16} /> {savingConfig ? 'Saving...' : 'Save Configuration'}
+          </button>
+        </div>
+      )}
     </div>
   );
 };

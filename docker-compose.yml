@@ -10,7 +10,7 @@ services:
       DATA_DIR: /app/data
       DATABASE_URL: postgres://${POSTGRES_USER:-defectdojo}:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-defectdojo_viewer}
     ports:
-      - "${APP_PORT:-3001}:3001"
+      - "${APP_PORT:-3056}:3001"
     volumes:
       - app-data:/app/data
     restart: unless-stopped

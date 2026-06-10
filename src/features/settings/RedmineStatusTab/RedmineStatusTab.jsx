@@ -1,0 +1,118 @@
+import './RedmineStatusTab.css';
+
+const RedmineStatusTab = ({
+  tempConfig,
+  setTempConfig,
+  updateRedmineStatusPollInterval,
+  normalizeRedmineStatusPollIntervalDraft,
+  DEFAULT_REDMINE_STATUS_POLL_SECONDS,
+  REDMINE_PRIORITY_FIELDS,
+}) => {
+  return (
+    <div className="settings-tab-pane redmine-settings-grid">
+      <div className="settings-subsection">
+        <h3>Interval & Defaults</h3>
+        <div className="form-group">
+          <label htmlFor="redmine-status-poll">Status poll interval</label>
+          <input
+            id="redmine-status-poll"
+            type="text"
+            inputMode="numeric"
+            value={tempConfig.redmineStatusPollIntervalSeconds ?? DEFAULT_REDMINE_STATUS_POLL_SECONDS}
+            onChange={(e) => updateRedmineStatusPollInterval(e.target.value)}
+            onBlur={normalizeRedmineStatusPollIntervalDraft}
+            placeholder={`${DEFAULT_REDMINE_STATUS_POLL_SECONDS} seconds minimum`}
+          />
+          <p className="field-hint">Set to 0 to disable automatic Redmine status polling.</p>
+        </div>
+        <div className="form-group" style={{ marginTop: 'var(--space-lg)' }}>
+          <label htmlFor="redmine-priority-default">Default Priority ID</label>
+          <input
+            id="redmine-priority-default"
+            type="text"
+            value={tempConfig.redminePriorityId || ''}
+            onChange={(e) => setTempConfig({ ...tempConfig, redminePriorityId: e.target.value })}
+            placeholder="used only when severity is missing"
+          />
+          <p className="field-hint">Set the per-severity IDs below so High, Medium, Low, and Info do not inherit a Critical default.</p>
+        </div>
+      </div>
+
+      <div className="settings-subsection">
+        <h3>Priorities ID Mapping</h3>
+        <div className="priority-grid">
+          {REDMINE_PRIORITY_FIELDS.map(({ severity, field, label }) => (
+            <div className="form-group" key={field}>
+              <label htmlFor={`redmine-priority-${severity.toLowerCase()}`}>{label}</label>
+              <input
+                id={`redmine-priority-${severity.toLowerCase()}`}
+                type="text"
+                value={tempConfig[field] || ''}
+                onChange={(e) => setTempConfig({ ...tempConfig, [field]: e.target.value })}
+                placeholder={`ID for ${severity}`}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="settings-subsection redmine-status-subsection">
+        <h3>Status IDs Configuration</h3>
+        <div className="redmine-status-grid">
+          <div className="form-group">
+            <label htmlFor="redmine-status-new">New</label>
+            <input
+              id="redmine-status-new"
+              type="text"
+              value={tempConfig.redmineStatusNewId || ''}
+              onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusNewId: e.target.value })}
+              placeholder="name lookup fallback"
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="redmine-status-feedback">Feedback</label>
+            <input
+              id="redmine-status-feedback"
+              type="text"
+              value={tempConfig.redmineStatusFeedbackId || ''}
+              onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusFeedbackId: e.target.value })}
+              placeholder="preferred for auto-reopen"
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="redmine-status-progress">In Progress</label>
+            <input
+              id="redmine-status-progress"
+              type="text"
+              value={tempConfig.redmineStatusInProgressId || ''}
+              onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusInProgressId: e.target.value })}
+              placeholder="fallback for auto-reopen"
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="redmine-status-resolve">Resolve</label>
+            <input
+              id="redmine-status-resolve"
+              type="text"
+              value={tempConfig.redmineStatusResolveId || ''}
+              onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusResolveId: e.target.value })}
+              placeholder="Resolve/Resolved fallback"
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="redmine-status-closed">Closed</label>
+            <input
+              id="redmine-status-closed"
+              type="text"
+              value={tempConfig.redmineStatusClosedId || ''}
+              onChange={(e) => setTempConfig({ ...tempConfig, redmineStatusClosedId: e.target.value })}
+              placeholder="required for manual close"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default RedmineStatusTab;
