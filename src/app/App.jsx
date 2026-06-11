@@ -28,6 +28,7 @@ import {
   routeValueMatches,
 } from '../shared/lib/dashboardUtils';
 import FindingsPage from '../features/findings/FindingsPage';
+import FindingDetailModal from '../features/findings/FindingDetailModal';
 import ProductDashboardPage from '../features/products/ProductDashboardPage';
 import ProductsPage from '../features/products/ProductsPage';
 import SyncHistory from '../features/sync-history/SyncHistory';
@@ -1376,12 +1377,6 @@ function App() {
     && getFindingIdentity(selectedFinding) === getFindingIdentity(finding, idx)
   );
 
-  const formatCountLabel = (count, singular, plural = `${singular}s`) => {
-    const normalizedCount = Number.parseInt(count, 10);
-    const safeCount = Number.isFinite(normalizedCount) ? normalizedCount : 0;
-    return `${safeCount} ${safeCount === 1 ? singular : plural}`;
-  };
-
   const formatRouteSummary = (finding) => {
     const parts = [];
     if (finding.defectDojoProjectName || finding.defectDojoProjectId) {
@@ -1530,198 +1525,18 @@ function App() {
     );
   };
 
-  const renderDetailTextList = (items, fallback) => {
-    const textItems = (items || []).map(cleanText).filter(Boolean);
-    if (textItems.length === 0 && fallback) textItems.push(cleanText(fallback));
-
-    if (textItems.length === 0) {
-      return <p className="detail-empty-text">No information provided.</p>;
-    }
-
-    return (
-      <div className="compact-text-list">
-        {textItems.map((item, i) => (
-          <p key={`${item}-${i}`}>{item}</p>
-        ))}
-      </div>
-    );
-  };
-
-  const renderFindingDetailModal = () => {
-    if (!selectedFinding) return null;
-
-    const findingRedmineSync = getFindingRedmineSync(selectedFinding);
-    const endpoints = selectedFinding.allEndpoints || [];
-    const cves = selectedFinding.allCVEs || [];
-    const cwes = selectedFinding.allCWEs || (selectedFinding.cweIds || []).map(weakness_id => ({ weakness_id }));
-    const mitigations = selectedFinding.allMitigations || [];
-    const sourceFindingCount = getCompactedFindingCount(selectedFinding);
-    const isAdmin = user?.role === 'admin';
-
-    return (
-      <div className="modal-overlay" role="presentation" onClick={() => setSelectedFinding(null)}>
-        <div className="modal-content finding-detail-modal" role="dialog" aria-modal="true" aria-labelledby="finding-detail-title" onClick={e => e.stopPropagation()}>
-          <div className="finding-detail-header">
-            <div>
-              <span className={`severity-badge badge-${(selectedFinding.severity || 'Info').toLowerCase()}`}>
-                {selectedFinding.severity || 'Info'}
-              </span>
-              <h2 id="finding-detail-title">{selectedFinding.title}</h2>
-            </div>
-            <button
-              type="button"
-              className="icon-btn detail-close-btn"
-              onClick={() => setSelectedFinding(null)}
-              aria-label="Close finding details"
-              title="Close details"
-            >
-              <X size={18} />
-            </button>
-          </div>
-
-          <div className="detail-status-row">
-            <span className="count-badge">{formatCountLabel(sourceFindingCount, 'finding')}</span>
-            {findingRedmineSync && (
-              <span className={getRedmineSyncBadgeClass(findingRedmineSync)}>
-                {getRedmineSyncLabel(findingRedmineSync)}
-              </span>
-            )}
-            <span className="detail-date">{selectedFinding.date || 'No date'}</span>
-          </div>
-
-          <section className="detail-section">
-            <h3>DefectDojo Route</h3>
-            <div className="meta-value-list">
-              {(selectedFinding.defectDojoProjectId || selectedFinding.defectDojoProjectName) && (
-                <span className="endpoint-tag id">
-                  Project: {formatRouteValue(selectedFinding.defectDojoProjectName, selectedFinding.defectDojoProjectId)}
-                </span>
-              )}
-              {(selectedFinding.defectDojoEngagementId || selectedFinding.defectDojoEngagementName) && (
-                <span className="endpoint-tag id">
-                  Engagement: {formatRouteValue(selectedFinding.defectDojoEngagementName, selectedFinding.defectDojoEngagementId)}
-                </span>
-              )}
-              {!(selectedFinding.defectDojoProjectId || selectedFinding.defectDojoProjectName || selectedFinding.defectDojoEngagementId || selectedFinding.defectDojoEngagementName) && (
-                <p className="detail-empty-text">No route information available.</p>
-              )}
-            </div>
-          </section>
-
-          <section className="detail-section">
-            <h3>Description</h3>
-            {renderDetailTextList(selectedFinding.allDescriptions, selectedFinding.description)}
-          </section>
-
-          <section className="detail-section">
-            <h3>Impact</h3>
-            {renderDetailTextList(selectedFinding.allImpacts, selectedFinding.impact)}
-          </section>
-
-          <section className="detail-section">
-            <h3>Endpoints</h3>
-            <div className="meta-value-list">
-              {endpoints.length > 0 ? endpoints.map((ep, i) => {
-                const label = endpointLabel(ep);
-                return (
-                  <span key={`${label}-${i}`} className={`endpoint-tag ${label.startsWith('ID:') ? 'id' : ''}`}>
-                    {label}
-                    {ep?.is_fallback && <small className="tag-note">(desc)</small>}
-                  </span>
-                );
-              }) : <p className="detail-empty-text">No endpoints found.</p>}
-            </div>
-          </section>
-
-          {selectedFinding.endpointDetails?.length > 0 && (
-            <section className="detail-section">
-              <h3>Endpoint Details</h3>
-              <div className="endpoint-details-list">
-                {selectedFinding.endpointDetails.map((detail, i) => (
-                  <div key={`${detail.label}-${i}`} className="endpoint-detail-row">
-                    <div className="endpoint-detail-main">
-                      <span className={`severity-badge detail-severity badge-${(detail.severity || 'Info').toLowerCase()}`}>
-                        {detail.severity || 'Info'}
-                      </span>
-                      <span className="endpoint-detail-target">{detail.label}</span>
-                    </div>
-                    <span className="endpoint-detail-cves">
-                      CVEs: {detail.cves?.length > 0 ? detail.cves.join(', ') : 'None'}
-                      <br />
-                      CWEs: {detail.cwes?.length > 0 ? detail.cwes.join(', ') : 'None'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          <section className="detail-section">
-            <h3>CVEs</h3>
-            <div className="meta-value-list">
-              {cves.length > 0 ? cves.map((v, i) => (
-                <span key={i} className="cve-tag">{typeof v === 'string' ? v : v.vulnerability_id}</span>
-              )) : <p className="detail-empty-text">No CVEs listed.</p>}
-            </div>
-          </section>
-
-          <section className="detail-section">
-            <h3>CWEs</h3>
-            <div className="meta-value-list">
-              {cwes.length > 0 ? cwes.map((v, i) => (
-                <span key={i} className="cve-tag">{typeof v === 'string' ? v : v.weakness_id || v.cwe_id || v.name || v.id}</span>
-              )) : <p className="detail-empty-text">No CWEs listed.</p>}
-            </div>
-          </section>
-
-          <section className="detail-section">
-            <h3>Mitigation</h3>
-            {mitigations.length > 0 ? (
-              <div className="mitigation-list">
-                {mitigations.map((item, i) => (
-                  <span key={i} className="mitigation-item">{item}</span>
-                ))}
-              </div>
-            ) : (
-              <p className="detail-empty-text">No mitigation provided.</p>
-            )}
-          </section>
-
-          {isAdmin && selectedFinding.superTicketMarkdown && (
-            <section className="detail-section">
-              <h3>Super Ticket Markdown</h3>
-              <div className="ticket-preview compact">
-                <pre>{selectedFinding.superTicketMarkdown}</pre>
-              </div>
-            </section>
-          )}
-
-          {isAdmin && (
-            <section className="detail-section">
-              <h3>Raw JSON Preview</h3>
-              <div className="json-container compact">
-                <pre>{JSON.stringify(selectedFinding, null, 2)}</pre>
-              </div>
-            </section>
-          )}
-
-          <div className="detail-actions">
-            {isAdmin && selectedFinding.superTicketMarkdown && (
-              <button
-                className="btn-secondary"
-                onClick={() => openRedmineIssue(selectedFinding)}
-                disabled={bulkOpeningRedmine || openingRedmineId === getTicketActionId(selectedFinding)}
-              >
-                <ExternalLink size={18} />
-                {bulkOpeningRedmine || openingRedmineId === getTicketActionId(selectedFinding) ? 'Opening...' : 'Open in Redmine'}
-              </button>
-            )}
-            <button className="btn-primary" onClick={() => setSelectedFinding(null)}>Done</button>
-          </div>
-        </div>
-      </div>
-    );
-  };
+  const renderFindingDetailModal = () => (
+    <FindingDetailModal
+      selectedFinding={selectedFinding}
+      onClose={() => setSelectedFinding(null)}
+      findingRedmineSync={selectedFinding ? getFindingRedmineSync(selectedFinding) : null}
+      isAdmin={user?.role === 'admin'}
+      bulkOpeningRedmine={bulkOpeningRedmine}
+      openingRedmineId={openingRedmineId}
+      getTicketActionId={getTicketActionId}
+      openRedmineIssue={openRedmineIssue}
+    />
+  );
 
   const allCompactedFindings = useMemo(() => getCompactedFindings(findings), [findings, getCompactedFindings]);
   const fallbackCompactedFindings = useMemo(() => {
@@ -2571,6 +2386,7 @@ function App() {
         compactedSearchActive={compactedSearchActive}
         compactedSeverityCounts={compactedSeverityCounts}
         displayFindings={displayFindings}
+        loading={loading}
         onClearSearch={() => setCompactedSearch('')}
         onOpenSyncAllFilters={openSyncAllFilters}
         onSearchChange={setCompactedSearch}
@@ -2704,6 +2520,7 @@ function App() {
             compactedSeverityCounts={compactedSeverityCounts}
             displayFindings={displayFindings}
             embedded
+            loading={loading}
             onClearSearch={() => setCompactedSearch('')}
             onSearchChange={setCompactedSearch}
             renderFindingDetailModal={renderFindingDetailModal}

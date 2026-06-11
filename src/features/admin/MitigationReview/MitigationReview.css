@@ -27,7 +27,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  font-weight: 850;
+  font-weight: 600;
   transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
 }
 
@@ -134,7 +134,7 @@
   background: var(--info-bg);
   color: var(--info-text);
   font-size: 0.68rem;
-  font-weight: 900;
+  font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -207,7 +207,7 @@
 .review-page-size span {
   color: var(--text-muted);
   font-size: 0.8rem;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .review-table {
@@ -282,7 +282,7 @@
   background: transparent;
   color: inherit;
   font: inherit;
-  font-weight: 800;
+  font-weight: 600;
   text-align: left;
   text-transform: inherit;
   letter-spacing: inherit;
@@ -368,7 +368,7 @@
 .review-reason-field span {
   color: var(--text-soft);
   font-size: 0.72rem;
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -449,3 +449,44 @@
     flex: 1 1 0;
   }
 }
+
+/* ── Queue and History Card Wrapper Styles ── */
+.review-queue-wrap {
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--bg-glass);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Remove double card styling from panels inside wrapper cards */
+.review-queue-wrap .search-options-panel,
+.review-history-wrap .search-options-panel {
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  border-radius: 0.75rem 0.75rem 0 0;
+}
+
+.review-queue-wrap .data-table {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0 0 0.75rem 0.75rem;
+}
+
+.review-queue-wrap .review-table-section {
+  padding: 0;
+}
+
+.review-queue-wrap .review-table-section .data-table-panel {
+  padding: 0;
+}
+
+.review-queue-wrap .data-table-footer {
+  border-top: 1px solid var(--border-subtle);
+  background: transparent;
+  padding: 0.85rem;
+}
+

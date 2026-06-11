@@ -13,7 +13,7 @@
   background: var(--bg-input);
   color: var(--text-main);
   font-size: 0.86rem;
-  font-weight: 750;
+  font-weight: 550;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -34,7 +34,7 @@
   background: var(--primary);
   color: #fff;
   font-size: 0.86rem;
-  font-weight: 750;
+  font-weight: 550;
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.2s ease;
@@ -56,7 +56,7 @@
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 0.85rem;
-  background: var(--bg-card);
+  background: var(--bg-glass);
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.025);
   overflow: hidden;
 }
@@ -76,7 +76,7 @@
   margin: 0 0 var(--space-md);
   color: var(--text-main);
   font-size: 0.85rem;
-  font-weight: 850;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   border-left: 3px solid var(--primary);
@@ -98,7 +98,7 @@
   background: var(--bg-card);
   color: var(--text-muted);
   font-size: 0.72rem;
-  font-weight: 750;
+  font-weight: 550;
 }
 
 .notify-search-options {
@@ -127,7 +127,7 @@
   align-items: center;
   color: var(--text-muted);
   font-size: 0.8rem;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .notify-cell-company,
@@ -158,7 +158,7 @@
   background: var(--bg-subtle);
   color: var(--text-soft);
   font-size: 0.64rem;
-  font-weight: 850;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -182,7 +182,7 @@
 
 .notify-empty-value {
   color: var(--text-soft);
-  font-weight: 750;
+  font-weight: 550;
 }
 
 .notify-cell-port {
@@ -211,7 +211,7 @@
   color: var(--text-main);
   font: inherit;
   font-size: 0.7rem;
-  font-weight: 850;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -394,7 +394,7 @@
 .notify-label-text {
   color: var(--text-main);
   font-size: 0.98rem;
-  font-weight: 750;
+  font-weight: 550;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -444,7 +444,7 @@
   padding: 0.2rem 0.55rem;
   border-radius: 0.35rem;
   font-size: 0.72rem;
-  font-weight: 750;
+  font-weight: 550;
 }
 
 .severity-badge {
@@ -534,7 +534,7 @@
 .ports-label {
   color: var(--text-muted);
   font-size: 0.72rem;
-  font-weight: 700;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -549,7 +549,7 @@
   border: 1px solid var(--border-subtle);
   color: var(--text-soft);
   font-size: 0.7rem;
-  font-weight: 750;
+  font-weight: 550;
   padding: 0.1rem 0.45rem;
   border-radius: 0.25rem;
 }
@@ -570,7 +570,7 @@
   padding: 0.35rem 0.55rem;
   border-radius: 0.4rem;
   font-size: 0.75rem;
-  font-weight: 700;
+  font-weight: 500;
   transition: all 0.2s ease;
 }
 
@@ -665,7 +665,7 @@
   margin: 0;
   color: var(--text-main);
   font-size: 1.05rem;
-  font-weight: 750;
+  font-weight: 550;
 }
 
 .notify-empty-state p {
@@ -750,7 +750,7 @@
   border: none;
   color: var(--text-muted);
   font-size: 0.82rem;
-  font-weight: 750;
+  font-weight: 550;
   cursor: pointer;
   transition: all 0.2s ease;
   border-bottom: 2px solid transparent;
@@ -779,7 +779,7 @@
   margin: 0;
   color: var(--text-main);
   font-size: 1rem;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .notify-pane-header p {
@@ -805,7 +805,7 @@
 .form-group-redesign label {
   color: var(--text-main);
   font-size: 0.78rem;
-  font-weight: 750;
+  font-weight: 550;
 }
 
 .form-group-redesign input {
@@ -840,7 +840,7 @@
   border: 1px solid var(--primary);
   color: #fff;
   font-size: 0.86rem;
-  font-weight: 750;
+  font-weight: 550;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -866,7 +866,7 @@
   border: 1px solid #bbf7d0;
   padding: 0.45rem 0.65rem;
   border-radius: 0.4rem;
-  font-weight: 700;
+  font-weight: 500;
   text-align: center;
 }
 
@@ -891,7 +891,7 @@
 .guide-title {
   color: var(--text-muted);
   font-size: 0.74rem;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .header-tags {
@@ -902,7 +902,7 @@
 .header-tags code {
   font-family: inherit;
   font-size: 0.7rem;
-  font-weight: 800;
+  font-weight: 600;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   padding: 0.1rem 0.35rem;
@@ -948,7 +948,7 @@
 .upload-title {
   color: var(--text-main);
   font-size: 0.84rem;
-  font-weight: 750;
+  font-weight: 550;
 }
 
 .upload-subtitle {
@@ -961,7 +961,7 @@
 .import-status-message {
   margin: 0;
   font-size: 0.76rem;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--text-soft);
 }
 
@@ -979,7 +979,7 @@
 .preview-label {
   color: var(--text-muted);
   font-size: 0.72rem;
-  font-weight: 750;
+  font-weight: 550;
 }
 
 .preview-list {
@@ -1010,7 +1010,7 @@
   justify-content: space-between;
   align-items: center;
   font-size: 0.68rem;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .item-product {
@@ -1069,7 +1069,7 @@
   text-align: center;
   color: var(--text-soft);
   font-size: 0.72rem;
-  font-weight: 750;
+  font-weight: 550;
 }
 
 /* Animations */
@@ -1139,7 +1139,7 @@
     flex: 0 0 4.8rem;
     color: var(--text-muted);
     font-size: 0.68rem;
-    font-weight: 850;
+    font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }

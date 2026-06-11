@@ -8,14 +8,14 @@
   padding: var(--space-lg);
   border: 1px solid var(--border-subtle);
   border-radius: var(--rounded-sm, 0.6rem);
-  background: var(--bg-subtle);
+  background: var(--bg-glass);
 }
 
 .settings-subsection h3 {
   margin: 0 0 var(--space-md);
   color: var(--text-main);
   font-size: 0.85rem;
-  font-weight: 850;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   border-left: 3px solid var(--primary);

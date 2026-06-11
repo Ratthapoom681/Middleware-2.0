@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ExternalLink, History, Info, RefreshCw, Search, XCircle } from 'lucide-react';
+import { CheckCircle2, ExternalLink, History, RefreshCw, Search } from 'lucide-react';
 import { apiFetch } from '../../../shared/api/api';
+import { DataTable, DataTableCell, DataTablePagination, DataTableRow, DataTableSection } from '../../../shared/ui/DataTable/DataTable';
+import {
+  SearchOptionsCommandBar,
+  SearchOptionsPanel,
+  SearchOptionsResultCount,
+  SearchOptionsSearch,
+} from '../../../shared/ui/SearchOptions/SearchOptions';
+import DetailModal from './MitigationDetailModal';
 import './MitigationReview.css';
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
@@ -182,21 +190,6 @@ const ExternalAnchor = ({ href, children, className = '' }) => {
   );
 };
 
-const SkeletonRows = () => (
-  <tbody className="review-skeleton" aria-hidden="true">
-    {Array.from({ length: 5 }).map((_, index) => (
-      <tr key={index}>
-        <td><span className="skeleton-line short" /></td>
-        <td><span className="skeleton-line wide" /><span className="skeleton-line short" /></td>
-        <td><span className="skeleton-line wide" /><span className="skeleton-line medium" /></td>
-        <td><span className="skeleton-line medium" /></td>
-        <td><span className="skeleton-line short" /><span className="skeleton-line medium" /></td>
-        <td><span className="skeleton-line medium" /></td>
-        <td><span className="skeleton-line action" /></td>
-      </tr>
-    ))}
-  </tbody>
-);
 
 const SortableHeader = ({ sortKey, sortConfig, onSort, children }) => {
   const active = sortConfig.key === sortKey;
@@ -223,6 +216,8 @@ const MitigationReview = ({ onBack, config = {} }) => {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historySearchTerm, setHistorySearchTerm] = useState('');
   const [actionReason, setActionReason] = useState('');
+  const [filterPanelOpen, setFilterPanelOpen] = useState(true);
+  const [historyFilterPanelOpen, setHistoryFilterPanelOpen] = useState(true);
 
   const fetchQueue = async () => {
     setLoading(true);
@@ -494,25 +489,40 @@ const MitigationReview = ({ onBack, config = {} }) => {
 
       {activeView === 'history' ? (
         <section className="review-history-wrap">
-          <div className="review-tools">
-            <label className="review-search">
-              <span className="sr-only">Search mitigation review history</span>
-              <Search size={16} aria-hidden="true" />
-              <input
-                type="search"
+          <SearchOptionsPanel
+            bodyId="mitigation-review-history-filter"
+            open={historyFilterPanelOpen}
+            onToggle={() => setHistoryFilterPanelOpen(open => !open)}
+            title="Search Options"
+          >
+            <SearchOptionsCommandBar>
+              <SearchOptionsSearch
+                inputType="text"
+                label="Search mitigation review history"
                 value={historySearchTerm}
-                onChange={(event) => setHistorySearchTerm(event.target.value)}
+                onChange={setHistorySearchTerm}
+                onClear={() => setHistorySearchTerm('')}
                 placeholder="Search reviewer, issue, product, endpoint, CVE..."
+                showClear={Boolean(historySearchTerm)}
               />
-            </label>
-            <div className="review-bulk-actions">
-              <span>{filteredHistoryItems.length} log{filteredHistoryItems.length !== 1 ? 's' : ''}</span>
-              <button type="button" className="btn-secondary" onClick={fetchHistory} disabled={historyLoading}>
-                <RefreshCw size={16} className={historyLoading ? 'spin' : ''} />
-                Refresh Logs
-              </button>
-            </div>
-          </div>
+              <SearchOptionsResultCount
+                icon={History}
+                value={`${filteredHistoryItems.length}`}
+                label={`log${filteredHistoryItems.length !== 1 ? 's' : ''}`}
+              />
+              <div style={{ marginLeft: 'auto' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={fetchHistory}
+                  disabled={historyLoading}
+                >
+                  <RefreshCw size={16} className={historyLoading ? 'spin' : ''} />
+                  Refresh Logs
+                </button>
+              </div>
+            </SearchOptionsCommandBar>
+          </SearchOptionsPanel>
 
           {historyLoading && historyItems.length === 0 ? (
             <div className="empty-state compact-empty">
@@ -555,185 +565,230 @@ const MitigationReview = ({ onBack, config = {} }) => {
           )}
         </section>
       ) : (
-      <section className="review-table-wrap">
-        <div className="review-tools">
-          <label className="review-search">
-            <span className="sr-only">Search mitigation reviews</span>
-            <Search size={16} aria-hidden="true" />
-            <input
-              type="search"
-              value={searchTerm}
-              onChange={(event) => updateSearchTerm(event.target.value)}
-              placeholder="Search issue, finding, product, CVE..."
-            />
-          </label>
-          <div className="review-bulk-actions">
-            <span>{selectedKeys.size} selected</span>
-            <button type="button" className="btn-primary" disabled={selectedKeys.size === 0 || isBusy} onClick={() => requestBulkConfirmation('close_redmine')}>
-              Review & Close
-            </button>
-          </div>
-        </div>
-
-        {loading && items.length === 0 && (
-          <div className="sr-only" role="status">Loading mitigation reviews</div>
-        )}
-        {hasNoItems ? (
-          <div className="empty-state compact-empty">
-            <CheckCircle2 size={40} className="empty-state-icon" />
-            <h2>No pending closure reviews</h2>
-          </div>
-        ) : hasNoMatches ? (
-          <div className="empty-state compact-empty">
-            <Search size={36} className="empty-state-icon" />
-            <h2>No reviews match your search</h2>
-          </div>
-        ) : (
-          <>
-            <table className="review-table">
-              <thead>
-                <tr>
-                  <th className="review-select-cell">
-                    <input
-                      type="checkbox"
-                      checked={allPageSelected}
-                      ref={(node) => {
-                        if (node) node.indeterminate = somePageSelected;
-                      }}
-                      onChange={togglePageSelection}
-                      aria-label="Select visible mitigation reviews"
-                    />
-                  </th>
-                  <th><SortableHeader sortKey="redmine" sortConfig={sortConfig} onSort={toggleSort}>Issue</SortableHeader></th>
-                  <th><SortableHeader sortKey="finding" sortConfig={sortConfig} onSort={toggleSort}>Finding</SortableHeader></th>
-                  <th><SortableHeader sortKey="scope" sortConfig={sortConfig} onSort={toggleSort}>Scope</SortableHeader></th>
-                  <th><SortableHeader sortKey="product" sortConfig={sortConfig} onSort={toggleSort}>Product</SortableHeader></th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              {loading && items.length === 0 ? (
-                <SkeletonRows />
-              ) : (
-                <tbody>
-                  {pageItems.map(item => (
-                    <tr key={item.reviewKey}>
-                      <td className="review-select-cell">
-                        <input
-                          type="checkbox"
-                          checked={selectedKeys.has(item.reviewKey)}
-                          onChange={() => toggleRowSelection(item.reviewKey)}
-                          aria-label={`Select ${item.compactedTitle || item.title || item.issueId || 'review item'}`}
-                        />
-                      </td>
-                      <td className="review-issue-cell">
-                        <strong>
-                          <ExternalAnchor href={redmineIssueUrl(item)}>
-                            #{item.issueId || 'Unknown'}
-                          </ExternalAnchor>
-                        </strong>
-                        <span>{item.redmineStatusName || 'Resolved'}</span>
-                      </td>
-                      <td className="review-finding-cell">
-                        <strong>
-                          <ExternalAnchor href={redmineIssueUrl(item)}>
-                            {item.compactedTitle || item.title || 'Compacted finding'}
-                          </ExternalAnchor>
-                        </strong>
-                      </td>
-                      <td className="review-scope-cell">
-                        <strong>{formatReviewScopePrimary(item)}</strong>
-                        <span>{formatReviewScopeSecondary(item)}</span>
-                      </td>
-                      <td className="review-product-cell">
-                        <div className="review-cell-stack">
-                          <strong>
-                            <ExternalAnchor href={productUrl(item)}>
-                              {item.productName || item.productId || 'Unknown'}
-                            </ExternalAnchor>
-                          </strong>
-                          <span>
-                            <ExternalAnchor href={engagementUrl(item)} className="muted">
-                              {item.engagementName || item.engagementId || 'No engagement'}
-                            </ExternalAnchor>
-                          </span>
-                        </div>
-                      </td>
-                      <td>{formatDate(item.mitigationConfirmedAt)}</td>
-                      <td>
-                        <div className="row-actions">
-                          <button type="button" className="btn-primary" disabled={busyKey === item.reviewKey || busyKey === 'bulk'} onClick={() => requestConfirmation(item, 'close_redmine')}>
-                            Review & Close
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              )}
-            </table>
-            <div className="review-pagination">
-              <span>Showing {firstResult}-{lastResult} of {sortedItems.length}</span>
-              <label className="review-page-size">
-                <span>Rows</span>
-                <select value={pageSize} onChange={(event) => updatePageSize(event.target.value)}>
-                  {PAGE_SIZE_OPTIONS.map(size => <option key={size} value={size}>{size}</option>)}
-                </select>
-              </label>
-              <div className="review-page-controls">
-                <button type="button" className="btn-secondary" disabled={currentPage <= 1} onClick={() => setPage(prev => Math.max(1, prev - 1))}>Previous</button>
-                <span>Page {currentPage} of {pageCount}</span>
-                <button type="button" className="btn-secondary" disabled={currentPage >= pageCount} onClick={() => setPage(prev => Math.min(pageCount, prev + 1))}>Next</button>
-              </div>
-            </div>
-          </>
-        )}
-      </section>
-      )}
-
-      {pendingAction && (
-        <div className="modal-overlay" role="presentation">
-          <div className="modal-content review-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="review-confirm-title">
-            <div className="modal-header">
-              <div className="modal-title-row">
-                <h2 id="review-confirm-title" className="modal-heading-with-icon">
-                  <Info size={18} />
-                  {pendingAction.title}
-                </h2>
-                <button type="button" className="icon-btn" onClick={cancelPendingAction} aria-label="Cancel review action">
-                  <XCircle size={16} />
+        <section className="review-queue-wrap">
+          <SearchOptionsPanel
+            bodyId="mitigation-review-queue-filter"
+            open={filterPanelOpen}
+            onToggle={() => setFilterPanelOpen(open => !open)}
+            title="Search & Bulk Actions"
+          >
+            <SearchOptionsCommandBar>
+              <SearchOptionsSearch
+                inputType="text"
+                label="Search mitigation reviews"
+                value={searchTerm}
+                onChange={updateSearchTerm}
+                onClear={() => updateSearchTerm('')}
+                placeholder="Search issue, finding, product, CVE..."
+                showClear={Boolean(searchTerm)}
+              />
+              <SearchOptionsResultCount
+                icon={CheckCircle2}
+                value={`${sortedItems.length}`}
+                label={`item${sortedItems.length !== 1 ? 's' : ''}`}
+              />
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.55rem' }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{selectedKeys.size} selected</span>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={selectedKeys.size === 0 || isBusy}
+                  onClick={() => requestBulkConfirmation('close_redmine')}
+                >
+                  Review & Close
                 </button>
               </div>
-              <p className="modal-subtitle">{pendingAction.message}</p>
+            </SearchOptionsCommandBar>
+          </SearchOptionsPanel>
+
+          {loading && items.length === 0 && (
+            <div className="sr-only" role="status">Loading mitigation reviews</div>
+          )}
+          {hasNoItems ? (
+            <div className="empty-state compact-empty">
+              <CheckCircle2 size={40} className="empty-state-icon" />
+              <h2>No pending closure reviews</h2>
             </div>
-            <div className="finding-meta-grid">
-              <div className="meta-item"><span className="meta-label">Selected</span><span className="meta-value">{pendingAction.items.length}</span></div>
-              <div className="meta-item"><span className="meta-label">Action</span><span className="meta-value">{pendingAction.confirmLabel}</span></div>
-              {pendingAction.type === 'single' && (
-                <>
-                  <div className="meta-item"><span className="meta-label">Issue</span><span className="meta-value">#{pendingAction.item.issueId || 'Unknown'}</span></div>
-                  <div className="meta-item"><span className="meta-label">Finding</span><span className="meta-value">{pendingAction.item.compactedTitle || pendingAction.item.title || 'Compacted finding'}</span></div>
-                </>
-              )}
+          ) : hasNoMatches ? (
+            <div className="empty-state compact-empty">
+              <Search size={36} className="empty-state-icon" />
+              <h2>No reviews match your search</h2>
             </div>
-            <label className="review-reason-field">
-              <span>Reviewer note</span>
-              <textarea
-                value={actionReason}
-                onChange={(event) => setActionReason(event.target.value)}
-                rows={4}
-                maxLength={1000}
-                placeholder="Add context for the Redmine note and review history"
-              />
-            </label>
-            <div className="modal-actions">
-              <button type="button" className="btn-secondary" onClick={cancelPendingAction}>Cancel</button>
-              <button type="button" className={pendingAction.confirmClass} onClick={confirmPendingAction} disabled={isBusy}>
-                {pendingAction.confirmLabel}
-              </button>
-            </div>
-          </div>
-        </div>
+          ) : (
+            <DataTableSection
+              ariaLabel="Mitigation reviews workspace"
+              className="review-table-section"
+            >
+              <DataTable
+                ariaLabel="Mitigation reviews"
+                className="review-data-table"
+                columns={[
+                  {
+                    key: 'select',
+                    className: 'review-select-cell',
+                    label: (
+                      <input
+                        type="checkbox"
+                        checked={allPageSelected}
+                        ref={(node) => {
+                          if (node) node.indeterminate = somePageSelected;
+                        }}
+                        onChange={togglePageSelection}
+                        aria-label="Select visible mitigation reviews"
+                      />
+                    ),
+                  },
+                  {
+                    key: 'redmine',
+                    label: (
+                      <SortableHeader sortKey="redmine" sortConfig={sortConfig} onSort={toggleSort}>
+                        Issue
+                      </SortableHeader>
+                    ),
+                  },
+                  {
+                    key: 'finding',
+                    label: (
+                      <SortableHeader sortKey="finding" sortConfig={sortConfig} onSort={toggleSort}>
+                        Finding
+                      </SortableHeader>
+                    ),
+                  },
+                  {
+                    key: 'scope',
+                    label: (
+                      <SortableHeader sortKey="scope" sortConfig={sortConfig} onSort={toggleSort}>
+                        Scope
+                      </SortableHeader>
+                    ),
+                  },
+                  {
+                    key: 'product',
+                    label: (
+                      <SortableHeader sortKey="product" sortConfig={sortConfig} onSort={toggleSort}>
+                        Product
+                      </SortableHeader>
+                    ),
+                  },
+                  {
+                    key: 'mitigated',
+                    label: (
+                      <SortableHeader sortKey="mitigated" sortConfig={sortConfig} onSort={toggleSort}>
+                        Mitigated
+                      </SortableHeader>
+                    ),
+                  },
+                  {
+                    key: 'actions',
+                    label: 'Actions',
+                  },
+                ]}
+                gridTemplate="48px 136px minmax(200px, 1.8fr) 216px minmax(180px, 1.2fr) 160px 160px"
+                minWidth="1060px"
+                loading={loading}
+                empty={
+                  <div className="empty-state compact-empty">
+                    <h2>No mitigation reviews</h2>
+                  </div>
+                }
+                footer={
+                  !loading && sortedItems.length > 0 && (
+                    <DataTablePagination
+                      ariaLabel="Mitigation reviews pagination"
+                      currentPage={currentPage}
+                      firstResult={firstResult}
+                      lastResult={lastResult}
+                      itemLabel="review"
+                      onNextPage={() => setPage(Math.min(pageCount, currentPage + 1))}
+                      onPageSizeChange={(nextPageSize) => {
+                        updatePageSize(nextPageSize);
+                      }}
+                      onPreviousPage={() => setPage(Math.max(1, currentPage - 1))}
+                      pageCount={pageCount}
+                      pageSize={pageSize}
+                      pageSizeOptions={PAGE_SIZE_OPTIONS}
+                      totalRows={sortedItems.length}
+                    />
+                  )
+                }
+              >
+                {pageItems.map(item => (
+                  <DataTableRow
+                    key={item.reviewKey}
+                    className="review-row"
+                  >
+                    <DataTableCell className="review-select-cell" label="Select">
+                      <input
+                        type="checkbox"
+                        checked={selectedKeys.has(item.reviewKey)}
+                        onChange={() => toggleRowSelection(item.reviewKey)}
+                        aria-label={`Select ${item.compactedTitle || item.title || item.issueId || 'review item'}`}
+                      />
+                    </DataTableCell>
+                    <DataTableCell className="review-issue-cell" label="Issue">
+                      <strong>
+                        <ExternalAnchor href={redmineIssueUrl(item)}>
+                          #{item.issueId || 'Unknown'}
+                        </ExternalAnchor>
+                      </strong>
+                      <span>{item.redmineStatusName || 'Resolved'}</span>
+                    </DataTableCell>
+                    <DataTableCell className="review-finding-cell" label="Finding">
+                      <strong>
+                        <ExternalAnchor href={redmineIssueUrl(item)}>
+                          {item.compactedTitle || item.title || 'Compacted finding'}
+                        </ExternalAnchor>
+                      </strong>
+                    </DataTableCell>
+                    <DataTableCell className="review-scope-cell" label="Scope">
+                      <strong>{formatReviewScopePrimary(item)}</strong>
+                      <span>{formatReviewScopeSecondary(item)}</span>
+                    </DataTableCell>
+                    <DataTableCell className="review-product-cell" label="Product">
+                      <div className="review-cell-stack">
+                        <strong>
+                          <ExternalAnchor href={productUrl(item)}>
+                            {item.productName || item.productId || 'Unknown'}
+                          </ExternalAnchor>
+                        </strong>
+                        <span>
+                          <ExternalAnchor href={engagementUrl(item)} className="muted">
+                            {item.engagementName || item.engagementId || 'No engagement'}
+                          </ExternalAnchor>
+                        </span>
+                      </div>
+                    </DataTableCell>
+                    <DataTableCell className="review-mitigated-cell" label="Mitigated">
+                      {formatDate(item.mitigationConfirmedAt)}
+                    </DataTableCell>
+                    <DataTableCell className="review-actions-cell" label="Actions">
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          disabled={busyKey === item.reviewKey || busyKey === 'bulk'}
+                          onClick={() => requestConfirmation(item, 'close_redmine')}
+                        >
+                          Review & Close
+                        </button>
+                      </div>
+                    </DataTableCell>
+                  </DataTableRow>
+                ))}
+              </DataTable>
+            </DataTableSection>
+          )}
+        </section>
       )}
+
+      <DetailModal
+        pendingAction={pendingAction}
+        actionReason={actionReason}
+        setActionReason={setActionReason}
+        onConfirm={confirmPendingAction}
+        onCancel={cancelPendingAction}
+        isBusy={isBusy}
+      />
     </div>
   );
 };

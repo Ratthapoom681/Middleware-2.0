@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Timer,
 } from 'lucide-react';
+import './DashboardOverviewCards.css';
 
 const severityItems = [
   { key: 'Critical', label: 'Critical', className: 'critical', Icon: CircleAlert },

@@ -18,6 +18,9 @@ const {
     collectAutoCweIds
 } = require('../backend/domain/compaction.cjs');
 const redmineClient = require('../backend/integrations/redmine-client.cjs');
+const {
+    createSyncHistorySplitGroups
+} = require('../backend/domain/sync-history-utils.cjs');
 
 test('groups compacted findings into upgrade-family super tickets without splitting per CVE', () => {
     const groups = groupFindingsByFingerprint([
@@ -392,6 +395,94 @@ test('Redmine status helpers tolerate missing config objects', () => {
     assert.equal(redmineClient.isClosedStatus('Closed'), true);
     assert.equal(redmineClient.getStatusNameIsClosed('Resolve'), false);
     assert.equal(redmineClient.getRedminePriorityIdForSeverity('High'), '');
+});
+
+test('sync history split creates concrete child groups per company and scope', () => {
+    const split = createSyncHistorySplitGroups({
+        findings: [
+            {
+                id: 1,
+                defectdojo_route: {
+                    projectId: '8',
+                    projectName: 'Acme',
+                    engagementId: '74',
+                    engagementName: 'External'
+                }
+            },
+            {
+                id: 2,
+                defectdojo_route: {
+                    projectId: '9',
+                    projectName: 'Beta',
+                    engagementId: '75',
+                    engagementName: 'Internal'
+                }
+            }
+        ],
+        ticketRefs: [
+            {
+                ticketKey: 'ticket-1',
+                route: {
+                    projectId: '8',
+                    projectName: 'Acme',
+                    engagementId: '74',
+                    engagementName: 'External'
+                }
+            }
+        ],
+        checkResults: [{ ticketKey: 'ticket-1', status: 'New' }]
+    });
+
+    assert.equal(split.warning, '');
+    assert.equal(split.groups.length, 2);
+    assert.deepEqual(
+        split.groups.map(group => [group.route.projectName, group.route.engagementName, group.findings.length, group.ticketRefs.length]),
+        [
+            ['Acme', 'External', 1, 1],
+            ['Beta', 'Internal', 1, 0]
+        ]
+    );
+});
+
+test('sync history split skips incomplete company or scope routes', () => {
+    const split = createSyncHistorySplitGroups({
+        findings: [
+            {
+                id: 1,
+                defectdojo_route: {
+                    projectId: '8',
+                    projectName: 'Acme',
+                    engagementId: '74',
+                    engagementName: 'External'
+                }
+            },
+            {
+                id: 2,
+                defectdojo_route: {
+                    projectId: '9',
+                    projectName: 'Beta'
+                }
+            }
+        ],
+        ticketRefs: [
+            {
+                ticketKey: 'ticket-1',
+                route: {
+                    projectId: '10',
+                    projectName: 'Gamma'
+                }
+            }
+        ],
+        checkResults: [{ ticketKey: 'ticket-1', status: 'Not checked' }]
+    });
+
+    assert.equal(split.groups.length, 1);
+    assert.equal(split.groups[0].route.projectName, 'Acme');
+    assert.equal(split.groups[0].route.engagementName, 'External');
+    assert.equal(split.skipped.findings, 1);
+    assert.equal(split.skipped.tickets, 1);
+    assert.equal(split.skipped.checkResults, 1);
+    assert.match(split.warning, /Skipped 3 Sync History items without resolved company and scope/);
 });
 
 test('active linked finding reopens a Resolve ticket', () => {

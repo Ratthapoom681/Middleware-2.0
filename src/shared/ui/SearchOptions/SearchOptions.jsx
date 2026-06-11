@@ -46,7 +46,7 @@ export const SearchOptionsCommandBar = ({ children, className = '' }) => (
 export const SearchOptionsSearch = ({
   inputType = 'search',
   kbd,
-  label,
+  label,  
   onChange,
   onClear,
   placeholder,

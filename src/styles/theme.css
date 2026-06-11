@@ -10,6 +10,20 @@
   --font-sans: 'Prompt', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
 
+  /* Spacing Scale */
+  --space-xs: 0.25rem;  /* 4px */
+  --space-sm: 0.5rem;   /* 8px */
+  --space-md: 0.75rem;  /* 12px */
+  --space-lg: 1rem;     /* 16px */
+  --space-xl: 1.5rem;   /* 24px */
+  --space-xxl: 2rem;    /* 32px */
+  --space-3xl: 3rem;    /* 48px */
+  --space-4xl: 4rem;    /* 64px */
+
+  /* Border Radius */
+  --rounded-sm: 0.5rem;   /* 8px */
+  --rounded-md: 0.75rem;  /* 12px */
+
   /* ==========================================
      DARK THEME (Default & Active)
      ========================================== */
@@ -23,6 +37,7 @@
   --bg-input: oklch(16% 0.014 250); /* #131a2a */
   --bg-glass: rgba(23, 32, 51, 0.7);
   --bg-glass-strong: rgba(15, 22, 36, 0.85);
+  --bg-elevated: oklch(22% 0.018 250); /* #1e293f (elevated card background) */
 
   --text-main: oklch(96% 0.005 250); /* #f1f4f9 */
   --text-muted: oklch(78% 0.015 250); /* #9ca8bc */
@@ -119,6 +134,7 @@ html[data-theme="dark"] {
   --bg-input: oklch(16% 0.014 250);
   --bg-glass: rgba(23, 32, 51, 0.7);
   --bg-glass-strong: rgba(15, 22, 36, 0.85);
+  --bg-elevated: oklch(22% 0.018 250);
 
   --text-main: oklch(96% 0.005 250);
   --text-muted: oklch(78% 0.015 250);
@@ -148,6 +164,7 @@ html[data-theme="light"] {
   --bg-input: oklch(100% 0 0);
   --bg-glass: rgba(255, 255, 255, 0.7);
   --bg-glass-strong: rgba(248, 250, 252, 0.85);
+  --bg-elevated: oklch(100% 0 0); /* #ffffff */
 
   --text-main: oklch(20% 0.015 250); /* Slate 900 */
   --text-muted: oklch(55% 0.015 250); /* Slate 500 */
@@ -198,7 +215,7 @@ html[data-theme="light"] {
   --high: oklch(58% 0.17 45);
   --high-border: oklch(89% 0.05 45);
   --high-bg: oklch(97% 0.02 45);
-  --high-text: oklch(58% 0.17 45);
+  --high-text: #ea580c;
 
   --medium: oklch(58% 0.13 80);
   --medium-border: oklch(90% 0.05 80);

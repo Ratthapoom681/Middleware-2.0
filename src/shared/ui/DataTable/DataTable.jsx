@@ -28,8 +28,26 @@ export const DataTable = ({
   gridTemplate,
   minWidth,
   style,
+  loading = false,
 }) => {
   const hasRows = Children.count(children) > 0;
+
+  const renderSkeletons = () => {
+    const rowCount = 5;
+    const widths = ['70%', '45%', '80%', '60%', '35%', '50%'];
+    return Array.from({ length: rowCount }).map((_, rIdx) => (
+      <DataTableRow key={`skeleton-row-${rIdx}`} className="data-table-row-skeleton">
+        {columns.map((column, cIdx) => {
+          const width = widths[(rIdx + cIdx) % widths.length];
+          return (
+            <DataTableCell key={`skeleton-cell-${rIdx}-${cIdx}`} className={column.className}>
+              <span className="skeleton-line" style={{ width }} />
+            </DataTableCell>
+          );
+        })}
+      </DataTableRow>
+    ));
+  };
 
   return (
     <div className="data-table-stack">
@@ -51,7 +69,7 @@ export const DataTable = ({
           ))}
         </div>
         <div className="data-table-body" role="rowgroup">
-          {hasRows ? children : empty}
+          {loading ? renderSkeletons() : (hasRows ? children : empty)}
         </div>
       </div>
       {footer}
@@ -160,8 +178,8 @@ export const DataTableRow = ({
   </article>
 );
 
-export const DataTableCell = ({ children, className = '', label }) => (
-  <div className={joinClassNames('data-table-cell', className)} role="cell" data-label={label}>
+export const DataTableCell = ({ children, className = '', label, ...props }) => (
+  <div className={joinClassNames('data-table-cell', className)} role="cell" data-label={label} {...props}>
     {children}
   </div>
 );

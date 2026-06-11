@@ -44,7 +44,7 @@
 .user-filter span {
   color: var(--text-muted);
   font-size: 0.68rem;
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -59,7 +59,7 @@
   color: var(--text-main);
   font: inherit;
   font-size: 0.82rem;
-  font-weight: 800;
+  font-weight: 600;
   cursor: pointer;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
@@ -97,7 +97,7 @@
   padding: 0.16rem 0.5rem;
   border-radius: 999px;
   font-size: 0.68rem;
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -120,7 +120,7 @@
   padding: 0.16rem 0.5rem;
   border-radius: 999px;
   font-size: 0.68rem;
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -170,7 +170,7 @@
   background: transparent;
   color: inherit;
   font: inherit;
-  font-weight: 800;
+  font-weight: 600;
   text-align: left;
   text-transform: inherit;
   letter-spacing: inherit;

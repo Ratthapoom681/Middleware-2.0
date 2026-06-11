@@ -75,7 +75,7 @@
   padding: 0.7rem 0.75rem;
   color: var(--text-muted);
   font-size: 0.68rem;
-  font-weight: 850;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -164,7 +164,7 @@
 .data-table-page-size span {
   color: var(--text-muted);
   font-size: 0.8rem;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .data-table-page-size,
@@ -188,7 +188,7 @@
   color: var(--text-main);
   font: inherit;
   font-size: 0.82rem;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .data-table-page-size select:focus-visible {
@@ -261,4 +261,25 @@
   .data-table-page-controls {
     justify-content: space-between;
   }
+}
+
+/* Skeleton loading state */
+.skeleton-line {
+  display: block;
+  height: 0.85rem;
+  border-radius: 0.25rem;
+  background: linear-gradient(
+    90deg,
+    var(--bg-subtle) 25%,
+    var(--bg-subtle-hover) 37%,
+    var(--bg-subtle) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeletonSweep 1.2s ease-in-out infinite;
+}
+
+.data-table-row-skeleton {
+  pointer-events: none;
+  background: transparent !important;
+  border-left-color: transparent !important;
 }

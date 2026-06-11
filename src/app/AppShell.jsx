@@ -62,7 +62,7 @@ const AppShell = ({
             <AlertTriangle size={20} />
           </span>
           <span>
-            <strong>DefectDojo</strong>
+            <strong>ทดสอบ</strong>
           </span>
         </div>
 

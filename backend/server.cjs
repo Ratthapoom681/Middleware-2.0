@@ -10,6 +10,7 @@ const utils = require('./lib/utils.cjs');
 const auth = require('./security/auth.cjs');
 const logger = require('./lib/logger.cjs');
 const syncUtils = require('./domain/sync-utils.cjs');
+const syncHistoryUtils = require('./domain/sync-history-utils.cjs');
 const defectdojoClient = require('./integrations/defectdojo-client.cjs');
 const redmineClient = require('./integrations/redmine-client.cjs');
 const compaction = require('./domain/compaction.cjs');
@@ -19,6 +20,7 @@ const { registerApiRoutes } = require('./routes/index.cjs');
 const { cleanRouteValue, asArray, asFindingIdArray, normalizeFindingIds, isPlainObject } = utils;
 const { createLogCapture } = logger;
 const { SEVERITY_VALUES, normalizeSeverityFilter, normalizePullFilters, shouldMarkUnseenActiveFindingsInactive, splitDelimitedFilterValue, runWithConcurrency, createProgressLogger, createDashboardSync } = syncUtils;
+const { allocateCountByWeight, createSyncHistorySplitGroups } = syncHistoryUtils;
 const { CONFIG_FIELDS, DEFECTDOJO_CONTEXT_CONCURRENCY, buildFindingFilterQuery, getFindingKey, getEntityId, getEntityName, withPullProductContext, fetchDefectDojoEntity, enrichFindingsWithDefectDojoContext } = defectdojoClient;
 const { REDMINE_ISSUE_SEARCH_LIMIT, REDMINE_ISSUE_SEARCH_MAX_PAGES, getRedmineHeaders, getRedmineIssueUrl, appendSyncMetadata, REDMINE_PRIORITY_FIELD_BY_SEVERITY, getRedminePriorityIdForSeverity, normalizeProjectToken, redmineProjectMatches, getProjectIssueValue, isRedmineNotFoundError, isRedmineProjectReferenceError, extractMissingRedmineProjectNameFromError, getMissingRedmineProjectLabel, buildMissingRedmineProject, buildRedmineProjectMissingStatus, makeRedmineProjectIdentifier, getRouteCandidates, getRouteProjectName, isRedmineProjectDuplicateError, createRedmineProject, fetchRedmineProjectDirect, findRedmineProjectByCandidates, resolveRedmineProject, getRedmineProjectCacheKey, resolveRedmineProjectCached, extractRedmineIssueFindingIds, extractRedmineIssueSyncKey, redmineIssueMatchesSyncKey, compareFindingIdsWithRedmineIssue, redmineIssueFindingIdsAreSubsetOfCurrent, findIssueInList, fetchRedmineIssuesForProjectStatus, findMatchingRedmineIssue, updateRedmineIssue, getRedmineIssuePriorityId, updateOpenRedmineIssuePriorityIfNeeded, normalizeTicketStatus, isResolveStatus, isInProgressStatus, isClosedStatus, getStatusNameIsClosed, fetchRedmineIssueStatuses, resolveRedmineStatusIds, fetchRedmineIssueStatusMap, fetchRedmineIssueStatus, getKnownRedmineIssueId, getIssueResolvedProject, buildTicketStatusFromIssue } = redmineClient;
 const { AUTO_UPGRADE_TARGET_RE, AUTO_TITLE_VERSION_RE, AUTO_LESS_THAN_VERSION_RE, AUTO_SEVERITY_RANK, normalizeAutoText, normalizeAutoGroupText, highestSeverity, isStoredFindingMitigated, isStoredFindingActive, cleanAutoBlockText, compactAutoDefectDojoText, getAutoDescriptionText, getAutoImpactText, getAutoMitigationText, getAutoStrictFindingKey, parseAutoUpgradeText, parseAutoUpgradeTarget, getAutoLegacyCompactGroupKey, getAutoKnownNoCveFamily, tokenizeAutoVersion, compareAutoVersions, firstAutoRouteValue, firstAutoRouteName, getAutoDefectDojoRoute, stableAutoHash, sortAutoStrings, sortAutoFindingIds, collectAutoCveIds, resolveAutoCompactionFamily, extractAutoTextSourceEvidenceLines, normalizeAutoTextSourceKey, getAutoCompactionDetailKey, buildAutoFindingFingerprint, buildAutoLegacyFindingGroupKey, buildAutoCompactedSyncKey, buildAutoCompactedLegacySyncKey, extractAutoTitleVersion, chooseAutoDisplayTitle, getAutoSoftwareFamilyTitle, parseAutoTitleUpgradeTarget, collectAutoTicketUpgradeTargets, getAutoTicketUpgradeTarget, buildAutoActionRequiredSubject, addAutoTextSource, getAutoEndpointParts, getAutoEndpointLabel, getAutoEndpointHost, groupAutoEndpointDetailsByCves, sortAutoSourceGroupsByTitleVersion, finalizeAutoEndpointDetails, sortAutoTextSources, finalizeAutoSourceGroups, formatAutoTextSourceLabel, formatAutoEvidenceLine, formatAutoSourceGroupAssets, formatAutoSourceFindingAssets, getAutoEndpointPort, formatAutoAffectedAssetsAndPorts, formatAutoTicketTextSection, formatAutoRouteValue, formatAutoDefectDojoContext, buildAutoSourceTitlesBlock, buildAutoCveBlock, formatAutoSourceGroupTextBlock, normalizeAutoTextSource, collectAutoAppendixSources, formatAutoQuoteBlock, formatAutoAppendixTextBlock, buildAutoSourceGroupSection, buildAutoSourceGroupsBlock, buildAutoActionRequiredMarkdown, buildAutoSuperTicketMarkdown, buildBackendCompactedRedmineTicketRefs } = compaction;
@@ -1366,42 +1368,6 @@ const buildSeverityBreakdown = (findings = []) => {
     return breakdown;
 };
 
-const getSyncHistoryGroupKey = (route = {}) => ([
-    cleanRouteValue(route.projectId) || cleanRouteValue(route.projectName) || 'unknown-product',
-    cleanRouteValue(route.engagementId) || cleanRouteValue(route.engagementName) || 'unknown-engagement'
-].join('|'));
-
-const getSyncHistoryGroupRoute = (route = {}) => ({
-    projectId: cleanRouteValue(route.projectId),
-    projectName: cleanRouteValue(route.projectName),
-    engagementId: cleanRouteValue(route.engagementId),
-    engagementName: cleanRouteValue(route.engagementName)
-});
-
-const allocateCountByWeight = (total, groups, getWeight) => {
-    const safeTotal = Math.max(0, Number.parseInt(total, 10) || 0);
-    if (safeTotal === 0 || groups.length === 0) return new Map(groups.map(group => [group.key, 0]));
-    const weights = groups.map(group => Math.max(0, getWeight(group) || 0));
-    const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
-    if (weightTotal === 0) return new Map(groups.map(group => [group.key, 0]));
-    const allocations = groups.map((group, index) => {
-        const exact = safeTotal * weights[index] / weightTotal;
-        const value = Math.floor(exact);
-        return {
-            key: group.key,
-            value,
-            remainder: exact - value
-        };
-    });
-    let remaining = safeTotal - allocations.reduce((sum, item) => sum + item.value, 0);
-    allocations.sort((left, right) => right.remainder - left.remainder);
-    for (let index = 0; index < allocations.length && remaining > 0; index += 1) {
-        allocations[index].value += 1;
-        remaining -= 1;
-    }
-    return new Map(allocations.map(item => [item.key, item.value]));
-};
-
 const createSyncAllSplitHistoryRows = async ({
     parentSyncHistory,
     normalizedFilters,
@@ -1418,53 +1384,29 @@ const createSyncAllSplitHistoryRows = async ({
     errors = [],
     user = null
 } = {}) => {
-    if (!database.isEnabled() || !parentSyncHistory?.id || findings.length === 0) return [];
-    const groupsByKey = new Map();
-    const ensureGroup = (routeInput = {}) => {
-        const route = getSyncHistoryGroupRoute(routeInput);
-        const key = getSyncHistoryGroupKey(route);
-        if (!groupsByKey.has(key)) {
-            groupsByKey.set(key, {
-                key,
-                route,
-                findings: [],
-                ticketRefs: [],
-                checkResults: [],
-                priorityUpdatedTicketKeys: new Set(),
-                createdOrUpdatedTicketKeys: new Set(),
-                recheckRecords: []
-            });
-        }
-        return groupsByKey.get(key);
-    };
+    if (!database.isEnabled() || !parentSyncHistory?.id) return [];
+    const splitPlan = createSyncHistorySplitGroups({
+        findings,
+        ticketRefs,
+        checkResults,
+        priorityUpdatedTicketKeys,
+        createdOrUpdatedTicketKeys,
+        recheckRecords,
+        getFindingRoute: getAutoDefectDojoRoute
+    });
+    const groups = splitPlan.groups;
+    if (splitPlan.warning && !warnings.includes(splitPlan.warning)) {
+        warnings.push(splitPlan.warning);
+    }
 
-    findings.forEach(finding => ensureGroup(getAutoDefectDojoRoute(finding)).findings.push(finding));
-    ticketRefs.forEach(ticket => ensureGroup(ticket.route || {}).ticketRefs.push(ticket));
-    const ticketRefByKey = new Map(ticketRefs.map(ticket => [ticket.ticketKey, ticket]));
-    checkResults.forEach(result => {
-        const ticket = ticketRefByKey.get(result.ticketKey);
-        if (ticket) ensureGroup(ticket.route || {}).checkResults.push(result);
-    });
-    priorityUpdatedTicketKeys.forEach(ticketKey => {
-        const ticket = ticketRefByKey.get(ticketKey);
-        if (ticket) ensureGroup(ticket.route || {}).priorityUpdatedTicketKeys.add(ticketKey);
-    });
-    createdOrUpdatedTicketKeys.forEach(ticketKey => {
-        const ticket = ticketRefByKey.get(ticketKey);
-        if (ticket) ensureGroup(ticket.route || {}).createdOrUpdatedTicketKeys.add(ticketKey);
-    });
-    recheckRecords.forEach(record => ensureGroup({
-        projectId: record.productId,
-        projectName: record.productName,
-        engagementId: record.engagementId,
-        engagementName: record.engagementName
-    }).recheckRecords.push(record));
+    if (splitPlan.warning) {
+        await database.finishSyncHistory(parentSyncHistory.id, {
+            finishedAt: parentSyncHistory.finishedAt || undefined,
+            warnings
+        });
+        console.warn(`[SYNC_HISTORY] ${splitPlan.warning}`);
+    }
 
-    const groups = Array.from(groupsByKey.values()).filter(group => (
-        group.findings.length > 0
-        || group.ticketRefs.length > 0
-        || group.recheckRecords.length > 0
-    ));
     const findingsUpdatedByGroup = allocateCountByWeight(
         (pullData.updated || 0) + (pullData.staleActiveUpdated || 0),
         groups,

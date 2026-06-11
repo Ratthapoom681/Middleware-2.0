@@ -1,522 +1,250 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, AlertCircle, AlertTriangle, BarChart3, Bug, CalendarDays, Check, CheckCircle2, ChevronDown, Clock, History, Search, Ticket, X, XCircle } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Filter, History, Layers, RefreshCw } from 'lucide-react';
 import { apiFetch } from '../../shared/api/api';
 import { PageHeader, PageMain } from '../../shared/ui/Page';
-import '../findings/FindingsPage.css';
+import { DataTable, DataTableCell, DataTablePagination, DataTableRow, DataTableSection } from '../../shared/ui/DataTable/DataTable';
+import {
+  SearchOptionsCommandBar,
+  SearchOptionsFilterButton,
+  SearchOptionsFilterGroup,
+  SearchOptionsPanel,
+  SearchOptionsResultCount,
+  SearchOptionsSearch,
+} from '../../shared/ui/SearchOptions/SearchOptions';
+import ModalPopupDetails from './ModalPopupDetails';
 import './SyncHistory.css';
 
-const SEVERITIES = ['Critical', 'High', 'Medium', 'Low', 'Info'];
-const METRICS = [
-  ['findingsPulled', 'Findings pulled'],
-  ['findingsMitigated', 'Mitigated'],
-  ['findingsStillActive', 'Still active'],
-  ['ticketsPulled', 'Tickets pulled'],
-  ['findingsUpdated', 'Findings updated'],
-  ['ticketsUpdated', 'Tickets updated'],
-];
+const PAGE_SIZE_OPTIONS = [10, 20, 50];
+const DEFAULT_PAGE_SIZE = 10;
+const SYNC_HISTORY_COLUMNS = ['ID', 'Number', 'Company', 'Scope', 'Finding', 'Status', 'Date/Time'];
+const SYNC_HISTORY_GRID = '88px 96px minmax(170px, 1fr) minmax(170px, 1.05fr) 108px 128px 188px';
+const FINDING_SEVERITIES = ['Critical', 'High', 'Medium', 'Low'];
 const STATUS_FILTERS = [
-  { value: 'all', label: 'All statuses' },
-  { value: 'success', label: 'Success' },
-  { value: 'partial', label: 'Partial' },
-  { value: 'failed', label: 'Failed' },
+  { id: 'all', label: 'All', tone: 'all' },
+  { id: 'success', label: 'Success', tone: 'low' },
+  { id: 'partial', label: 'Partial', tone: 'medium' },
+  { id: 'failed', label: 'Failed', tone: 'critical' },
 ];
 
-const formatDate = (value) => (value ? new Date(value).toLocaleString() : 'Not finished');
-const toNumber = (value) => Number.parseInt(value, 10) || 0;
+const cleanText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
 
-const getRunTime = (item) => new Date(item.startedAt || item.createdAt || 0).getTime();
+const normalizeStatus = (value) => cleanText(value).toLowerCase().replace(/[_-]+/g, ' ');
 
-const getProductScopeName = (item) => item?.productName || item?.productId || 'All products';
-
-const getGlobalRunLabel = (item) => (item?.id ? `Global #${item.id}` : 'Global run');
-
-const getRunLabel = (item) => {
-  if (!item) return 'Product run';
-  const runNumber = Number.parseInt(item.productRunNumber, 10);
-  if (Number.isInteger(runNumber) && runNumber > 0) {
-    return `${getProductScopeName(item)} Run #${runNumber}`;
-  }
-  return item.id ? `Run #${item.id}` : 'Product run';
+const getStatusFilter = (status) => {
+  const normalized = normalizeStatus(status);
+  if (['success', 'succeeded', 'complete', 'completed'].includes(normalized)) return 'success';
+  if (['failed', 'failure', 'error'].includes(normalized)) return 'failed';
+  if (['partial', 'warning', 'warnings'].includes(normalized)) return 'partial';
+  return normalized || 'partial';
 };
 
-const getRunPositionLabel = (item) => {
-  const runCount = Number.parseInt(item?.productRunCount, 10);
-  return Number.isInteger(runCount) && runCount > 0
-    ? `${getRunLabel(item)} of ${runCount}`
-    : getRunLabel(item);
+const formatStatusLabel = (status) => {
+  const cleaned = cleanText(status);
+  if (!cleaned) return 'Partial';
+  return cleaned
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase());
 };
 
-const getRunScopeLabel = (item) => (
-  `${item?.syncType || 'Sync'} · ${getProductScopeName(item)} / ${item?.engagementName || item?.engagementId || 'All engagements'}`
+const formatSyncDateTime = (value) => {
+  const cleaned = cleanText(value);
+  if (!cleaned) return '';
+  const date = new Date(cleaned);
+  if (Number.isNaN(date.getTime())) return cleaned;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date);
+};
+
+const getRowTimestamp = (row = {}) => {
+  const timestamp = Date.parse(row.finishedAt || row.startedAt || row.createdAt || '');
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+};
+
+const getScopeKey = (row = {}) => [
+  cleanText(row.productId) || cleanText(row.productName),
+  cleanText(row.engagementId) || cleanText(row.engagementName),
+].join('|').toLowerCase();
+
+const toCount = (value) => {
+  const count = Number.parseInt(value, 10);
+  return Number.isInteger(count) && count > 0 ? count : 0;
+};
+
+const getPulledSeverityCount = (row = {}, severity) => (
+  toCount(row.severityBreakdown?.pulled?.[severity])
 );
 
-const getRunCompareKey = (item) => [
-  item?.syncType || '',
-  item?.productId || item?.productName || '',
-  item?.engagementId || item?.engagementName || '',
-].join('|');
+const createEmptySeverityDelta = () => Object.fromEntries(FINDING_SEVERITIES.map(severity => [severity, 0]));
 
-const isComparableRun = (left, right) => (
-  Boolean(left && right)
-  && left.id !== right.id
-  && getRunCompareKey(left) === getRunCompareKey(right)
-);
+const buildFindingDeltaMap = (rows = []) => {
+  const rowsByScope = new Map();
 
-const getDateGroupLabel = (value) => {
-  if (!value) return 'No date';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'No date';
+  rows.forEach(row => {
+    if (!row.complete) return;
+    const scopeKey = getScopeKey(row);
+    if (!rowsByScope.has(scopeKey)) rowsByScope.set(scopeKey, []);
+    rowsByScope.get(scopeKey).push(row);
+  });
 
-  const today = new Date();
-  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  const diffDays = Math.round((startOfToday - startOfDate) / 86400000);
+  const deltaById = new Map();
+  rowsByScope.forEach(scopeRows => {
+    scopeRows
+      .slice()
+      .sort((left, right) => getRowTimestamp(left) - getRowTimestamp(right) || Number(left.id || 0) - Number(right.id || 0))
+      .forEach((row, index, orderedRows) => {
+        const previousRow = index > 0 ? orderedRows[index - 1] : null;
+        const severityDelta = FINDING_SEVERITIES.reduce((acc, severity) => {
+          const currentPulled = getPulledSeverityCount(row, severity);
+          const previousPulled = previousRow ? getPulledSeverityCount(previousRow, severity) : 0;
+          acc[severity] = Math.max(0, currentPulled - previousPulled);
+          return acc;
+        }, createEmptySeverityDelta());
+        const total = FINDING_SEVERITIES.reduce((sum, severity) => sum + severityDelta[severity], 0);
+        deltaById.set(row.id, { total, severityDelta });
+      });
+  });
 
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  return deltaById;
 };
 
-const normalizeBreakdown = (item, section) => item?.severityBreakdown?.[section] || {};
+const normalizeHistoryRow = (row = {}, index = 0) => {
+  const company = cleanText(row.productName) || cleanText(row.productId);
+  const scope = cleanText(row.engagementName) || cleanText(row.engagementId);
+  const number = cleanText(row.productRunNumber) || String(index + 1);
+  const dateTime = formatSyncDateTime(row.finishedAt || row.startedAt || row.createdAt);
+  const status = cleanText(row.status) || 'partial';
 
-const getBreakdownTotal = (item, section) => (
-  SEVERITIES.reduce((sum, severity) => sum + toNumber(normalizeBreakdown(item, section)[severity]), 0)
-);
-
-const deltaLabel = (value) => {
-  if (value > 0) return `+${value}`;
-  return String(value);
+  return {
+    ...row,
+    company,
+    scope,
+    number,
+    dateTime,
+    status,
+    statusFilter: getStatusFilter(status),
+    complete: Boolean(company && scope),
+  };
 };
 
-const deltaClass = (value) => (
-  value > 0 ? 'positive' : value < 0 ? 'negative' : 'neutral'
-);
+const getSearchText = (row) => [
+  row.id,
+  row.number,
+  row.company,
+  row.scope,
+  row.findingLabel,
+  row.status,
+  row.dateTime,
+].map(cleanText).join(' ').toLowerCase();
 
-const getProductValue = (item) => String(item?.productId || item?.productName || '');
-const getEngagementValue = (item) => String(item?.engagementId || item?.engagementName || '');
-
-const getHistorySearchText = (item = {}) => [
-  item.id,
-  item.syncType,
-  item.status,
-  item.triggeredBy,
-  item.productRunNumber,
-  item.productRunCount,
-  item.productId,
-  item.productName,
-  item.engagementId,
-  item.engagementName,
-  item.findingsPulled,
-  item.findingsMitigated,
-  item.findingsStillActive,
-  item.ticketsPulled,
-  item.findingsUpdated,
-  item.ticketsUpdated,
-  ...(item.warnings || []),
-  ...(item.errors || []),
-].join(' ').toLowerCase();
-
-const MetricDelta = ({ label, before, after }) => {
-  const delta = toNumber(after) - toNumber(before);
-  return (
-    <div className="sh-delta-card">
-      <span>{label}</span>
-      <strong>{toNumber(before)} → {toNumber(after)}</strong>
-      <b className={`sh-delta ${deltaClass(delta)}`}>{deltaLabel(delta)}</b>
-    </div>
-  );
-};
-
-const SeverityBreakdown = ({ before, after, section, title }) => {
-  const beforeData = normalizeBreakdown(before, section);
-  const afterData = normalizeBreakdown(after, section);
-  const total = getBreakdownTotal(after, section);
-  const hasData = getBreakdownTotal(before, section) > 0 || total > 0;
-
-  return (
-    <section className="sh-severity-breakdown">
-      <h3>{title}</h3>
-      {!hasData ? (
-        <p className="detail-empty-text">No severity breakdown recorded.</p>
-      ) : (
-        <>
-          <div className="sh-severity-bar">
-            {SEVERITIES.map(severity => {
-              const value = toNumber(afterData[severity]);
-              if (value === 0) return null;
-              const percent = (value / (total || 1)) * 100;
-              return (
-                <div
-                  key={severity}
-                  className={`sh-severity-bar-seg bg-${severity.toLowerCase()}`}
-                  style={{ width: `${percent}%` }}
-                  title={`${severity}: ${value}`}
-                />
-              );
-            })}
-          </div>
-          <div className="sh-severity-grid">
-            {SEVERITIES.map(severity => {
-              const beforeValue = toNumber(beforeData[severity]);
-              const afterValue = toNumber(afterData[severity]);
-              const delta = afterValue - beforeValue;
-              return (
-                <div key={severity} className="sh-severity-item">
-                  <span className={`severity-badge badge-${severity.toLowerCase()}`}>{severity}</span>
-                  <strong>{beforeValue} → {afterValue}</strong>
-                  <b className={`sh-delta ${deltaClass(delta)}`}>{deltaLabel(delta)}</b>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </section>
-  );
-};
-
-const AutoComparePanel = ({ before, after }) => (
-  <section className="sh-auto-compare">
-    <div className="sh-section-title-row">
-      <div>
-        <p className="eyebrow">Auto Compare</p>
-        <h3>{getRunLabel(before)} → {getRunLabel(after)}</h3>
-      </div>
-      <span className="sh-muted">{getRunScopeLabel(after)}</span>
-    </div>
-    <div className="sh-delta-grid compact">
-      {METRICS.map(([key, label]) => (
-        <MetricDelta key={key} label={label} before={before[key]} after={after[key]} />
-      ))}
-    </div>
-    <SeverityBreakdown before={before} after={after} section="pulled" title="Pulled severity delta" />
-  </section>
-);
-
-const SyncHistoryDetailModal = ({ selected, autoCompareItems, onClose }) => {
-  if (!selected) return null;
-
-  return (
-    <div className="modal-overlay" role="presentation" onClick={onClose}>
-      <div className="modal-content sh-detail-modal" role="dialog" aria-modal="true" aria-labelledby="sh-detail-title" onClick={event => event.stopPropagation()}>
-        <div className="modal-title-row">
-          <div>
-            <p className="eyebrow">Sync Run Details</p>
-            <h2 id="sh-detail-title" className="modal-heading-with-icon">{selected.syncType}</h2>
-          </div>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close sync run details">
-            <XCircle size={16} />
-          </button>
-        </div>
-
-        <div className="sh-detail-body">
-          <div className="detail-status-row">
-            <span className={`sh-status-pill ${selected.status}`}>{selected.status}</span>
-            <span className="sh-run-badge">{getRunLabel(selected)}</span>
-            <span>{selected.triggeredBy || 'system'}</span>
-          </div>
-          <div className="sh-metrics-grid">
-            {METRICS.map(([key, label]) => (
-              <span key={key}>{label} <strong>{selected[key] || 0}</strong></span>
-            ))}
-          </div>
-          <div className="finding-meta-grid">
-            <div className="meta-item"><span className="meta-label">Started</span><span className="meta-value">{formatDate(selected.startedAt)}</span></div>
-            <div className="meta-item"><span className="meta-label">Finished</span><span className="meta-value">{formatDate(selected.finishedAt)}</span></div>
-            <div className="meta-item"><span className="meta-label">Product Run</span><span className="meta-value">{getRunPositionLabel(selected)}</span></div>
-            <div className="meta-item"><span className="meta-label">Audit ID</span><span className="meta-value">{getGlobalRunLabel(selected)}</span></div>
-            <div className="meta-item"><span className="meta-label">Product</span><span className="meta-value">{selected.productName || selected.productId || 'All'}</span></div>
-            <div className="meta-item"><span className="meta-label">Engagement</span><span className="meta-value">{selected.engagementName || selected.engagementId || 'All'}</span></div>
-          </div>
-          {autoCompareItems.length === 2 ? (
-            <AutoComparePanel before={autoCompareItems[0]} after={autoCompareItems[1]} />
-          ) : (
-            <section className="sh-auto-compare muted">
-              <div className="sh-section-title-row">
-                <div>
-                  <p className="eyebrow">Auto Compare</p>
-                  <h3>No previous matching run</h3>
-                </div>
-              </div>
-              <p className="detail-empty-text">A previous run with the same sync type, product, and engagement will appear here automatically.</p>
-            </section>
-          )}
-          <SeverityBreakdown before={{}} after={selected} section="pulled" title="Severity pulled" />
-          {(selected.warnings?.length > 0 || selected.errors?.length > 0) && (
-            <div className="json-container compact">
-              <pre>{JSON.stringify({ warnings: selected.warnings, errors: selected.errors }, null, 2)}</pre>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const SyncHistory = () => {
-  const [items, setItems] = useState([]);
-  const [selected, setSelected] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [datePreset, setDatePreset] = useState('30');
-  const [customStart, setCustomStart] = useState('');
-  const [customEnd, setCustomEnd] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
+const SyncHistory = ({ onBack }) => {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [productFilters, setProductFilters] = useState([]);
-  const [engagementFilters, setEngagementFilters] = useState([]);
-  const [compareIds, setCompareIds] = useState([]);
-  const [showCompare, setShowCompare] = useState(false);
-  const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
-  const [scopeSearch, setScopeSearch] = useState('');
-  const scopeMenuRef = useRef(null);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(true);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [selectedFindingRow, setSelectedFindingRow] = useState(null);
 
-  const fetchHistory = async () => {
+  const fetchSyncHistory = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
-      const res = await apiFetch('/sync-history?limit=100');
-      if (res.ok) {
-        const data = await res.json();
-        const nextItems = Array.isArray(data) ? data : [];
-        const nextIds = new Set(nextItems.map(item => item.id));
-        setItems(nextItems);
-        setSelected(prev => (prev && nextIds.has(prev.id)
-          ? nextItems.find(item => item.id === prev.id) || null
-          : null));
-        setCompareIds(prev => prev.filter(id => nextIds.has(id)));
+      const res = await apiFetch('/sync-history?limit=200');
+      const data = await res.json().catch(() => []);
+      if (!res.ok) {
+        throw new Error(data.error || data.details || 'Failed to load sync history.');
       }
+      setRows(Array.isArray(data) ? data : []);
+      setPage(1);
+    } catch (err) {
+      setError(err.message || 'Failed to load sync history.');
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    queueMicrotask(fetchHistory);
   }, []);
 
   useEffect(() => {
-    if (!scopeMenuOpen) return undefined;
+    queueMicrotask(fetchSyncHistory);
+  }, [fetchSyncHistory]);
 
-    const handlePointerDown = (event) => {
-      if (scopeMenuRef.current && !scopeMenuRef.current.contains(event.target)) {
-        setScopeMenuOpen(false);
-      }
-    };
+  useEffect(() => {
+    if (!selectedFindingRow) return undefined;
+
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
-        setScopeMenuOpen(false);
+        setSelectedFindingRow(null);
       }
     };
 
-    document.addEventListener('pointerdown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [scopeMenuOpen]);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedFindingRow]);
 
-  const scopeProducts = useMemo(() => {
-    const map = new Map();
-    items.forEach(item => {
-      const value = getProductValue(item);
-      if (!value) return;
-      const previous = map.get(value);
-      const nextProduct = previous || {
-        value,
-        label: String(item.productName || item.productId || value),
-        count: 0,
-        engagements: new Map(),
-      };
-
-      nextProduct.count += 1;
-
-      const engagementValue = getEngagementValue(item);
-      if (engagementValue) {
-        const previousEngagement = nextProduct.engagements.get(engagementValue);
-        nextProduct.engagements.set(engagementValue, {
-          value: engagementValue,
-          label: String(item.engagementName || item.engagementId || engagementValue),
-          count: (previousEngagement?.count || 0) + 1,
-        });
-      }
-
-      map.set(value, nextProduct);
-    });
-
-    return Array.from(map.values())
-      .map(product => ({
-        ...product,
-        engagements: Array.from(product.engagements.values())
-          .sort((a, b) => a.label.localeCompare(b.label)),
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [items]);
-
-  const selectedProductValue = productFilters.length === 1 ? productFilters[0] : '';
-  const selectedEngagementValue = engagementFilters.length === 1 ? engagementFilters[0] : '';
-  const selectedScopeProduct = useMemo(
-    () => scopeProducts.find(product => product.value === selectedProductValue),
-    [scopeProducts, selectedProductValue]
+  const normalizedRows = useMemo(
+    () => rows.map((row, index) => normalizeHistoryRow(row, index)),
+    [rows]
   );
-  const selectedScopeEngagement = useMemo(() => {
-    if (!selectedEngagementValue) return null;
-    return selectedScopeProduct?.engagements.find(engagement => engagement.value === selectedEngagementValue) || null;
-  }, [selectedEngagementValue, selectedScopeProduct]);
-
-  const visibleScopeProducts = useMemo(() => {
-    const query = scopeSearch.trim().toLowerCase();
-    if (!query) return scopeProducts;
-    return scopeProducts
-      .map(product => {
-        const productMatches = product.label.toLowerCase().includes(query)
-          || product.value.toLowerCase().includes(query);
-        const engagements = productMatches
-          ? product.engagements
-          : product.engagements.filter(engagement => (
-            engagement.label.toLowerCase().includes(query)
-            || engagement.value.toLowerCase().includes(query)
-          ));
-
-        return productMatches || engagements.length > 0
-          ? { ...product, engagements }
-          : null;
-      })
-      .filter(Boolean);
-  }, [scopeProducts, scopeSearch]);
-
-  const scopeLabel = selectedScopeEngagement
-    ? `${selectedScopeProduct?.label || 'Product'} / ${selectedScopeEngagement.label}`
-    : selectedScopeProduct?.label || 'All products';
-
-  const scopeDescription = selectedScopeEngagement
-    ? `${selectedScopeEngagement.count} sync run${selectedScopeEngagement.count !== 1 ? 's' : ''}`
-    : selectedScopeProduct
-      ? `${selectedScopeProduct.count} sync run${selectedScopeProduct.count !== 1 ? 's' : ''} · ${selectedScopeProduct.engagements.length} engagement${selectedScopeProduct.engagements.length !== 1 ? 's' : ''}`
-      : `${items.length} sync run${items.length !== 1 ? 's' : ''}`;
-  const statusLabel = STATUS_FILTERS.find(option => option.value === statusFilter)?.label || 'All statuses';
-  const datePresetLabel = {
-    7: 'Last 7 days',
-    30: 'Last 30 days',
-    custom: 'Custom dates',
-    all: 'All time',
-  }[datePreset] || 'Last 30 days';
-  const filterButtonLabel = `${scopeLabel} · ${statusLabel} · ${datePresetLabel}`;
-  const filterDescription = `${filterButtonLabel} · ${scopeDescription}`;
-
-  const closeScopeMenu = () => {
-    setScopeMenuOpen(false);
-    setScopeSearch('');
-  };
-
-  const selectAllScope = () => {
-    setProductFilters([]);
-    setEngagementFilters([]);
-    closeScopeMenu();
-  };
-
-  const selectProductScope = (product) => {
-    setProductFilters([product.value]);
-    setEngagementFilters([]);
-    closeScopeMenu();
-  };
-
-  const selectEngagementScope = (product, engagement) => {
-    setProductFilters([product.value]);
-    setEngagementFilters([engagement.value]);
-    closeScopeMenu();
-  };
-
-  const dateRange = useMemo(() => {
-    if (datePreset === 'all') return { start: null, end: null };
-    if (datePreset === 'custom') {
+  const visibleRows = useMemo(
+    () => normalizedRows.filter(row => row.complete),
+    [normalizedRows]
+  );
+  const findingDeltaById = useMemo(
+    () => buildFindingDeltaMap(visibleRows),
+    [visibleRows]
+  );
+  const visibleRowsWithFindingDelta = useMemo(
+    () => visibleRows.map(row => {
+      const delta = findingDeltaById.get(row.id) || { total: 0, severityDelta: createEmptySeverityDelta() };
+      const newFindingCount = delta.total || 0;
       return {
-        start: customStart ? new Date(`${customStart}T00:00:00`) : null,
-        end: customEnd ? new Date(`${customEnd}T23:59:59.999`) : null,
+        ...row,
+        newFindingCount,
+        severityDelta: delta.severityDelta || createEmptySeverityDelta(),
+        findingLabel: `${newFindingCount} new`,
       };
-    }
+    }),
+    [findingDeltaById, visibleRows]
+  );
+  const hiddenIncompleteCount = normalizedRows.length - visibleRows.length;
 
-    const days = Number.parseInt(datePreset, 10);
-    const end = new Date();
-    const start = new Date();
-    start.setDate(end.getDate() - Math.max(days - 1, 0));
-    start.setHours(0, 0, 0, 0);
-    return { start, end };
-  }, [customEnd, customStart, datePreset]);
-
-  const normalizedSearch = searchTerm.trim().toLowerCase();
-
-  const visibleItems = useMemo(() => (
-    items.filter(item => {
-      const started = item.startedAt ? new Date(item.startedAt) : null;
-      if (dateRange.start && (!started || started < dateRange.start)) return false;
-      if (dateRange.end && (!started || started > dateRange.end)) return false;
-
-      if (statusFilter !== 'all' && item.status !== statusFilter) return false;
-
-      const productValue = getProductValue(item);
-      if (productFilters.length > 0 && !productFilters.includes(productValue)) return false;
-
-      const engagementValue = getEngagementValue(item);
-      if (engagementFilters.length > 0 && !engagementFilters.includes(engagementValue)) return false;
-
-      if (normalizedSearch && !getHistorySearchText(item).includes(normalizedSearch)) return false;
-
-      return true;
-    })
-  ), [dateRange, engagementFilters, items, normalizedSearch, productFilters, statusFilter]);
-
-  const visibleSummary = useMemo(() => (
-    visibleItems.reduce((summary, item) => {
-      summary.total += 1;
-      summary.findingsPulled += toNumber(item.findingsPulled);
-      summary.ticketsUpdated += toNumber(item.ticketsUpdated);
-      if (item.status === 'success') summary.success += 1;
-      if (item.status === 'partial') summary.partial += 1;
-      if (item.status === 'failed') summary.failed += 1;
-      return summary;
-    }, {
-      total: 0,
-      success: 0,
-      partial: 0,
-      failed: 0,
-      findingsPulled: 0,
-      ticketsUpdated: 0,
-    })
-  ), [visibleItems]);
-
-  const groupedItems = useMemo(() => {
-    const groups = new Map();
-    visibleItems.forEach(item => {
-      const label = getDateGroupLabel(item.startedAt || item.createdAt);
-      if (!groups.has(label)) groups.set(label, []);
-      groups.get(label).push(item);
+  const statusCounts = useMemo(() => {
+    const counts = { all: visibleRowsWithFindingDelta.length, success: 0, partial: 0, failed: 0 };
+    visibleRowsWithFindingDelta.forEach(row => {
+      if (counts[row.statusFilter] !== undefined) counts[row.statusFilter] += 1;
     });
-    return Array.from(groups.entries());
-  }, [visibleItems]);
+    return counts;
+  }, [visibleRowsWithFindingDelta]);
 
-  const compareItems = useMemo(() => (
-    compareIds
-      .map(id => items.find(item => item.id === id))
-      .filter(Boolean)
-      .sort((a, b) => getRunTime(a) - getRunTime(b))
-  ), [compareIds, items]);
-
-  const autoCompareItems = useMemo(() => {
-    if (!selected) return [];
-    const selectedTime = getRunTime(selected);
-    const previous = items
-      .filter(item => isComparableRun(item, selected) && getRunTime(item) < selectedTime)
-      .sort((a, b) => getRunTime(b) - getRunTime(a))[0];
-
-    return previous ? [previous, selected] : [];
-  }, [items, selected]);
-
-  const toggleCompare = (id) => {
-    setCompareIds(prev => {
-      if (prev.includes(id)) return prev.filter(item => item !== id);
-      return prev.length >= 2 ? [prev[1], id] : [...prev, id];
+  const filteredRows = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return visibleRowsWithFindingDelta.filter(row => {
+      const matchesStatus = statusFilter === 'all' || row.statusFilter === statusFilter;
+      const matchesSearch = !query || getSearchText(row).includes(query);
+      return matchesStatus && matchesSearch;
     });
-  };
+  }, [searchQuery, statusFilter, visibleRowsWithFindingDelta]);
+
+  const filterActive = Boolean(searchQuery.trim()) || statusFilter !== 'all';
+  const resultCountText = filterActive ? `${filteredRows.length} of ${visibleRowsWithFindingDelta.length}` : `${filteredRows.length}`;
+  const getFilterPercent = (count) => (
+    visibleRowsWithFindingDelta.length > 0 ? Math.max(4, Math.round((count / visibleRowsWithFindingDelta.length) * 100)) : 0
+  );
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageStartIndex = (currentPage - 1) * pageSize;
+  const firstResult = filteredRows.length === 0 ? 0 : pageStartIndex + 1;
+  const lastResult = Math.min(filteredRows.length, pageStartIndex + pageSize);
+  const pagedRows = filteredRows.slice(pageStartIndex, pageStartIndex + pageSize);
+
+  const emptyMessage = filterActive
+    ? 'No complete sync history rows match the current search and filters.'
+    : hiddenIncompleteCount > 0
+      ? 'No complete sync history rows are available yet.'
+      : 'No sync history rows are available yet.';
 
   return (
     <>
@@ -524,362 +252,176 @@ const SyncHistory = () => {
         icon={History}
         eyebrow="Administration"
         title="Sync History"
+        description="Check DefectDojo to middleware sync results and verify pulled data by company and scope."
+        actions={(
+          <>
+            {onBack && (
+              <button type="button" className="btn-secondary" onClick={onBack}>
+                Back to dashboard
+              </button>
+            )}
+            <button type="button" className="btn-secondary" onClick={fetchSyncHistory} disabled={loading}>
+              <RefreshCw size={16} className={loading ? 'spin' : ''} />
+              Refresh
+            </button>
+          </>
+        )}
       />
 
-      <PageMain className="findings-main sh-main">
+      <PageMain className="sync-history-main">
+        <SearchOptionsPanel
+          bodyId="sync-history-filter-body"
+          open={filterPanelOpen}
+          onToggle={() => setFilterPanelOpen(open => !open)}
+        >
+          <SearchOptionsCommandBar className="sync-history-command-bar">
+            <SearchOptionsSearch
+              inputType="text"
+              label="Search sync history"
+              value={searchQuery}
+              onChange={(value) => {
+                setSearchQuery(value);
+                setPage(1);
+              }}
+              onClear={() => {
+                setSearchQuery('');
+                setPage(1);
+              }}
+              placeholder="Search ID, company, scope, status, or time..."
+              showClear={Boolean(searchQuery)}
+            />
 
-        <section className="sh-filter-panel" aria-label="Sync history controls" aria-busy={loading}>
-          <div className="sh-dashboard-grid" aria-label="Visible sync history summary">
-            <div className="sh-stat-card neutral">
-              <div className="sh-stat-header">
-                <span className="sh-stat-title">Total Runs</span>
-                <div className="sh-stat-icon-wrap"><Activity size={18} /></div>
-              </div>
-              <strong className="sh-stat-value">{visibleSummary.total}</strong>
-            </div>
-            
-            <div className="sh-stat-card success">
-              <div className="sh-stat-header">
-                <span className="sh-stat-title">Success</span>
-                <div className="sh-stat-icon-wrap"><CheckCircle2 size={18} /></div>
-              </div>
-              <strong className="sh-stat-value">{visibleSummary.success}</strong>
-            </div>
+            <SearchOptionsResultCount
+              icon={Layers}
+              value={resultCountText}
+              label={`row${filteredRows.length !== 1 ? 's' : ''}`}
+            />
 
-            <div className="sh-stat-card partial">
-              <div className="sh-stat-header">
-                <span className="sh-stat-title">Partial</span>
-                <div className="sh-stat-icon-wrap"><AlertTriangle size={18} /></div>
-              </div>
-              <strong className="sh-stat-value">{visibleSummary.partial}</strong>
-            </div>
-
-            <div className="sh-stat-card failed">
-              <div className="sh-stat-header">
-                <span className="sh-stat-title">Failed</span>
-                <div className="sh-stat-icon-wrap"><AlertCircle size={18} /></div>
-              </div>
-              <strong className="sh-stat-value">{visibleSummary.failed}</strong>
-            </div>
-
-            <div className="sh-stat-card">
-              <div className="sh-stat-header">
-                <span className="sh-stat-title">Findings Pulled</span>
-                <div className="sh-stat-icon-wrap"><Bug size={18} /></div>
-              </div>
-              <strong className="sh-stat-value">{visibleSummary.findingsPulled}</strong>
-            </div>
-
-            <div className="sh-stat-card">
-              <div className="sh-stat-header">
-                <span className="sh-stat-title">Tickets Updated</span>
-                <div className="sh-stat-icon-wrap"><Ticket size={18} /></div>
-              </div>
-              <strong className="sh-stat-value">{visibleSummary.ticketsUpdated}</strong>
-            </div>
-          </div>
-
-          <div className="sh-filter-card">
-            <div className="sh-filter-layout">
-              <label className="sh-history-search">
-                <span className="sr-only">Search sync history</span>
-                <Search size={15} aria-hidden="true" />
-                <input
-                  type="search"
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder="Search runs..."
-                />
-                {searchTerm && (
-                  <button type="button" className="sh-search-clear-btn" onClick={() => setSearchTerm('')} aria-label="Clear sync history search">
-                    <X size={14} />
-                  </button>
-                )}
-              </label>
-
-              <div className="sh-filter-actions">
-                <div className="scope-menu sh-scope-menu" ref={scopeMenuRef}>
-                  <button
-                    type="button"
-                    className="scope-trigger sh-compact-trigger"
-                    onClick={() => setScopeMenuOpen(open => !open)}
-                    aria-haspopup="menu"
-                    aria-expanded={scopeMenuOpen}
-                    aria-controls="sync-history-scope-menu"
-                    aria-label="Open sync history filters"
-                    title={filterDescription}
-                  >
-                    <span>{filterButtonLabel}</span>
-                    <ChevronDown size={14} aria-hidden="true" />
-                  </button>
-                  {scopeMenuOpen && (
-                    <>
-                      <button
-                        type="button"
-                        className="scope-backdrop"
-                        onClick={closeScopeMenu}
-                        aria-label="Close scope menu"
-                        tabIndex={-1}
-                      />
-                      <div className="scope-popover" id="sync-history-scope-menu" role="menu" aria-label="Select sync history product scope">
-                        <label className="scope-search">
-                          <span className="sr-only">Search products and engagements</span>
-                          <Search size={15} aria-hidden="true" />
-                          <input
-                            type="search"
-                            value={scopeSearch}
-                            onChange={(event) => setScopeSearch(event.target.value)}
-                            placeholder="Search product or engagement"
-                            autoFocus
-                          />
-                        </label>
-
-                        <div className="sh-scope-filter-fields">
-                          <label className="sh-scope-filter-field" htmlFor="sh-status-filter">
-                            <span>Status</span>
-                            <select id="sh-status-filter" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                              {STATUS_FILTERS.map(option => (
-                                <option key={option.value} value={option.value}>{option.label}</option>
-                              ))}
-                            </select>
-                          </label>
-
-                          <label className="sh-scope-filter-field" htmlFor="sh-date-preset">
-                            <span>Date range</span>
-                            <select id="sh-date-preset" value={datePreset} onChange={(event) => setDatePreset(event.target.value)}>
-                              <option value="7">Last 7 days</option>
-                              <option value="30">Last 30 days</option>
-                              <option value="custom">Custom</option>
-                              <option value="all">All time</option>
-                            </select>
-                          </label>
-
-                          {datePreset === 'custom' && (
-                            <>
-                              <label className="sh-scope-filter-field" htmlFor="sh-start-date">
-                                <span>Start</span>
-                                <input id="sh-start-date" type="date" value={customStart} max={customEnd || undefined} onChange={(event) => setCustomStart(event.target.value)} />
-                              </label>
-                              <label className="sh-scope-filter-field" htmlFor="sh-end-date">
-                                <span>End</span>
-                                <input id="sh-end-date" type="date" value={customEnd} min={customStart || undefined} onChange={(event) => setCustomEnd(event.target.value)} />
-                              </label>
-                            </>
-                          )}
-                        </div>
-
-                        <div className="scope-section-label">Product Scope</div>
-                        <button
-                          type="button"
-                          className={`scope-option scope-product-row ${!selectedProductValue && !selectedEngagementValue ? 'active' : ''}`}
-                          onClick={selectAllScope}
-                          role="menuitem"
-                          aria-current={!selectedProductValue && !selectedEngagementValue ? 'true' : undefined}
-                        >
-                          <span>
-                            <strong>All Products</strong>
-                            <small>{items.length} sync run{items.length !== 1 ? 's' : ''}</small>
-                          </span>
-                          {!selectedProductValue && !selectedEngagementValue && <Check size={15} aria-hidden="true" />}
-                        </button>
-                        <div className="scope-options">
-                          {visibleScopeProducts.length > 0 ? (
-                            visibleScopeProducts.map(product => {
-                              const productActive = selectedProductValue === product.value && !selectedEngagementValue;
-                              return (
-                                <div className="scope-product-group" key={product.value}>
-                                  <button
-                                    type="button"
-                                    className={`scope-option scope-product-row ${productActive ? 'active' : ''}`}
-                                    onClick={() => selectProductScope(product)}
-                                    role="menuitem"
-                                    aria-current={productActive ? 'true' : undefined}
-                                  >
-                                    <span>
-                                      <strong>{product.label}</strong>
-                                      <small>{product.count} sync run{product.count !== 1 ? 's' : ''}</small>
-                                    </span>
-                                    {productActive && <Check size={15} aria-hidden="true" />}
-                                  </button>
-                                  {product.engagements.map(engagement => {
-                                    const engagementActive = selectedProductValue === product.value
-                                      && selectedEngagementValue === engagement.value;
-                                    return (
-                                      <button
-                                        key={`${product.value}-${engagement.value}`}
-                                        type="button"
-                                        className={`scope-option scope-engagement-row ${engagementActive ? 'active' : ''}`}
-                                        onClick={() => selectEngagementScope(product, engagement)}
-                                        role="menuitem"
-                                        aria-current={engagementActive ? 'true' : undefined}
-                                      >
-                                        <span>
-                                          <strong>{engagement.label}</strong>
-                                          <small>{engagement.count} sync run{engagement.count !== 1 ? 's' : ''}</small>
-                                        </span>
-                                        {engagementActive && <Check size={15} aria-hidden="true" />}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              );
-                            })
-                          ) : (
-                            <p className="scope-empty">No products or engagements match.</p>
-                          )}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Compare Bar */}
-            <div className="sh-compare-bar">
-              <div className="sh-compare-info">
-                <h3><BarChart3 size={14} /> Compare</h3>
-                <span className="sh-muted">— {compareIds.length}/2 selected · open a run for auto-compare</span>
-              </div>
-              <div className="sh-compare-actions">
-                <button type="button" className="btn-primary" disabled={compareIds.length !== 2} onClick={() => setShowCompare(true)}>
-                  <BarChart3 size={14} />
-                  Compare
-                </button>
-                <button type="button" className="btn-secondary" disabled={compareIds.length === 0} onClick={() => setCompareIds([])}>Clear</button>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ── History Table ── */}
-        <section className="sh-list-container">
-          <div className="sh-table-shell">
-            {visibleItems.length === 0 ? (
-              <div className="sh-empty" role="status">
-                <div className="sh-empty-icon-wrap">
-                  <span className="sh-empty-pulse" />
-                  <Clock size={40} />
-                </div>
-                <h2>{items.length === 0 ? 'No sync history yet' : 'No sync runs match filters'}</h2>
-                <p>{items.length === 0 ? 'Sync data will appear here after your first pull.' : 'Try adjusting the date range or clearing filters.'}</p>
-              </div>
-            ) : (
-              <>
-                <div className="sh-history-table-head" aria-hidden="true">
-                  <span />
-                  <span>Run</span>
-                  <span>Scope</span>
-                  <span>Status</span>
-                  <span>Metrics</span>
-                  <span>Run time</span>
-                  <span />
-                </div>
-                {groupedItems.map(([label, groupItems]) => (
-                  <div key={label} className="sh-date-group">
-                    <div className="sh-date-heading">
-                      <CalendarDays size={14} />
-                      <span>{label}</span>
-                      <small>{groupItems.length} run{groupItems.length !== 1 ? 's' : ''}</small>
-                    </div>
-                    <div className="sh-run-list">
-                      {groupItems.map((item, idx) => (
-                        <div
-                          key={item.id}
-                          className={`sh-run-row-wrap ${selected?.id === item.id ? 'selected' : ''} sh-card-enter`}
-                          style={{ animationDelay: `${Math.min(idx * 20, 260)}ms` }}
-                        >
-                          <label className="sh-compare-check">
-                            <input
-                              type="checkbox"
-                              checked={compareIds.includes(item.id)}
-                              onChange={() => toggleCompare(item.id)}
-                              aria-label={`Select ${item.syncType} from ${formatDate(item.startedAt)} for compare`}
-                            />
-                            <span className="sr-only">Compare</span>
-                          </label>
-                          <div
-                            className="sh-run-row"
-                            onClick={() => setSelected(item)}
-                            role="button"
-                            tabIndex={0}
-                            onKeyDown={(e) => { if (e.key === 'Enter') setSelected(item); }}
-                            aria-label={`Open details for ${getRunLabel(item)}`}
-                          >
-                            <div className="sh-cell-primary">
-                              <strong>{item.syncType}</strong>
-                              <span>{getRunLabel(item)}</span>
-                            </div>
-                            <div className="sh-cell-primary">
-                              <strong>{item.productName || item.productId || 'All products'}</strong>
-                              <span>{item.engagementName || item.engagementId || 'All engagements'}</span>
-                            </div>
-                            <div>
-                              <span className={`sh-status-pill ${item.status}`}>{item.status}</span>
-                            </div>
-                            <div className="sh-cell-metric">
-                              <strong>{toNumber(item.findingsPulled)} findings</strong>
-                              <span>{toNumber(item.ticketsPulled)} tickets</span>
-                            </div>
-                            <div className="sh-cell-time">
-                              <strong>{formatDate(item.startedAt).split(',')[0]}</strong>
-                              <span>{formatDate(item.startedAt).split(',')[1]?.trim() || ''}</span>
-                            </div>
-                            <div>
-                              <button className="sh-row-action-btn" tabIndex={-1}>View Details</button>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </>
+            {hiddenIncompleteCount > 0 && (
+              <span className="sync-history-hidden-warning" role="status">
+                {hiddenIncompleteCount} incomplete history row{hiddenIncompleteCount === 1 ? '' : 's'} hidden
+              </span>
             )}
+          </SearchOptionsCommandBar>
+
+          <SearchOptionsFilterGroup ariaLabel="Filter sync history by status" title="Status" total={`${visibleRowsWithFindingDelta.length} total`}>
+            {STATUS_FILTERS.map(filter => (
+              <SearchOptionsFilterButton
+                key={filter.id}
+                active={statusFilter === filter.id}
+                count={statusCounts[filter.id] || 0}
+                icon={filter.id === 'all' ? Filter : undefined}
+                label={filter.label}
+                meterPercent={getFilterPercent(statusCounts[filter.id] || 0)}
+                onClick={() => {
+                  setStatusFilter(filter.id);
+                  setPage(1);
+                }}
+                tone={filter.tone}
+              />
+            ))}
+          </SearchOptionsFilterGroup>
+        </SearchOptionsPanel>
+
+        {error && (
+          <div className="sync-history-error" role="alert">
+            {error}
           </div>
-        </section>
+        )}
+
+        <DataTableSection
+          ariaLabel="Sync history workspace"
+          className="sync-history-table-section"
+          panelClassName="sync-history-table-panel"
+        >
+          <DataTable
+            ariaLabel="Sync history"
+            className="sync-history-data-table"
+            columns={SYNC_HISTORY_COLUMNS}
+            gridTemplate={SYNC_HISTORY_GRID}
+            minWidth="880px"
+            loading={loading}
+            empty={(
+              <div className="sync-history-empty" role="status">
+                <h2>No sync history rows</h2>
+                <p>{emptyMessage}</p>
+              </div>
+            )}
+            footer={!loading && filteredRows.length > 0 && (
+              <DataTablePagination
+                ariaLabel="Sync history pagination"
+                currentPage={currentPage}
+                firstResult={firstResult}
+                lastResult={lastResult}
+                itemLabel="row"
+                onNextPage={() => setPage(Math.min(pageCount, currentPage + 1))}
+                onPageSizeChange={(nextPageSize) => {
+                  setPageSize(nextPageSize);
+                  setPage(1);
+                }}
+                onPreviousPage={() => setPage(Math.max(1, currentPage - 1))}
+                pageCount={pageCount}
+                pageSize={pageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                totalRows={filteredRows.length}
+              />
+            )}
+          >
+            {pagedRows.map(row => (
+              <DataTableRow
+                key={row.id}
+                className="sync-history-row"
+                tone={row.statusFilter === 'failed' ? 'critical' : row.statusFilter === 'partial' ? 'medium' : 'low'}
+                interactive
+                onClick={() => setSelectedFindingRow(row)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setSelectedFindingRow(row);
+                  }
+                }}
+                ariaLabel={`Show new finding details for ${row.company} ${row.scope}`}
+              >
+                <DataTableCell className="sync-history-cell-id" label="ID">
+                  {row.id}
+                </DataTableCell>
+                <DataTableCell className="sync-history-cell-number" label="Number">
+                  {row.number}
+                </DataTableCell>
+                <DataTableCell className="sync-history-cell-company" label="Company">
+                  {row.company}
+                </DataTableCell>
+                <DataTableCell className="sync-history-cell-scope" label="Scope">
+                  {row.scope}
+                </DataTableCell>
+                <DataTableCell className="sync-history-cell-finding" label="Finding">
+                  <span className={row.newFindingCount > 0 ? 'sync-history-finding-count has-new' : 'sync-history-finding-count'}>
+                    {row.findingLabel}
+                  </span>
+                </DataTableCell>
+                <DataTableCell className="sync-history-cell-status" label="Status">
+                  <span className={`sync-history-status ${row.statusFilter}`}>
+                    {formatStatusLabel(row.status)}
+                  </span>
+                </DataTableCell>
+                <DataTableCell className="sync-history-cell-date" label="Date/Time">
+                  {row.dateTime}
+                </DataTableCell>
+              </DataTableRow>
+            ))}
+          </DataTable>
+        </DataTableSection>
       </PageMain>
 
-      <SyncHistoryDetailModal selected={selected} autoCompareItems={autoCompareItems} onClose={() => setSelected(null)} />
-
-      {showCompare && compareItems.length === 2 && (
-        <div className="modal-overlay" role="presentation" onClick={() => setShowCompare(false)}>
-          <div className="modal-content sh-compare-modal" role="dialog" aria-modal="true" aria-labelledby="sh-compare-title" onClick={event => event.stopPropagation()}>
-            <div className="modal-title-row">
-              <h2 id="sh-compare-title" className="modal-heading-with-icon">
-                <BarChart3 size={18} />
-                Compare sync runs
-              </h2>
-              <button type="button" className="icon-btn" onClick={() => setShowCompare(false)} aria-label="Close compare">
-                <XCircle size={16} />
-              </button>
-            </div>
-            <div className="sh-compare-summary">
-              <div className="sh-compare-run-label">
-                <b>First</b>
-                <span>{getRunLabel(compareItems[0])}</span>
-                <small>{formatDate(compareItems[0].startedAt)}</small>
-              </div>
-              <strong>to</strong>
-              <div className="sh-compare-run-label">
-                <b>Second</b>
-                <span>{getRunLabel(compareItems[1])}</span>
-                <small>{formatDate(compareItems[1].startedAt)}</small>
-              </div>
-            </div>
-            <div className="sh-delta-grid">
-              {METRICS.map(([key, label]) => (
-                <MetricDelta key={key} label={label} before={compareItems[0][key]} after={compareItems[1][key]} />
-              ))}
-            </div>
-            <SeverityBreakdown before={compareItems[0]} after={compareItems[1]} section="pulled" title="Pulled severity delta" />
-            <SeverityBreakdown before={compareItems[0]} after={compareItems[1]} section="active" title="Active severity delta" />
-            <SeverityBreakdown before={compareItems[0]} after={compareItems[1]} section="mitigated" title="Mitigated severity delta" />
-          </div>
-        </div>
+      {selectedFindingRow && (
+        <ModalPopupDetails
+          row={selectedFindingRow}
+          onClose={() => setSelectedFindingRow(null)}
+        />
       )}
     </>
   );
 };
 
 export default SyncHistory;
+  

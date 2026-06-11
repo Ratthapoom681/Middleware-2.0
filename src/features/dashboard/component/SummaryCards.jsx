@@ -1,4 +1,4 @@
-import './Dashboard.css';
+import './SummaryCards.css';
 
 const SummaryCards = ({ summary }) => {
   const defectDojo = summary?.defectDojo || {};

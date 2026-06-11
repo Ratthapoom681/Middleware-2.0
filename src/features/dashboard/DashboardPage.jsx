@@ -1,5 +1,5 @@
 import { AlertTriangle, Database, RefreshCw } from 'lucide-react';
-import DashboardOverviewCards from './DashboardOverviewCards';
+import DashboardOverviewCards from './component/DashboardOverviewCards';
 import { PageHeader, PageMain } from '../../shared/ui/Page';
 import './Dashboard.css';
 
@@ -24,7 +24,7 @@ const DashboardPage = ({
   <>
     <PageHeader
       icon={AlertTriangle}
-      eyebrow="User"
+      eyebrow="System Overview"
       title="Security Dashboard"
       actions={(
         <div className="dashboard-hero-actions" aria-label="Dashboard sync status">

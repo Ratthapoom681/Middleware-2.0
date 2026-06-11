@@ -1,5 +1,5 @@
 import { ArrowLeft, Layers, PackageSearch, ShieldAlert } from 'lucide-react';
-import SummaryCards from '../dashboard/SummaryCards';
+import SummaryCards from '../dashboard/component/SummaryCards';
 import { PageHeader, PageMain } from '../../shared/ui/Page';
 import './ProductDashboardPage.css';
 

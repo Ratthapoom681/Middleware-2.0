@@ -40,6 +40,7 @@ const FindingsPage = ({
   renderScopeMenu,
   setActiveFilter,
   severityOptions,
+  loading = false,
 }) => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -146,6 +147,7 @@ const FindingsPage = ({
             columns={FINDINGS_TABLE_COLUMNS}
             gridTemplate={FINDINGS_TABLE_GRID}
             minWidth="1240px"
+            loading={loading}
             empty={(
               <div className="findings-empty" role="status">
                 <div className="findings-empty-icon-wrap">
@@ -156,7 +158,7 @@ const FindingsPage = ({
                 <p>{emptyMessage}</p>
               </div>
             )}
-            footer={displayFindings.length > 0 && (
+            footer={!loading && displayFindings.length > 0 && (
               <DataTablePagination
                 ariaLabel="Findings pagination"
                 currentPage={currentPage}

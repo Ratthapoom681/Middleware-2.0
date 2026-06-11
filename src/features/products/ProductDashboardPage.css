@@ -24,7 +24,7 @@
   margin: 0;
   color: var(--text-main);
   font-size: 1.08rem;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .pd-section-count {
@@ -37,7 +37,7 @@
   background: var(--bg-subtle);
   color: var(--text-muted);
   font-size: 0.78rem;
-  font-weight: 800;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -87,13 +87,13 @@
   color: var(--pd-sev-color, var(--text-main));
   font-size: 1.3rem;
   line-height: 1;
-  font-weight: 900;
+  font-weight: 700;
 }
 
 .pd-severity-label {
   color: var(--text-muted);
   font-size: 0.66rem;
-  font-weight: 800;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -144,7 +144,7 @@
   overflow: hidden;
   color: var(--text-main);
   font-size: 0.94rem;
-  font-weight: 850;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -152,7 +152,7 @@
 .pd-engagement-main small {
   color: var(--text-muted);
   font-size: 0.78rem;
-  font-weight: 750;
+  font-weight: 550;
 }
 
 .pd-engagement-severity {
@@ -207,3 +207,23 @@
     font-size: 1.1rem;
   }
 }
+
+/* ── Mini Severity Badges ── */
+.mini-severity {
+  min-width: 2.25rem;
+  padding: 0.22rem 0.38rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.mini-severity.critical { color: var(--critical); border-color: rgba(239, 68, 68, 0.32); }
+.mini-severity.high { color: var(--high); border-color: rgba(249, 115, 22, 0.32); }
+.mini-severity.medium { color: var(--medium); border-color: rgba(234, 179, 8, 0.32); }
+.mini-severity.low { color: var(--low); border-color: rgba(34, 197, 94, 0.28); }
+.mini-severity.info { color: var(--info); border-color: rgba(56, 189, 248, 0.28); }

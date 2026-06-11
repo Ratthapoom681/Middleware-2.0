@@ -1,9 +1,12 @@
 [
   {
     "username": "admin",
-    "salt": "ccdc2e69a0abf5a30809513d6f0d0ab3",
-    "hash": "53f036a6bd2313c5800affc9c38c053ed26af095c66b4fdf5f2183535c749930854c983cf985eee69edb172690b6bc6de3f629ba126d10306727544a557a1bc9",
+    "salt": "aa66cceeaa694581ec86d03d39edaa10",
+    "hash": "171fc88de80e32a441e8bc72c1074d08432690f6ce78529015d7ac7c714ef68b50d864bab8d0149effb300db6a620c3f7015997f3c7eba8fa0e8a828f77184af",
+    "email": "",
     "role": "admin",
-    "products": []
+    "products": [],
+    "status": "active",
+    "lastLoginAt": ""
   }
 ]

@@ -1,0 +1,90 @@
+import { Info, XCircle } from 'lucide-react';
+
+const DetailModal = ({
+  pendingAction,
+  actionReason,
+  setActionReason,
+  onConfirm,
+  onCancel,
+  isBusy,
+}) => {
+  if (!pendingAction) return null;
+
+  return (
+    <div className="modal-overlay" role="presentation">
+      <div
+        className="modal-content review-confirm-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="review-confirm-title"
+      >
+        <div className="modal-header">
+          <div className="modal-title-row">
+            <h2 id="review-confirm-title" className="modal-heading-with-icon">
+              <Info size={18} />
+              {pendingAction.title}
+            </h2>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={onCancel}
+              aria-label="Cancel review action"
+            >
+              <XCircle size={16} />
+            </button>
+          </div>
+          <p className="modal-subtitle">{pendingAction.message}</p>
+        </div>
+        <div className="finding-meta-grid">
+          <div className="meta-item">
+            <span className="meta-label">Selected</span>
+            <span className="meta-value">{pendingAction.items.length}</span>
+          </div>
+          <div className="meta-item">
+            <span className="meta-label">Action</span>
+            <span className="meta-value">{pendingAction.confirmLabel}</span>
+          </div>
+          {pendingAction.type === 'single' && (
+            <>
+              <div className="meta-item">
+                <span className="meta-label">Issue</span>
+                <span className="meta-value">#{pendingAction.item.issueId || 'Unknown'}</span>
+              </div>
+              <div className="meta-item">
+                <span className="meta-label">Finding</span>
+                <span className="meta-value">
+                  {pendingAction.item.compactedTitle || pendingAction.item.title || 'Compacted finding'}
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+        <label className="review-reason-field">
+          <span>Reviewer note</span>
+          <textarea
+            value={actionReason}
+            onChange={(event) => setActionReason(event.target.value)}
+            rows={4}
+            maxLength={1000}
+            placeholder="Add context for the Redmine note and review history"
+          />
+        </label>
+        <div className="modal-actions">
+          <button type="button" className="btn-secondary" onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className={pendingAction.confirmClass}
+            onClick={onConfirm}
+            disabled={isBusy}
+          >
+            {pendingAction.confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default DetailModal;

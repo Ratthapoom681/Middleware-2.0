@@ -82,7 +82,7 @@
 .pcard-info strong {
   color: var(--text-main);
   font-size: 0.96rem;
-  font-weight: 850;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -91,7 +91,7 @@
 .pcard-info small {
   color: var(--text-muted);
   font-size: 0.78rem;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .pcard-count {
@@ -106,7 +106,7 @@
   background: var(--bg-subtle);
   color: var(--primary);
   font-size: 0.92rem;
-  font-weight: 900;
+  font-weight: 700;
 }
 
 /* ── Engagement Sublist ── */
@@ -156,14 +156,14 @@
   white-space: nowrap;
   color: var(--text-soft);
   font-size: 0.82rem;
-  font-weight: 750;
+  font-weight: 550;
 }
 
 .pcard-engagement-count {
   flex: 0 0 auto;
   color: var(--primary);
   font-size: 0.82rem;
-  font-weight: 900;
+  font-weight: 700;
 }
 
 /* ── Empty State ── */
@@ -210,7 +210,7 @@
   margin: 0 0 0.4rem;
   color: var(--text-main);
   font-size: 1.1rem;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .products-empty p {
