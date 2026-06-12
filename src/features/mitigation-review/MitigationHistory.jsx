@@ -127,7 +127,7 @@ const MitigationHistory = ({ historyItems, loading, fetchHistory, config = {} })
   const lastResult = Math.min(pageStart + pageItems.length, sortedHistoryItems.length);
 
   return (
-    <section className="review-history-wrap" style={{ border: 'none', background: 'transparent', boxShadow: 'none' }}>
+    <section className="review-queue-wrap">
       <SearchOptionsPanel
         bodyId="mitigation-review-history-filter"
         open={historyFilterPanelOpen}

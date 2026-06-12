@@ -27,7 +27,7 @@ import FindingDetailModal from '../features/findings/FindingDetailModal';
 import ProductDashboardPage from '../features/products/ProductDashboardPage';
 import ProductsPage from '../features/products/ProductsPage';
 import SyncHistory from '../features/sync-history/SyncHistory';
-import MitigationReview from '../features/MitigationReview/MitigationReview';
+import MitigationReview from '../features/mitigation-review/MitigationReview';
 import AppShell from './AppShell';
 import { PageMain } from '../shared/ui/Page';
 import Topbar from '../shared/ui/Topbar/Topbar';

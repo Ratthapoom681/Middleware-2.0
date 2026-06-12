@@ -4,26 +4,26 @@
   z-index: 100;
   grid-column: 2;
   grid-row: 1;
-  padding: 1rem 2rem;
+  padding: 0.75rem 1.5rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-glass-strong);
   backdrop-filter: blur(14px);
 }
 
 .topbar-inner {
-  width: min(100%, 1440px);
+  width: min(100%, 1320px);
   margin: 0 auto;
   display: flex;
   align-items: center;
-  gap: 0.9rem;
+  gap: 0.7rem;
 }
 
 .topbar-icon {
   flex: 0 0 auto;
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 2.15rem;
+  height: 2.15rem;
   border: 1px solid var(--bg-active-border);
-  border-radius: 0.65rem;
+  border-radius: 0.55rem;
   background: var(--bg-active);
   color: var(--primary);
   display: inline-flex;
@@ -39,7 +39,7 @@
 .topbar-copy h1 {
   margin: 0;
   color: var(--text-main);
-  font-size: 1.18rem;
+  font-size: 1.05rem;
   line-height: 1.2;
   font-weight: 600;
   overflow-wrap: anywhere;
@@ -49,7 +49,7 @@
   margin: 0.16rem 0 0;
   max-width: 48rem;
   color: var(--text-muted);
-  font-size: 0.82rem;
+  font-size: 0.76rem;
   font-weight: 500;
 }
 
@@ -64,9 +64,9 @@
 }
 
 .topbar-metric {
-  min-width: 3.6rem;
-  min-height: 2.35rem;
-  padding: 0.38rem 0.62rem;
+  min-width: 3.2rem;
+  min-height: 2.05rem;
+  padding: 0.3rem 0.52rem;
   border: 1px solid var(--border-subtle);
   border-radius: 0.5rem;
   background: var(--bg-subtle);
@@ -78,7 +78,7 @@
 
 .topbar-metric strong {
   color: var(--text-main);
-  font-size: 1rem;
+  font-size: 0.9rem;
   line-height: 1;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -86,7 +86,7 @@
 
 .topbar-metric span {
   color: var(--text-muted);
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;

@@ -3,8 +3,8 @@
 .dashboard-soc-overview {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: var(--space-lg);
-  margin-bottom: var(--space-xl);
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
 }
 
 /* ── Card Shell ── */
@@ -13,7 +13,7 @@
   position: relative;
   min-width: 0;
   overflow: hidden;
-  padding: var(--space-lg);
+  padding: var(--space-md);
   border: 1px solid var(--border);
   border-radius: var(--rounded-md);
   background: var(--bg-card);
@@ -39,7 +39,7 @@
 .soc-card-header {
   position: relative;
   z-index: 1;
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-sm);
 }
 
 .soc-card-title-row {
@@ -51,6 +51,8 @@
 .soc-card-title-row > svg {
   flex: 0 0 auto;
   color: var(--primary);
+  width: 1.15rem;
+  height: 1.15rem;
 }
 
 .soc-card-vulnerability .soc-card-title-row > svg {
@@ -68,7 +70,7 @@
 .soc-card-header h2 {
   margin: 0;
   color: var(--text-main);
-  font-size: 0.95rem;
+  font-size: 0.82rem;
   font-family: var(--font-sans);
   line-height: 1.25;
   font-weight: 700;
@@ -79,7 +81,7 @@
 .soc-card-header p {
   margin: var(--space-xs) 0 0;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: 0.74rem;
   font-weight: 500;
 }
 
@@ -90,7 +92,7 @@
   z-index: 1;
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 3rem 1fr;
+  grid-template-columns: 1fr 2.3rem 1fr;
   align-items: center;
   gap: var(--space-xs);
 }
@@ -98,7 +100,7 @@
 .vulnerability-count-box {
   min-width: 0;
   height: 100%;
-  padding: var(--space-md) var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
   border: 1px solid var(--border-subtle);
   border-radius: var(--rounded-sm);
   background: var(--bg-subtle);
@@ -119,7 +121,7 @@
 }
 
 .vulnerability-count-box strong {
-  font-size: 2.75rem;
+  font-size: 2rem;
   line-height: 0.95;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -136,13 +138,13 @@
 
 .vulnerability-count-box span {
   color: var(--text-main);
-  font-size: 0.88rem;
+  font-size: 0.8rem;
   font-weight: 700;
 }
 
 .vulnerability-count-box small {
   color: var(--text-muted);
-  font-size: 0.76rem;
+  font-size: 0.68rem;
   font-weight: 500;
 }
 
@@ -175,13 +177,13 @@
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   align-items: stretch;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
 }
 
 .workflow-tile {
   min-width: 0;
-  min-height: 6.5rem;
-  padding: var(--space-sm) var(--space-xs);
+  min-height: 5.25rem;
+  padding: var(--space-xs);
   border: 1px solid var(--tile-border, var(--border));
   border-radius: var(--rounded-sm);
   background: var(--tile-bg, var(--bg-subtle));
@@ -211,7 +213,7 @@
 
 .workflow-tile strong {
   color: var(--tile-color, var(--text-main));
-  font-size: 1.75rem;
+  font-size: 1.35rem;
   line-height: 1;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -223,7 +225,7 @@
   max-width: 100%;
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -276,8 +278,8 @@
 
 .severity-distribution-block {
   min-width: 0;
-  min-height: 8rem;
-  padding: var(--space-md) var(--space-xs);
+  min-height: 6rem;
+  padding: var(--space-sm) var(--space-xs);
   background: var(--bg-subtle);
   color: var(--text-main);
   display: grid;
@@ -303,7 +305,7 @@
 
 .severity-distribution-block strong {
   color: var(--tile-color, var(--text-main));
-  font-size: 2rem;
+  font-size: 1.5rem;
   line-height: 1;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -314,7 +316,7 @@
   width: 100%;
   padding-top: var(--space-xs);
   border-top: 2px solid var(--tile-line, var(--border));
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -371,7 +373,7 @@
   .severity-distribution-block {
     border: 1px solid var(--border-subtle);
     border-radius: var(--rounded-sm);
-    min-height: 7rem;
+    min-height: 5.5rem;
   }
 }
 

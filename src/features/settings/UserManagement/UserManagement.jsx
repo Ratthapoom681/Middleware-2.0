@@ -422,15 +422,6 @@ const UserManagement = ({ user }) => {
                         </button>
                         <button
                           type="button"
-                          className="icon-btn user-row-action"
-                          onClick={() => handleResetPassword(u)}
-                          aria-label={`Reset password for ${u.username}`}
-                          title="Reset password"
-                        >
-                          <KeyRound size={15} />
-                        </button>
-                        <button
-                          type="button"
                           className="icon-btn user-row-action danger"
                           onClick={() => handleDeleteUser(u.username)}
                           aria-label={`Delete ${u.username}`}

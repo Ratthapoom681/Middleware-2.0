@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle2, History, RefreshCw } from 'lucide-react';
+import { CheckCircle2, History } from 'lucide-react';
 import { apiFetch } from '../../shared/api/api';
 import MitigationHistory from './MitigationHistory';
 import MitigationQueue from './MitigationQueue';
 import './MitigationReview.css';
 
-const MitigationReview = ({ onBack, config = {} }) => {
+const MitigationReview = ({ config = {} }) => {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [activeView, setActiveView] = useState('queue');
@@ -48,8 +48,6 @@ const MitigationReview = ({ onBack, config = {} }) => {
   const handleActionSuccess = async () => {
     await Promise.all([fetchQueue(), fetchHistory()]);
   };
-
-  const isBusy = loading || historyLoading;
 
   return (
     <div className="review-view">

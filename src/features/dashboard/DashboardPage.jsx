@@ -1,5 +1,5 @@
 import { AlertTriangle, Database, RefreshCw } from 'lucide-react';
-import DashboardOverviewCards from './component/DashboardOverviewCards';
+import DashboardOverviewCards from './components/DashboardOverviewCards';
 import { PageMain } from '../../shared/ui/Page';
 import Topbar from '../../shared/ui/Topbar/Topbar';
 import './Dashboard.css';

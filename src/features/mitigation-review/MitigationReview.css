@@ -50,78 +50,6 @@
   text-align: center;
 }
 
-/* ── History Audit Logs View ── */
-.review-history-wrap {
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  background: var(--bg-glass);
-  box-shadow: var(--shadow-sm);
-}
-
-.review-history-list {
-  display: grid;
-  gap: 0.75rem;
-  padding: 0.85rem;
-}
-
-.review-history-card {
-  padding: 0.85rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: 0.7rem;
-  background: var(--bg-subtle);
-  display: grid;
-  gap: 0.75rem;
-}
-
-.review-history-main {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.7rem;
-}
-
-.review-history-main h2,
-.review-history-main p,
-.review-history-reason {
-  margin: 0;
-}
-
-.review-history-main h2 {
-  color: var(--text-main);
-  font-size: 0.98rem;
-}
-
-.review-history-main p,
-.review-history-reason {
-  color: var(--text-muted);
-  font-size: 0.82rem;
-}
-
-.review-history-meta {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.55rem;
-}
-
-.review-history-meta span {
-  min-width: 0;
-  padding: 0.55rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: 0.55rem;
-  background: var(--bg-input);
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  overflow-wrap: anywhere;
-}
-
-.review-history-meta strong {
-  display: block;
-  margin-bottom: 0.12rem;
-  color: var(--text-soft);
-  font-size: 0.66rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
 .action-badge {
   flex: 0 0 auto;
   width: fit-content;
@@ -198,6 +126,12 @@
 }
 
 /* ── Modal Confirmation Form ── */
+.review-confirm-modal,
+.mitigation-detail-popup {
+  background: var(--bg-glass) !important;
+  backdrop-filter: blur(16px);
+}
+
 .review-confirm-modal .finding-meta-grid {
   margin-top: 0.9rem;
 }
@@ -255,24 +189,13 @@
     justify-content: center;
   }
 
-  .review-history-meta {
-    grid-template-columns: 1fr;
-  }
 }
 
-/* ── Queue and History Card Wrapper Styles ── */
+/* ── Queue and History Table Wrapper Styles ── */
 .review-queue-wrap {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-}
-
-/* Remove double card styling from panels inside wrapper cards */
-.review-history-wrap .search-options-panel {
-  border-color: var(--border);
-  box-shadow: var(--shadow-sm);
-  background: var(--bg-card);
-  border-radius: 0.75rem 0.75rem 0 0;
 }
 
 /* ── CVE & CWE Badges ── */
