@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Filter, History, Layers, RefreshCw } from 'lucide-react';
 import { apiFetch } from '../../shared/api/api';
-import { PageHeader, PageMain } from '../../shared/ui/Page';
+import { PageMain } from '../../shared/ui/Page';
+import Topbar from '../../shared/ui/Topbar/Topbar';
 import { DataTable, DataTableCell, DataTablePagination, DataTableRow, DataTableSection } from '../../shared/ui/DataTable/DataTable';
 import {
   SearchOptionsCommandBar,
@@ -14,7 +15,7 @@ import {
 import ModalPopupDetails from './ModalPopupDetails';
 import './SyncHistory.css';
 
-const PAGE_SIZE_OPTIONS = [10, 20, 50];
+const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
 const DEFAULT_PAGE_SIZE = 10;
 const SYNC_HISTORY_COLUMNS = ['ID', 'Number', 'Company', 'Scope', 'Finding', 'Status', 'Date/Time'];
 const SYNC_HISTORY_GRID = '88px 96px minmax(170px, 1fr) minmax(170px, 1.05fr) 108px 128px 188px';
@@ -248,24 +249,10 @@ const SyncHistory = ({ onBack }) => {
 
   return (
     <>
-      <PageHeader
+      <Topbar
         icon={History}
         eyebrow="Administration"
         title="Sync History"
-        description="Check DefectDojo to middleware sync results and verify pulled data by company and scope."
-        actions={(
-          <>
-            {onBack && (
-              <button type="button" className="btn-secondary" onClick={onBack}>
-                Back to dashboard
-              </button>
-            )}
-            <button type="button" className="btn-secondary" onClick={fetchSyncHistory} disabled={loading}>
-              <RefreshCw size={16} className={loading ? 'spin' : ''} />
-              Refresh
-            </button>
-          </>
-        )}
       />
 
       <PageMain className="sync-history-main">

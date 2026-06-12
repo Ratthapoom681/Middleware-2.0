@@ -1,6 +1,7 @@
 import { AlertTriangle, Database, RefreshCw } from 'lucide-react';
 import DashboardOverviewCards from './component/DashboardOverviewCards';
-import { PageHeader, PageMain } from '../../shared/ui/Page';
+import { PageMain } from '../../shared/ui/Page';
+import Topbar from '../../shared/ui/Topbar/Topbar';
 import './Dashboard.css';
 
 const DashboardPage = ({
@@ -22,7 +23,7 @@ const DashboardPage = ({
   user,
 }) => (
   <>
-    <PageHeader
+    <Topbar
       icon={AlertTriangle}
       eyebrow="System Overview"
       title="Security Dashboard"

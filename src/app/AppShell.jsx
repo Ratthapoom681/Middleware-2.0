@@ -6,6 +6,8 @@ import {
   RefreshCw,
   Settings,
 } from 'lucide-react';
+import AppSidebar from '../shared/ui/AppSidebar/AppSidebar';
+import './AppShell.css';
 
 const AppShell = ({
   children,
@@ -50,73 +52,34 @@ const AppShell = ({
       },
     ] : []),
   ];
+  const footerItems = [
+    {
+      label: 'Refresh',
+      icon: RefreshCw,
+      iconClassName: loading ? 'spin' : '',
+      className: 'utility',
+      disabled: loading || dashboardLoading,
+      onClick: onRefresh,
+      title: 'Refresh findings',
+    },
+    {
+      label: 'Logout',
+      icon: LogOut,
+      className: 'danger',
+      onClick: onLogout,
+      title: 'Logout',
+    },
+  ];
 
   return (
     <div className="app-shell">
-      <aside
-        className="app-sidebar"
-        aria-label="Primary navigation"
-      >
-        <div className="sidebar-brand">
-          <span className="sidebar-brand-mark">
-            <AlertTriangle size={20} />
-          </span>
-          <span>
-            <strong>ทดสอบ</strong>
-          </span>
-        </div>
-
-        <div className="sidebar-user">
-          <span>{user.username}</span>
-          <small>{user.role === 'admin' ? 'Admin' : 'Viewer'}</small>
-        </div>
-
-        <nav className="sidebar-nav" aria-label="Dashboard sections">
-          {navItems.map(item => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.label}
-                type="button"
-                className={`sidebar-nav-item ${item.active ? 'active' : ''} ${item.notification ? 'notification' : ''}`}
-                onClick={item.onClick}
-                aria-current={item.active ? 'page' : undefined}
-                title={item.badge > 0 ? `${item.label}: ${item.badge} pending` : item.label}
-              >
-                <Icon size={18} />
-                <span>{item.label}</span>
-                {item.badge > 0 && (
-                  <strong className="sidebar-nav-badge" aria-label={`${item.badge} pending mitigation reviews`}>
-                    {item.badge > 99 ? '99+' : item.badge}
-                  </strong>
-                )}
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="sidebar-footer">
-          <button
-            type="button"
-            className="sidebar-nav-item utility"
-            onClick={onRefresh}
-            disabled={loading || dashboardLoading}
-            title="Refresh findings"
-          >
-            <RefreshCw size={18} className={loading ? 'spin' : ''} />
-            <span>Refresh</span>
-          </button>
-          <button
-            type="button"
-            className="sidebar-nav-item danger"
-            onClick={onLogout}
-            title="Logout"
-          >
-            <LogOut size={18} />
-            <span>Logout</span>
-          </button>
-        </div>
-      </aside>
+      <AppSidebar
+        brandIcon={AlertTriangle}
+        brandLabel="ทดสอบ"
+        footerItems={footerItems}
+        navItems={navItems}
+        user={user}
+      />
 
       {children}
     </div>

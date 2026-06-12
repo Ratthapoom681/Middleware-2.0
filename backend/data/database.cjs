@@ -2385,35 +2385,49 @@ const listMitigationReviewQueue = async ({ productId = '', engagementId = '' } =
     }
 
     const { rows } = await pool.query(`
-        SELECT *
-        FROM ${TABLES.mitigationReviews}
-        WHERE ${clauses.join(' AND ')}
-        ORDER BY updated_at DESC, created_at DESC
+        SELECT mr.*, f.data AS finding_data
+        FROM ${TABLES.mitigationReviews} mr
+        LEFT JOIN ${TABLES.findings} f ON f.defectdojo_finding_id = mr.defectdojo_finding_id
+        WHERE ${clauses.map(c => `mr.${c}`).join(' AND ')}
+        ORDER BY mr.updated_at DESC, mr.created_at DESC
     `, params);
 
-    const items = rows.map(row => ({
-        reviewKey: row.review_key,
-        syncHistoryId: row.sync_history_id,
-        ticketKey: row.ticket_key,
-        issueId: row.issue_id,
-        defectdojoFindingId: row.defectdojo_finding_id,
-        productId: row.product_id,
-        productName: row.product_name,
-        engagementId: row.engagement_id,
-        engagementName: row.engagement_name,
-        cveId: row.cve_id,
-        title: row.title,
-        endpoint: row.endpoint,
-        severity: row.severity,
-        redmineStatusId: row.redmine_status_id,
-        redmineStatusName: row.redmine_status_name,
-        mitigationConfirmedAt: toIsoString(row.mitigation_confirmed_at),
-        lastSyncHistoryId: row.last_sync_history_id,
-        state: row.state,
-        raw: parseJsonValue(row.raw, {}),
-        createdAt: toIsoString(row.created_at),
-        updatedAt: toIsoString(row.updated_at)
-    }));
+    const items = rows.map(row => {
+        const raw = parseJsonValue(row.raw, {});
+        const finding = parseJsonValue(row.finding_data, {});
+        const cweIds = collectAutoCweIds(finding);
+        let itemCweIds = [];
+        if (cweIds && cweIds.length > 0) {
+            itemCweIds = cweIds;
+        } else if (Array.isArray(raw?.cweIds)) {
+            itemCweIds = raw.cweIds;
+        }
+
+        return {
+            reviewKey: row.review_key,
+            syncHistoryId: row.sync_history_id,
+            ticketKey: row.ticket_key,
+            issueId: row.issue_id,
+            defectdojoFindingId: row.defectdojo_finding_id,
+            productId: row.product_id,
+            productName: row.product_name,
+            engagementId: row.engagement_id,
+            engagementName: row.engagement_name,
+            cveId: row.cve_id,
+            title: row.title,
+            endpoint: row.endpoint,
+            severity: row.severity,
+            redmineStatusId: row.redmine_status_id,
+            redmineStatusName: row.redmine_status_name,
+            mitigationConfirmedAt: toIsoString(row.mitigation_confirmed_at),
+            lastSyncHistoryId: row.last_sync_history_id,
+            state: row.state,
+            raw,
+            cweIds: itemCweIds,
+            createdAt: toIsoString(row.created_at),
+            updatedAt: toIsoString(row.updated_at)
+        };
+    });
 
     const groups = new Map();
     items.forEach(item => {
@@ -2429,10 +2443,12 @@ const listMitigationReviewQueue = async ({ productId = '', engagementId = '' } =
                 reviewKeys: [],
                 defectdojoFindingIds: [],
                 cveIds: [],
+                cweIds: [],
                 titles: [],
                 endpoints: [],
                 findingCount: 0,
-                cveCount: 0
+                cveCount: 0,
+                cweCount: 0
             });
         }
 
@@ -2440,6 +2456,11 @@ const listMitigationReviewQueue = async ({ productId = '', engagementId = '' } =
         group.reviewKeys.push(item.reviewKey);
         if (normalizeText(item.defectdojoFindingId)) group.defectdojoFindingIds.push(item.defectdojoFindingId);
         if (normalizeText(item.cveId)) group.cveIds.push(item.cveId);
+        if (Array.isArray(item.cweIds)) {
+            item.cweIds.forEach(cweId => {
+                if (normalizeText(cweId)) group.cweIds.push(cweId);
+            });
+        }
         if (normalizeText(item.title)) group.titles.push(item.title);
         if (normalizeText(item.endpoint)) group.endpoints.push(item.endpoint);
         group.severity = highestSeverity(group.severity || 'Info', item.severity || 'Info');
@@ -2456,6 +2477,7 @@ const listMitigationReviewQueue = async ({ productId = '', engagementId = '' } =
     return Array.from(groups.values()).map(group => {
         const defectdojoFindingIds = sortFindingIds(Array.from(new Set(group.defectdojoFindingIds))).map(String);
         const cveIds = sortStrings(Array.from(new Set(group.cveIds)));
+        const cweIds = sortStrings(Array.from(new Set(group.cweIds)));
         const titles = sortStrings(Array.from(new Set(group.titles)));
         const endpoints = sortStrings(Array.from(new Set(group.endpoints)));
 
@@ -2468,6 +2490,8 @@ const listMitigationReviewQueue = async ({ productId = '', engagementId = '' } =
             cveIds,
             cveCount: cveIds.length,
             cveId: cveIds.join(', '),
+            cweIds,
+            cweCount: cweIds.length,
             titles,
             sourceTitleCount: titles.length,
             title: titles[0] || group.title || '',

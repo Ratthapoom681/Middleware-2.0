@@ -141,6 +141,8 @@ module.exports = function(ctx) {
                 findingCount: item.findingCount || (Array.isArray(item.defectdojoFindingIds) ? item.defectdojoFindingIds.length : reviewKeys.length),
                 cveIds: Array.isArray(item.cveIds) ? item.cveIds : [],
                 cveCount: item.cveCount || (Array.isArray(item.cveIds) ? item.cveIds.length : 0),
+                cweIds: Array.isArray(item.cweIds) ? item.cweIds : [],
+                cweCount: item.cweCount || (Array.isArray(item.cweIds) ? item.cweIds.length : 0),
                 endpoints: Array.isArray(item.endpoints) ? item.endpoints : [],
                 endpointCount: Array.isArray(item.endpoints) ? item.endpoints.length : (item.endpoint ? 1 : 0),
                 title: item.compactedTitle || item.title || '',

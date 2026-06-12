@@ -1181,7 +1181,8 @@ const runMitigationRecheck = async ({baseUrl, apiKey, syncHistoryId = null, stat
                         reason,
                         mitigationMessage,
                         ticketSubject: record.subject || '',
-                        sourceFindingTitle: finding.title || finding.name || ''
+                        sourceFindingTitle: finding.title || finding.name || '',
+                        cweIds: collectAutoCweIds(finding)
                     }
                 });
                 queuedReviewForRecord = true;

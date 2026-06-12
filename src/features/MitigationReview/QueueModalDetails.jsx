@@ -37,27 +37,19 @@ const DetailModal = ({
         </div>
         <div className="finding-meta-grid">
           <div className="meta-item">
-            <span className="meta-label">Selected</span>
-            <span className="meta-value">{pendingAction.items.length}</span>
+            <span className="meta-label">Issue</span>
+            <span className="meta-value">#{pendingAction.item.issueId || 'Unknown'}</span>
+          </div>
+          <div className="meta-item">
+            <span className="meta-label">Finding</span>
+            <span className="meta-value">
+              {pendingAction.item.compactedTitle || pendingAction.item.title || 'Compacted finding'}
+            </span>
           </div>
           <div className="meta-item">
             <span className="meta-label">Action</span>
             <span className="meta-value">{pendingAction.confirmLabel}</span>
           </div>
-          {pendingAction.type === 'single' && (
-            <>
-              <div className="meta-item">
-                <span className="meta-label">Issue</span>
-                <span className="meta-value">#{pendingAction.item.issueId || 'Unknown'}</span>
-              </div>
-              <div className="meta-item">
-                <span className="meta-label">Finding</span>
-                <span className="meta-value">
-                  {pendingAction.item.compactedTitle || pendingAction.item.title || 'Compacted finding'}
-                </span>
-              </div>
-            </>
-          )}
         </div>
         <label className="review-reason-field">
           <span>Reviewer note</span>

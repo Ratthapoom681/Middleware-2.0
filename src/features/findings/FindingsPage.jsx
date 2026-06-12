@@ -4,9 +4,13 @@ import {
   Layers,
   ShieldAlert,
   ShieldCheck,
+  ExternalLink,
+  FileText,
+  Server,
 } from 'lucide-react';
-import { PageHeader, PageMain } from '../../shared/ui/Page';
-import { DataTable, DataTablePagination, DataTableSection } from '../../shared/ui/DataTable/DataTable';
+import { PageMain } from '../../shared/ui/Page';
+import Topbar from '../../shared/ui/Topbar/Topbar';
+import { DataTable, DataTablePagination, DataTableSection, DataTableRow, DataTableCell } from '../../shared/ui/DataTable/DataTable';
 import {
   SearchOptionsCommandBar,
   SearchOptionsFilterButton,
@@ -15,6 +19,10 @@ import {
   SearchOptionsResultCount,
   SearchOptionsSearch,
 } from '../../shared/ui/SearchOptions/SearchOptions';
+import { cleanText, formatRouteValue, getRedmineSyncBadgeClass } from '../../shared/lib/dashboardUtils';
+import { getCompactedFindingCount } from '../../domain/findings/compactionUtils';
+import { getRedmineSyncLabel } from '../../domain/redmine/redmineTicketFormat';
+import { getDefectDojoRoute } from '../../domain/findings/findingUtils';
 import './FindingsPage.css';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
@@ -22,6 +30,48 @@ const DEFAULT_PAGE_SIZE = 10;
 const FINDINGS_SEVERITY_FILTERS = ['Critical', 'High', 'Medium', 'Low'];
 const FINDINGS_TABLE_COLUMNS = ['ID', 'Company', 'Severity', 'Name', 'Finding', 'Endpoints', 'CVEs/CWEs', 'Date', 'Status'];
 const FINDINGS_TABLE_GRID = '88px 156px 104px minmax(240px, 1.8fr) 104px 112px 148px 116px 168px';
+
+const formatRouteSummary = (finding) => {
+  if (finding.defectDojoEngagementName || finding.defectDojoEngagementId) {
+    return formatRouteValue(finding.defectDojoEngagementName, finding.defectDojoEngagementId);
+  }
+  return 'No engagement';
+};
+
+const formatCompanyName = (finding) => {
+  const route = getDefectDojoRoute(finding);
+  return cleanText(
+    route.projectName
+    || finding.defectDojoProjectName
+    || finding.productName
+    || finding.company
+    || route.projectId
+    || finding.defectDojoProjectId
+  ) || 'Unknown';
+};
+
+const formatFindingTableRedmineStatus = (sync) => {
+  const statusText = cleanText(sync?.status || sync?.issue?.status?.name);
+  if (statusText) return statusText.toUpperCase();
+
+  const actionText = cleanText(sync?.action).toLowerCase();
+  if (actionText === 'created') return 'NEW';
+  if (actionText === 'existing_open') return 'OPEN';
+  if (actionText === 'existing_closed') return 'CLOSED';
+  if (actionText === 'closed_with_new_findings') return 'NEW FINDINGS';
+  if (actionText === 'not_found') return 'NOT FOUND';
+  if (actionText === 'check_failed') return 'ERROR';
+
+  const fallbackLabel = cleanText(getRedmineSyncLabel(sync))
+    .replace(/^redmine\s+/i, '')
+    .split('→')[0]
+    .replace(/\s+->\s+.*$/, '');
+
+  return fallbackLabel ? fallbackLabel.toUpperCase() : 'SYNCED';
+};
+
+const getFindingCveCount = (finding) => finding.allCVEs?.length || 0;
+const getFindingCweCount = (finding) => finding.allCWEs?.length || finding.cweIds?.length || 0;
 
 const FindingsPage = ({
   activeFilter,
@@ -35,13 +85,138 @@ const FindingsPage = ({
   onClearSearch,
   onSearchChange,
   renderFindingDetailModal,
-  renderFindingRow,
   renderMitigationReviewToast,
   renderScopeMenu,
   setActiveFilter,
   severityOptions,
   loading = false,
+  user,
+  selectedFinding,
+  setSelectedFinding,
+  getFindingRedmineSync,
+  getTicketActionId,
+  openRedmineIssue,
+  bulkOpeningRedmine,
+  openingRedmineId,
 }) => {
+  const getFindingIdentity = (finding, fallback = '') => {
+    const identityParts = [
+      finding?.title,
+      finding?.defectDojoProjectId,
+      finding?.defectDojoEngagementId,
+      finding?.date,
+    ].map(value => cleanText(value)).filter(Boolean);
+
+    return getTicketActionId(finding) || identityParts.join('|') || String(fallback);
+  };
+
+  const isSelectedFinding = (finding, idx) => (
+    selectedFinding
+    && getFindingIdentity(selectedFinding) === getFindingIdentity(finding, idx)
+  );
+
+  const renderFindingRowLocal = (finding, idx) => {
+    const findingRedmineSync = getFindingRedmineSync(finding);
+    const redmineIssueId = cleanText(findingRedmineSync?.issueId || findingRedmineSync?.issue?.id);
+    const endpointCount = finding.allEndpoints?.length || 0;
+    const cveCount = getFindingCveCount(finding);
+    const cweCount = getFindingCweCount(finding);
+    const sourceFindingCount = getCompactedFindingCount(finding);
+    const selected = isSelectedFinding(finding, idx);
+    const severity = cleanText(finding.severity || 'Info');
+    const severityClass = severity.toLowerCase();
+    const statusLabel = cleanText(finding.currentStatus).toLowerCase() || 'active';
+    const displayStatusLabel = statusLabel === 'mixed'
+      ? 'Mixed'
+      : statusLabel === 'mitigated'
+        ? 'Mitigated'
+        : 'Active';
+    const rowStyle = { animationDelay: `${Math.min(idx * 40, 600)}ms` };
+
+    return (
+      <DataTableRow
+        key={getFindingIdentity(finding, idx)}
+        className="finding-row findings-table-row findings-card-enter"
+        interactive={true}
+        selected={selected}
+        tone={severityClass}
+        onClick={() => setSelectedFinding(finding)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setSelectedFinding(finding);
+          }
+        }}
+        ariaLabel={`View details for ${finding.title || 'finding'}`}
+        style={rowStyle}
+      >
+        <DataTableCell className={`cell-id ${redmineIssueId ? 'has-id' : ''}`} label="ID">
+          {redmineIssueId ? `#${redmineIssueId}` : <span className="cell-empty">-</span>}
+        </DataTableCell>
+        <DataTableCell className="cell-company" label="Company">
+          {formatCompanyName(finding)}
+        </DataTableCell>
+        <DataTableCell className="cell-severity" label="Severity">
+          <span className={`severity-badge badge-${severityClass}`}>
+            {severity}
+          </span>
+        </DataTableCell>
+        <DataTableCell className="cell-name" label="Name">
+          <strong className="cell-name-title">{finding.title || 'Untitled finding'}</strong>
+          <small className="cell-name-subtitle">{formatRouteSummary(finding)}</small>
+        </DataTableCell>
+        <DataTableCell className="cell-finding" label="Finding">
+          <FileText size={14} aria-hidden="true" />
+          <span>{sourceFindingCount}</span>
+        </DataTableCell>
+        <DataTableCell className="cell-endpoints" label="Endpoints">
+          <Server size={14} aria-hidden="true" />
+          <span>{endpointCount || <span className="cell-empty">-</span>}</span>
+        </DataTableCell>
+        <DataTableCell className="cell-cve-cwe" label="CVEs/CWEs">
+          {cveCount > 0 || cweCount > 0 ? (
+            <>
+              <span className="cve-cwe-tag cve">{cveCount} CVE</span>
+              <span className="cve-cwe-separator" aria-hidden="true">·</span>
+              <span className="cve-cwe-tag cwe">{cweCount} CWE</span>
+            </>
+          ) : (
+            <span className="cell-empty">-</span>
+          )}
+        </DataTableCell>
+        <DataTableCell className="cell-date" label="Date">
+          {finding.date || <span className="cell-empty">-</span>}
+        </DataTableCell>
+        <DataTableCell className="cell-status" label="Status">
+          {findingRedmineSync ? (
+            <span className={getRedmineSyncBadgeClass(findingRedmineSync)}>
+              {formatFindingTableRedmineStatus(findingRedmineSync)}
+            </span>
+          ) : (
+            <span className={`status-pill status-${statusLabel}`}>
+              {displayStatusLabel}
+            </span>
+          )}
+          {user?.role === 'admin' && (
+            <button
+              type="button"
+              className="icon-btn redmine-action"
+              onClick={(e) => {
+                e.stopPropagation();
+                openRedmineIssue(finding);
+              }}
+              disabled={bulkOpeningRedmine || openingRedmineId === getTicketActionId(finding)}
+              title="Open issue in Redmine"
+              aria-label={`Open Redmine issue for ${finding.title || 'finding'}`}
+            >
+              <ExternalLink size={16} />
+            </button>
+          )}
+        </DataTableCell>
+      </DataTableRow>
+    );
+  };
+
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [filterPanelOpen, setFilterPanelOpen] = useState(true);
@@ -179,7 +354,7 @@ const FindingsPage = ({
           >
             {displayFindings.length > 0 ? (
               pagedDisplayFindings.map((finding, idx) => (
-                renderFindingRow(finding, pageStartIndex + idx)
+                renderFindingRowLocal(finding, pageStartIndex + idx)
               ))
             ) : null}
           </DataTable>
@@ -198,7 +373,7 @@ const FindingsPage = ({
 
   return (
     <>
-      <PageHeader
+      <Topbar
         icon={ShieldAlert}
         eyebrow="Compacted Findings"
         title="Ticket Management"

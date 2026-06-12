@@ -1,50 +1,6 @@
+import './Page.css';
+
 const joinClassNames = (...classes) => classes.filter(Boolean).join(' ');
-
-export const PageHeader = ({
-  actions,
-  className = '',
-  description,
-  eyebrow,
-  icon: Icon,
-  metrics = [],
-  title,
-}) => (
-  <header className={joinClassNames('page-header', className)}>
-    <div className="page-header-inner">
-      {Icon && (
-        <div className="page-header-icon" aria-hidden="true">
-          <Icon size={22} />
-        </div>
-      )}
-
-      <div className="page-header-copy">
-        {eyebrow && <p className="eyebrow">{eyebrow}</p>}
-        <h1>{title}</h1>
-        {description && <p className="page-header-description">{description}</p>}
-      </div>
-
-      {metrics.length > 0 && (
-        <div className="page-header-metrics" aria-label={`${title} summary`}>
-          {metrics.map(metric => (
-            <div
-              key={`${metric.label}-${metric.value}`}
-              className={joinClassNames('page-header-metric', metric.tone && `page-header-metric-${metric.tone}`)}
-            >
-              <strong>{metric.value}</strong>
-              <span>{metric.label}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {actions && (
-        <div className="page-header-actions">
-          {actions}
-        </div>
-      )}
-    </div>
-  </header>
-);
 
 export const PageMain = ({ children, className = '', narrow = false }) => (
   <main className={joinClassNames('main-content page-main', narrow && 'page-main-narrow', className)}>

@@ -3,9 +3,6 @@ import {
   Settings, 
   RefreshCw, 
   Filter,
-  ExternalLink,
-  FileText,
-  Server,
   X,
   ShieldCheck,
   Search,
@@ -20,8 +17,6 @@ import DashboardPage from '../features/dashboard/DashboardPage';
 import {
   chooseRedmineSync,
   cleanText,
-  formatRouteValue,
-  getRedmineSyncBadgeClass,
   getScopeOptionValue,
   highestSeverity,
   normalizeRedmineStatus,
@@ -32,10 +27,11 @@ import FindingDetailModal from '../features/findings/FindingDetailModal';
 import ProductDashboardPage from '../features/products/ProductDashboardPage';
 import ProductsPage from '../features/products/ProductsPage';
 import SyncHistory from '../features/sync-history/SyncHistory';
-import MitigationReview from '../features/admin/MitigationReview/MitigationReview';
+import MitigationReview from '../features/MitigationReview/MitigationReview';
 import AppShell from './AppShell';
-import { PageHeader, PageMain } from '../shared/ui/Page';
-import { DataTableRow, DataTableCell } from '../shared/ui/DataTable/DataTable';
+import { PageMain } from '../shared/ui/Page';
+import Topbar from '../shared/ui/Topbar/Topbar';
+
 import { APP_ROUTE_IDS, resolveAppRoute } from './routes';
 import {
   PULL_SEVERITY_OPTIONS,
@@ -71,7 +67,6 @@ import {
   getSoftwareFamilyTitle,
 } from '../domain/findings/vulnerabilityUtils';
 import {
-  getCompactedFindingCount,
   addTextSource,
   sortTextSources,
   buildCompactedSyncKey,
@@ -1361,169 +1356,7 @@ function App() {
     return getRedmineStatusFilterKey(getFindingRedmineSync(finding)) === normalizedStatus;
   }, [getFindingRedmineSync, redmineStatusFilter]);
 
-  const getFindingIdentity = (finding, fallback = '') => {
-    const identityParts = [
-      finding?.title,
-      finding?.defectDojoProjectId,
-      finding?.defectDojoEngagementId,
-      finding?.date,
-    ].map(value => cleanText(value)).filter(Boolean);
 
-    return getTicketActionId(finding) || identityParts.join('|') || String(fallback);
-  };
-
-  const isSelectedFinding = (finding, idx) => (
-    selectedFinding
-    && getFindingIdentity(selectedFinding) === getFindingIdentity(finding, idx)
-  );
-
-  const formatRouteSummary = (finding) => {
-    const parts = [];
-    if (finding.defectDojoProjectName || finding.defectDojoProjectId) {
-      parts.push(formatRouteValue(finding.defectDojoProjectName, finding.defectDojoProjectId));
-    }
-    if (finding.defectDojoEngagementName || finding.defectDojoEngagementId) {
-      parts.push(formatRouteValue(finding.defectDojoEngagementName, finding.defectDojoEngagementId));
-    }
-    return parts.join(' / ') || 'No route';
-  };
-
-  const formatCompanyName = (finding) => {
-    const route = getDefectDojoRoute(finding);
-    return cleanText(
-      route.projectName
-      || finding.defectDojoProjectName
-      || finding.productName
-      || finding.company
-      || route.projectId
-      || finding.defectDojoProjectId
-    ) || 'Unknown';
-  };
-
-  const formatFindingTableRedmineStatus = (sync) => {
-    const statusText = cleanText(sync?.status || sync?.issue?.status?.name);
-    if (statusText) return statusText.toUpperCase();
-
-    const actionText = cleanText(sync?.action).toLowerCase();
-    if (actionText === 'created') return 'NEW';
-    if (actionText === 'existing_open') return 'OPEN';
-    if (actionText === 'existing_closed') return 'CLOSED';
-    if (actionText === 'closed_with_new_findings') return 'NEW FINDINGS';
-    if (actionText === 'not_found') return 'NOT FOUND';
-    if (actionText === 'check_failed') return 'ERROR';
-
-    const fallbackLabel = cleanText(getRedmineSyncLabel(sync))
-      .replace(/^redmine\s+/i, '')
-      .split('→')[0]
-      .replace(/\s+->\s+.*$/, '');
-
-    return fallbackLabel ? fallbackLabel.toUpperCase() : 'SYNCED';
-  };
-
-  const getFindingCveCount = (finding) => finding.allCVEs?.length || 0;
-  const getFindingCweCount = (finding) => finding.allCWEs?.length || finding.cweIds?.length || 0;
-
-  const renderFindingRow = (finding, idx) => {
-    const findingRedmineSync = getFindingRedmineSync(finding);
-    const redmineIssueId = cleanText(findingRedmineSync?.issueId || findingRedmineSync?.issue?.id);
-    const endpointCount = finding.allEndpoints?.length || 0;
-    const cveCount = getFindingCveCount(finding);
-    const cweCount = getFindingCweCount(finding);
-    const sourceFindingCount = getCompactedFindingCount(finding);
-    const selected = isSelectedFinding(finding, idx);
-    const severity = cleanText(finding.severity || 'Info');
-    const severityClass = severity.toLowerCase();
-    const statusLabel = cleanText(finding.currentStatus).toLowerCase() || 'active';
-    const displayStatusLabel = statusLabel === 'mixed'
-      ? 'Mixed'
-      : statusLabel === 'mitigated'
-        ? 'Mitigated'
-        : 'Active';
-    const rowStyle = { animationDelay: `${Math.min(idx * 40, 600)}ms` };
-
-    return (
-      <DataTableRow
-        key={getFindingIdentity(finding, idx)}
-        className={`finding-row findings-table-row findings-card-enter`}
-        interactive={true}
-        selected={selected}
-        tone={severityClass}
-        onClick={() => setSelectedFinding(finding)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            setSelectedFinding(finding);
-          }
-        }}
-        ariaLabel={`View details for ${finding.title || 'finding'}`}
-        style={rowStyle}
-      >
-        <DataTableCell className={`cell-id ${redmineIssueId ? 'has-id' : ''}`} label="ID">
-          {redmineIssueId ? `#${redmineIssueId}` : <span className="cell-empty">-</span>}
-        </DataTableCell>
-        <DataTableCell className="cell-company" label="Company">
-          {formatCompanyName(finding)}
-        </DataTableCell>
-        <DataTableCell className="cell-severity" label="Severity">
-          <span className={`severity-badge badge-${severityClass}`}>
-            {severity}
-          </span>
-        </DataTableCell>
-        <DataTableCell className="cell-name" label="Name">
-          <strong className="cell-name-title">{finding.title || 'Untitled finding'}</strong>
-          <small className="cell-name-subtitle">{formatRouteSummary(finding)}</small>
-        </DataTableCell>
-        <DataTableCell className="cell-finding" label="Finding">
-          <FileText size={14} aria-hidden="true" />
-          <span>{sourceFindingCount}</span>
-        </DataTableCell>
-        <DataTableCell className="cell-endpoints" label="Endpoints">
-          <Server size={14} aria-hidden="true" />
-          <span>{endpointCount || <span className="cell-empty">-</span>}</span>
-        </DataTableCell>
-        <DataTableCell className="cell-cve-cwe" label="CVEs/CWEs">
-          {cveCount > 0 || cweCount > 0 ? (
-            <>
-              <span className="cve-cwe-tag cve">{cveCount} CVE</span>
-              <span className="cve-cwe-separator" aria-hidden="true">·</span>
-              <span className="cve-cwe-tag cwe">{cweCount} CWE</span>
-            </>
-          ) : (
-            <span className="cell-empty">-</span>
-          )}
-        </DataTableCell>
-        <DataTableCell className="cell-date" label="Date">
-          {finding.date || <span className="cell-empty">-</span>}
-        </DataTableCell>
-        <DataTableCell className="cell-status" label="Status">
-          {findingRedmineSync ? (
-            <span className={getRedmineSyncBadgeClass(findingRedmineSync)}>
-              {formatFindingTableRedmineStatus(findingRedmineSync)}
-            </span>
-          ) : (
-            <span className={`status-pill status-${statusLabel}`}>
-              {displayStatusLabel}
-            </span>
-          )}
-          {user?.role === 'admin' && (
-            <button
-              type="button"
-              className="icon-btn redmine-action"
-              onClick={(e) => {
-                e.stopPropagation();
-                openRedmineIssue(finding);
-              }}
-              disabled={bulkOpeningRedmine || openingRedmineId === getTicketActionId(finding)}
-              title="Open issue in Redmine"
-              aria-label={`Open Redmine issue for ${finding.title || 'finding'}`}
-            >
-              <ExternalLink size={16} />
-            </button>
-          )}
-        </DataTableCell>
-      </DataTableRow>
-    );
-  };
 
   const renderFindingDetailModal = () => (
     <FindingDetailModal
@@ -2379,24 +2212,27 @@ function App() {
       <FindingsPage
         activeFilter={activeFilter}
         baseDisplayFindings={redmineStatusFilteredBaseDisplayFindings}
-        bulkOpeningRedmine={bulkOpeningRedmine}
         compactedFindingsForSeverity={redmineStatusFilteredCompactedFindingsForSeverity}
-        compactedFindingsForStats={compactedFindingsForStats}
         compactedSearch={compactedSearch}
         compactedSearchActive={compactedSearchActive}
         compactedSeverityCounts={compactedSeverityCounts}
         displayFindings={displayFindings}
         loading={loading}
         onClearSearch={() => setCompactedSearch('')}
-        onOpenSyncAllFilters={openSyncAllFilters}
         onSearchChange={setCompactedSearch}
         renderFindingDetailModal={renderFindingDetailModal}
-        renderFindingRow={renderFindingRow}
         renderMitigationReviewToast={renderMitigationReviewToast}
         renderScopeMenu={renderScopeMenu}
         setActiveFilter={setActiveFilter}
         severityOptions={PULL_SEVERITY_OPTIONS}
         user={user}
+        selectedFinding={selectedFinding}
+        setSelectedFinding={setSelectedFinding}
+        getFindingRedmineSync={getFindingRedmineSync}
+        getTicketActionId={getTicketActionId}
+        openRedmineIssue={openRedmineIssue}
+        bulkOpeningRedmine={bulkOpeningRedmine}
+        openingRedmineId={openingRedmineId}
       />
     );
   }
@@ -2415,7 +2251,7 @@ function App() {
     }
     return renderShell(
       <>
-        <PageHeader
+        <Topbar
           icon={Settings}
           eyebrow="Administration"
           title="Configuration & Settings"
@@ -2485,7 +2321,7 @@ function App() {
     if (user?.role !== 'admin') return null;
     return renderShell(
       <>
-        <PageHeader
+        <Topbar
           icon={ShieldCheck}
           eyebrow="Administration"
           title="Mitigation Review"
@@ -2524,11 +2360,18 @@ function App() {
             onClearSearch={() => setCompactedSearch('')}
             onSearchChange={setCompactedSearch}
             renderFindingDetailModal={renderFindingDetailModal}
-            renderFindingRow={renderFindingRow}
             renderMitigationReviewToast={() => null}
             renderScopeMenu={renderScopeMenu}
             setActiveFilter={setActiveFilter}
             severityOptions={PULL_SEVERITY_OPTIONS}
+            user={user}
+            selectedFinding={selectedFinding}
+            setSelectedFinding={setSelectedFinding}
+            getFindingRedmineSync={getFindingRedmineSync}
+            getTicketActionId={getTicketActionId}
+            openRedmineIssue={openRedmineIssue}
+            bulkOpeningRedmine={bulkOpeningRedmine}
+            openingRedmineId={openingRedmineId}
           />
         )}
         redmineSyncLabel={redmineSyncLabel}

@@ -1,6 +1,7 @@
 import { ArrowLeft, Layers, PackageSearch, ShieldAlert } from 'lucide-react';
 import SummaryCards from '../dashboard/component/SummaryCards';
-import { PageHeader, PageMain } from '../../shared/ui/Page';
+import { PageMain } from '../../shared/ui/Page';
+import Topbar from '../../shared/ui/Topbar/Topbar';
 import './ProductDashboardPage.css';
 
 const ProductDashboardPage = ({
@@ -16,7 +17,7 @@ const ProductDashboardPage = ({
   if (!product) {
     return (
       <>
-        <PageHeader
+        <Topbar
           icon={PackageSearch}
           eyebrow="Product Dashboard"
           title="Product not found"
@@ -43,7 +44,7 @@ const ProductDashboardPage = ({
 
   return (
     <>
-      <PageHeader
+      <Topbar
         icon={PackageSearch}
         eyebrow="Product Dashboard"
         title={product.name}

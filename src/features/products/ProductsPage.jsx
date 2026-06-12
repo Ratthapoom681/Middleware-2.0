@@ -1,5 +1,6 @@
 import { Box, PackageSearch } from 'lucide-react';
-import { PageHeader, PageMain } from '../../shared/ui/Page';
+import { PageMain } from '../../shared/ui/Page';
+import Topbar from '../../shared/ui/Topbar/Topbar';
 import './ProductsPage.css';
 
 const ProductsPage = ({ onSelectEngagement, onSelectProduct, scopeProducts }) => {
@@ -12,7 +13,7 @@ const ProductsPage = ({ onSelectEngagement, onSelectProduct, scopeProducts }) =>
 
   return (
     <>
-      <PageHeader
+      <Topbar
         icon={PackageSearch}
         eyebrow="DefectDojo Scope"
         title="Products"

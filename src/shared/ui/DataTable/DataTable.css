@@ -146,6 +146,45 @@
   overflow: hidden;
 }
 
+/* ── Truncated cell text with ellipsis + hover tooltip ── */
+.data-table-cell.cell-company,
+.data-table-cell.cell-date {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.data-table-cell.cell-company > *,
+.data-table-cell.cell-date > * {
+  display: inline;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.data-table-cell.cell-name {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  overflow: hidden;
+}
+
+.data-table-cell.cell-name .cell-name-title,
+.data-table-cell.cell-name .cell-name-subtitle {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.data-table-cell.cell-name .cell-name-title > *,
+.data-table-cell.cell-name .cell-name-subtitle > * {
+  display: inline;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .data-table-footer {
   display: flex;
   align-items: center;

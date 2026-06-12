@@ -1,9 +1,5 @@
 /* MitigationReview component styles */
 
-.review-table-wrap {
-  overflow-x: auto;
-}
-
 .review-view-tabs {
   width: fit-content;
   max-width: 100%;
@@ -54,6 +50,7 @@
   text-align: center;
 }
 
+/* ── History Audit Logs View ── */
 .review-history-wrap {
   border: 1px solid var(--border);
   border-radius: 0.75rem;
@@ -151,127 +148,7 @@
   color: var(--warning-text);
 }
 
-.review-tools {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.85rem;
-  padding: 0.85rem;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.review-search {
-  flex: 1 1 360px;
-  min-width: 220px;
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.55rem 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: 0.55rem;
-  background: var(--bg-input);
-  color: var(--text-muted);
-}
-
-.review-search input {
-  width: 100%;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--text-main);
-  font: inherit;
-}
-
-.review-search input::placeholder {
-  color: var(--text-muted);
-}
-
-.review-search:focus-within {
-  border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px rgba(99,102,241,0.14);
-}
-
-.review-bulk-actions,
-.review-pagination,
-.review-page-controls,
-.review-page-size {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  flex-wrap: wrap;
-}
-
-.review-bulk-actions > span,
-.review-pagination > span,
-.review-page-controls > span,
-.review-page-size span {
-  color: var(--text-muted);
-  font-size: 0.8rem;
-  font-weight: 500;
-}
-
-.review-table {
-  width: 100%;
-  min-width: 1060px;
-  border-collapse: collapse;
-}
-
-.review-table th,
-.review-table td {
-  padding: 0.8rem;
-  border-bottom: 1px solid var(--border-subtle);
-  text-align: left;
-  vertical-align: top;
-}
-
-.review-table th {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.review-table td span {
-  display: block;
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  margin-top: 0.15rem;
-}
-
-.review-select-cell {
-  width: 3rem;
-  text-align: center !important;
-}
-
-.review-select-cell input {
-  width: 1rem;
-  height: 1rem;
-  accent-color: var(--primary);
-  cursor: pointer;
-}
-
-.review-issue-cell {
-  width: 8.5rem;
-}
-
-.review-finding-cell {
-  width: 24%;
-}
-
-.review-scope-cell {
-  width: 13.5rem;
-}
-
-.review-product-cell {
-  width: 18%;
-}
-
-.review-scope-cell strong {
-  display: block;
-  color: var(--text-main);
-  font-size: 0.86rem;
-}
-
+/* ── Headers & Links ── */
 .sortable-header {
   width: 100%;
   display: inline-flex;
@@ -299,11 +176,6 @@
   font-size: 0.75rem;
 }
 
-.review-cell-stack {
-  display: grid;
-  gap: 0.16rem;
-}
-
 .review-link {
   display: inline-flex;
   align-items: center;
@@ -321,40 +193,11 @@
   text-underline-offset: 0.18rem;
 }
 
-.review-table td .review-link span {
-  display: inline;
-  margin-top: 0;
-  color: inherit;
-  font-size: inherit;
-}
-
 .review-link.muted {
   color: var(--text-muted);
 }
 
-.review-skeleton .skeleton-line {
-  display: block;
-  height: 0.72rem;
-  max-width: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(167, 178, 189, 0.1), rgba(167, 178, 189, 0.22), rgba(167, 178, 189, 0.1));
-  background-size: 220% 100%;
-  animation: skeletonSweep 1.2s ease-in-out infinite;
-}
-
-.skeleton-line + .skeleton-line {
-  margin-top: 0.45rem;
-}
-
-.skeleton-line.wide { width: 88%; }
-.skeleton-line.medium { width: 62%; }
-.skeleton-line.short { width: 38%; }
-.skeleton-line.action {
-  width: 8.5rem;
-  height: 2.1rem;
-  border-radius: 0.5rem;
-}
-
+/* ── Modal Confirmation Form ── */
 .review-confirm-modal .finding-meta-grid {
   margin-top: 0.9rem;
 }
@@ -396,34 +239,13 @@
   color: var(--text-muted);
 }
 
-.review-pagination {
-  justify-content: space-between;
-  padding: 0.85rem;
-  border-top: 1px solid var(--border-subtle);
-}
-
-.review-page-size select {
-  min-height: 2.25rem;
-  padding: 0.35rem 0.55rem;
-  border-radius: 0.45rem;
-  border: 1px solid var(--border);
-  background: var(--bg-input);
-  color: var(--text-main);
-}
-
 .compact-empty {
   margin: 0.75rem;
   padding: 2rem 1rem;
 }
 
-/* Responsive overrides */
+/* ── Responsive Overrides ── */
 @media (max-width: 768px) {
-  .review-tools,
-  .review-pagination {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .review-view-tabs {
     width: 100%;
   }
@@ -436,57 +258,139 @@
   .review-history-meta {
     grid-template-columns: 1fr;
   }
-
-  .review-search,
-  .review-bulk-actions,
-  .review-page-controls,
-  .review-page-size {
-    width: 100%;
-  }
-
-  .review-bulk-actions button,
-  .review-page-controls button {
-    flex: 1 1 0;
-  }
 }
 
 /* ── Queue and History Card Wrapper Styles ── */
 .review-queue-wrap {
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  background: var(--bg-glass);
-  box-shadow: var(--shadow-sm);
   display: flex;
   flex-direction: column;
+  gap: 1rem;
 }
 
 /* Remove double card styling from panels inside wrapper cards */
-.review-queue-wrap .search-options-panel,
 .review-history-wrap .search-options-panel {
-  border: none;
-  box-shadow: none;
-  background: transparent;
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+  background: var(--bg-card);
   border-radius: 0.75rem 0.75rem 0 0;
 }
 
-.review-queue-wrap .data-table {
-  border: none;
-  background: transparent;
-  box-shadow: none;
-  border-radius: 0 0 0.75rem 0.75rem;
+/* ── CVE & CWE Badges ── */
+.cve-cwe-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.38rem;
+  border-radius: 0.3rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  line-height: 1.4;
 }
 
-.review-queue-wrap .review-table-section {
-  padding: 0;
+.cve-cwe-tag.cve {
+  background: var(--critical-bg);
+  color: var(--critical-text);
+  border: 1px solid var(--critical-border);
 }
 
-.review-queue-wrap .review-table-section .data-table-panel {
-  padding: 0;
+.cve-cwe-tag.cwe {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border: 1px solid var(--warning-border);
 }
 
-.review-queue-wrap .data-table-footer {
-  border-top: 1px solid var(--border-subtle);
-  background: transparent;
-  padding: 0.85rem;
+.cve-cwe-separator {
+  color: var(--text-muted);
+  font-size: 0.6rem;
+  opacity: 0.5;
 }
 
+.cell-empty {
+  color: var(--text-muted);
+  opacity: 0.4;
+  font-size: 0.78rem;
+}
+
+/* ── Mitigation Detail Popup Modal ── */
+.mitigation-detail-popup {
+  max-width: 620px;
+  padding: 1.35rem;
+}
+
+.mitigation-detail-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem;
+}
+
+.mitigation-detail-meta-card {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.6rem;
+  background: var(--bg-card);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.mitigation-detail-meta-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mitigation-detail-meta-value {
+  font-size: 0.82rem;
+  color: var(--text-main);
+}
+
+.mitigation-detail-primary-text {
+  color: var(--text-main);
+  font-size: 0.82rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.mitigation-detail-reference-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.mitigation-detail-note-section {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.mitigation-detail-quote {
+  margin: 0;
+  padding: 0.75rem 0.95rem;
+  border-left: 4px solid var(--primary);
+  background: var(--bg-subtle-hover);
+  border-radius: 0 0.5rem 0.5rem 0;
+  color: var(--text-soft);
+  font-style: italic;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 600px) {
+  .mitigation-detail-popup {
+    max-width: 100%;
+    padding: 1rem;
+  }
+
+  .mitigation-detail-meta-grid {
+    grid-template-columns: 1fr;
+  }
+}

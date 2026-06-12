@@ -20,7 +20,8 @@ import {
   getEntityRouteKey,
   normalizeNotifyIpMappings,
 } from '../../../domain/findings/findingUtils';
-import { PageHeader, PageMain } from '../../../shared/ui/Page';
+import { PageMain } from '../../../shared/ui/Page';
+import Topbar from '../../../shared/ui/Topbar/Topbar';
 import { DataTable, DataTableCell, DataTablePagination, DataTableRow, DataTableSection } from '../../../shared/ui/DataTable/DataTable';
 import {
   SearchOptionsCommandBar,
@@ -1079,7 +1080,7 @@ const MappedAssetsPage = ({
 
   return (
     <>
-      <PageHeader
+      <Topbar
         icon={BellRing}
         eyebrow="Administration"
         title="Mapped Assets"
