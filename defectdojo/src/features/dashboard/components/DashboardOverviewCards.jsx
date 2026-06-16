@@ -63,7 +63,7 @@ const DashboardOverviewCards = ({
       <article className="soc-card soc-card-vulnerability">
         <div className="soc-card-header">
           <div className="soc-card-title-row">
-            <ShieldAlert size={24} aria-hidden="true" />
+            <ShieldAlert size={26} aria-hidden="true" />
             <div>
               <h2>Vulnerability Status</h2>
             </div>
@@ -74,16 +74,14 @@ const DashboardOverviewCards = ({
           <div className="vulnerability-count-box active">
             <strong>{formatCount(defectDojo.activeFindings, loading)}</strong>
             <span>Active Findings</span>
-            <small>Volume of unmitigated issues</small>
           </div>
           <div className="vulnerability-flow-arrow" aria-hidden="true">
             <span />
-            <ArrowRight size={26} />
+            <ArrowRight size={28} />
           </div>
           <div className="vulnerability-count-box mitigated">
             <strong>{formatCount(defectDojo.mitigatedFindings, loading)}</strong>
             <span>Mitigated Findings</span>
-            <small>Successfully resolved issues</small>
           </div>
         </div>
       </article>
@@ -91,7 +89,7 @@ const DashboardOverviewCards = ({
       <article className="soc-card soc-card-workflow">
         <div className="soc-card-header">
           <div className="soc-card-title-row">
-            <CheckCircle2 size={24} aria-hidden="true" />
+            <CheckCircle2 size={26} aria-hidden="true" />
             <div>
               <h2>Ticket Workflow</h2>
             </div>
@@ -102,7 +100,7 @@ const DashboardOverviewCards = ({
           {workflowItems.map(({ key, label, className, Icon }) => (
             <div key={key} className={`workflow-tile ${className}`}>
               <strong>{formatCount(redmine[key], loading)}</strong>
-              <Icon size={22} aria-hidden="true" />
+              <Icon size={24} aria-hidden="true" />
               <span>{label}</span>
             </div>
           ))}
@@ -112,7 +110,7 @@ const DashboardOverviewCards = ({
       <article className="soc-card soc-card-severity">
         <div className="soc-card-header">
           <div className="soc-card-title-row">
-            <Gauge size={24} aria-hidden="true" />
+            <Gauge size={26} aria-hidden="true" />
             <div>
               <h2>Severity &amp; Risk Distribution</h2>
             </div>
@@ -122,7 +120,7 @@ const DashboardOverviewCards = ({
         <div className="severity-distribution-grid">
           {severityItems.map(({ key, label, className, Icon }) => (
             <div key={key} className={`severity-distribution-block ${className}`}>
-              <Icon size={24} aria-hidden="true" />
+              <Icon size={26} aria-hidden="true" />
               <strong>{formatCount(severityCounts[key], loading)}</strong>
               <span>{label}</span>
             </div>

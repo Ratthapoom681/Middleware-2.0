@@ -4,11 +4,11 @@ description: React and Express viewer for DefectDojo and Redmine integration
 colors:
   primary: "#6366f1"
   primary-hover: "#4f46e5"
-  neutral-bg: "#0f1624"
-  neutral-card: "#172033"
+  neutral-bg: "#0a0c10"
+  neutral-card: "#13161e"
   neutral-text: "#f1f4f9"
   neutral-muted: "#9ca8bc"
-  border: "#2d3748"
+  border: "#2a3145"
 typography:
   display:
     fontFamily: "Prompt, system-ui, sans-serif"
@@ -62,12 +62,12 @@ The palette is composed of high-contrast cobalt blue accents layered over deep s
 * **Sleek Cobalt** (#6366f1 / oklch(65% 0.18 250)): Used for primary interactive actions, active sidebar navigation, and focus rings.
 
 ### Neutral
-* **Deep Space Blue** (#0f1624 / oklch(14% 0.012 250)): The page body background color.
-* **Slate Container** (#172033 / oklch(19% 0.016 250)): Card and dashboard section backgrounds.
-* **Slate Subtler** (#131a2a / oklch(16% 0.014 250)): Secondary layouts, inputs, and list subsections.
+* **Darkest** (#0a0c10): The page body background color.
+* **Surface** (#13161e): Card and dashboard section backgrounds.
+* **Elevated** (#1e2330): Elevated cards, panels, dropdowns, and layouts.
 * **Off-White Text** (#f1f4f9 / oklch(96% 0.005 250)): Primary text color for body copy and headings.
 * **Muted Gray Text** (#9ca8bc / oklch(78% 0.015 250)): Helper text, metadata labels, and placeholders.
-* **Border Slate** (#2d3748 / oklch(26% 0.02 250)): Outer panel borders and structural divisions.
+* **Border** (#2a3145): Outer panel borders and structural divisions.
 
 ### Threat Levels
 * **Critical** (oklch(74% 0.18 20)): Bright coral red.
@@ -111,12 +111,12 @@ The elevation system relies primarily on flat, tonal layering (different shades 
 
 ### Cards / Containers
 * **Corner Style:** Rounded (0.75rem/12px radius).
-* **Background:** Slate Container background (#172033).
-* **Border:** Slate border (#2d3748), 1px solid.
+* **Background:** Surface background (#13161e).
+* **Border:** Border line (#2a3145), 1px solid.
 * **Internal Padding:** Spaced at 1rem.
 
 ### Inputs / Fields
-* **Style:** Deep Slate Subtler background (#131a2a) with 1px border (#2d3748), rounded corners (0.5rem/8px radius).
+* **Style:** Surface background (#13161e) with 1px border (#2a3145), rounded corners (0.5rem/8px radius).
 * **Focus:** Seamless outline transition to Cobalt border (#6366f1).
 
 ## 6. Do's and Don'ts

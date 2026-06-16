@@ -23,25 +23,25 @@
   --rounded-sm: 0.5rem;
   --rounded-md: 0.75rem;
 
-  --bg-body: oklch(14% 0.012 250);
-  --bg-body-gradient: linear-gradient(135deg, oklch(14% 0.012 250) 0%, oklch(11% 0.01 250) 100%);
-  --bg-card: oklch(19% 0.016 250);
-  --bg-subtle: oklch(16% 0.014 250);
-  --bg-subtle-hover: oklch(22% 0.018 250);
-  --bg-active: oklch(20% 0.025 250 / 0.4);
-  --bg-active-border: oklch(40% 0.08 250 / 0.4);
-  --bg-input: oklch(16% 0.014 250);
-  --bg-glass: rgba(23, 32, 51, 0.7);
-  --bg-glass-strong: rgba(15, 22, 36, 0.85);
-  --bg-elevated: oklch(22% 0.018 250);
+  --bg-body: #0a0c10;
+  --bg-body-gradient: linear-gradient(135deg, #0a0c10 0%, #0a0c10 100%);
+  --bg-card: #13161e;
+  --bg-subtle: #13161e;
+  --bg-subtle-hover: #1e2330;
+  --bg-active: rgba(42, 49, 69, 0.4);
+  --bg-active-border: rgba(42, 49, 69, 0.4);
+  --bg-input: #13161e;
+  --bg-glass: rgba(19, 22, 30, 0.7);
+  --bg-glass-strong: rgba(10, 12, 16, 0.85);
+  --bg-elevated: #1e2330;
 
   --text-main: oklch(96% 0.005 250);
   --text-muted: oklch(78% 0.015 250);
   --text-soft: oklch(70% 0.015 250);
 
-  --border: oklch(26% 0.02 250);
-  --border-subtle: oklch(22% 0.018 250);
-  --border-strong: oklch(32% 0.022 250);
+  --border: #2a3145;
+  --border-subtle: #2a3145;
+  --border-strong: #2a3145;
   --border-focus: oklch(65% 0.18 250);
 
   --primary: oklch(65% 0.18 250);
