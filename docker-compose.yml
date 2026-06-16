@@ -1,26 +1,97 @@
 services:
-  app:
-    build: .
+  gateway:
+    image: nginx:alpine
+    ports:
+      - "${GATEWAY_PORT:-80}:80"
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
+      hub:
+        condition: service_healthy
+      defectdojo:
+        condition: service_healthy
+      wazuh:
+        condition: service_healthy
+    restart: unless-stopped
+
+  hub:
+    build: ./hub
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      AUTH_DATABASE_URL: postgres://${AUTH_PG_USER:-middleware_auth}:${AUTH_PG_PASSWORD:-change-me}@auth-db:5432/${AUTH_PG_DB:-middleware_auth}
+      LEGACY_DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:-change-me}@db:5432/${PG_DB:-defectdojo_viewer}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-me-in-production}
+      AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:-dev-internal-auth-service-token}
+    depends_on:
+      auth-db:
+        condition: service_healthy
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    restart: unless-stopped
+
+  defectdojo:
+    build: ./defectdojo
     environment:
       NODE_ENV: production
       PORT: 3001
       DATA_DIR: /app/data
-      DATABASE_URL: postgres://${POSTGRES_USER:-defectdojo}:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-defectdojo_viewer}
-    ports:
-      - "${APP_PORT:-3056}:3001"
+      DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:-change-me}@db:5432/${PG_DB:-defectdojo_viewer}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-me-in-production}
+      AUTH_INTROSPECTION_URL: http://hub:3000/api/auth/introspect
+      AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:-dev-internal-auth-service-token}
+      AUTH_REQUIRED_APP: defectdojo
+      ENABLE_LEGACY_LOCAL_AUTH: "false"
     volumes:
-      - app-data:/app/data
+      - defectdojo-data:/app/data
+    depends_on:
+      hub:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    restart: unless-stopped
+
+  # Wazuh — static frontend only (no backend, no DB)
+  wazuh:
+    build: ./wazuh
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3002/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
     restart: unless-stopped
 
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-defectdojo_viewer}
-      POSTGRES_USER: ${POSTGRES_USER:-defectdojo}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: ${PG_DB:-defectdojo_viewer}
+      POSTGRES_USER: ${PG_USER:-defectdojo}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-change-me}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -28,8 +99,34 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    restart: unless-stopped
+
+  auth-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${AUTH_PG_DB:-middleware_auth}
+      POSTGRES_USER: ${AUTH_PG_USER:-middleware_auth}
+      POSTGRES_PASSWORD: ${AUTH_PG_PASSWORD:-change-me}
+    volumes:
+      - auth-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
     restart: unless-stopped
 
 volumes:
-  app-data:
+  defectdojo-data:
   postgres-data:
+  auth-data:

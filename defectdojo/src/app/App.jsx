@@ -1,0 +1,2603 @@
+import { useState, useEffect, useRef, useMemo, useCallback, useTransition } from 'react';
+import { 
+  Settings, 
+  RefreshCw, 
+  Filter,
+  X,
+  ShieldCheck,
+  Search,
+  ChevronDown,
+  Check,
+  Bell
+} from 'lucide-react';
+import { AUTH_EXPIRED_EVENT, apiFetch, authFetch, getCurrentUser, openDashboardSyncStream, removeAuthToken, removeCurrentUser } from '../shared/api/api';
+import SettingsView from '../features/settings/Settings';
+import DashboardPage from '../features/dashboard/DashboardPage';
+import {
+  chooseRedmineSync,
+  cleanText,
+  getScopeOptionValue,
+  highestSeverity,
+  normalizeRedmineStatus,
+  routeValueMatches,
+} from '../shared/lib/dashboardUtils';
+import FindingsPage from '../features/findings/FindingsPage';
+import FindingDetailModal from '../features/findings/FindingDetailModal';
+import ProductDashboardPage from '../features/products/ProductDashboardPage';
+import ProductsPage from '../features/products/ProductsPage';
+import SyncHistory from '../features/sync-history/SyncHistory';
+import MitigationReview from '../features/mitigation-review/MitigationReview';
+import AppShell from './AppShell';
+import { PageMain } from '../shared/ui/Page';
+import Topbar from '../shared/ui/Topbar/Topbar';
+
+import { APP_ROUTE_IDS, resolveAppRoute } from './routes';
+import {
+  PULL_SEVERITY_OPTIONS,
+  MITIGATION_TOAST_DURATION_MS,
+  DEFAULT_REDMINE_SYNC_STATUS,
+  createDefaultConfig,
+  normalizeConfig,
+  createPullFiltersDraft,
+  getFindingDateCandidate,
+  formatSyncTimestamp,
+  formatTimeoutSeconds,
+  getSyncProgressMetrics,
+  buildSyncAllSummary,
+  runWithTimeout,
+  normalizeFetchedFindings,
+  compareVersions,
+  getMitigationText,
+  getDescriptionText,
+  getImpactText,
+  getDefectDojoRoute,
+  getEntityRouteKey,
+  sortStrings,
+  sortFindingIds,
+} from '../domain/findings/findingUtils';
+import {
+  endpointLabel,
+  endpointHost,
+  endpointKey,
+} from '../domain/findings/endpointUtils';
+import {
+  parseUpgradeTarget,
+  collectWeaknessIds,
+  getSoftwareFamilyTitle,
+} from '../domain/findings/vulnerabilityUtils';
+import {
+  addTextSource,
+  sortTextSources,
+  buildCompactedSyncKey,
+  buildLegacyCompactedSyncKey,
+  chooseDisplayTitle,
+  finalizeEndpointDetails,
+  finalizeSourceGroups,
+  getCompactFingerprint,
+  getLegacyFindingGroupKey,
+} from '../domain/findings/compactionUtils';
+import {
+  getRedmineSyncLabel,
+  getRedminePriorityIdForSeverity,
+  buildActionRequiredSubject,
+  buildSuperTicketMarkdown,
+  normalizeBackendCveGroupForDisplay,
+} from '../domain/redmine/redmineTicketFormat';
+
+const setHashRoute = (hash) => {
+  if (window.location.hash !== hash) {
+    window.location.hash = hash;
+  }
+};
+
+const createSeverityCounts = () => Object.fromEntries(PULL_SEVERITY_OPTIONS.map(severity => [severity, 0]));
+
+const createDashboardSummary = () => ({
+  defectDojo: {
+    activeFindings: 0,
+    mitigatedFindings: 0,
+  },
+  redmine: {
+    ticketNew: 0,
+    ticketInProgress: 0,
+    ticketFeedback: 0,
+    ticketResolve: 0,
+    ticketClosed: 0,
+  },
+});
+
+const isSyncAllTerminalPhase = (phase = '') => ['complete', 'failed'].includes(String(phase || '').trim().toLowerCase());
+
+const getFindingProductScopeValue = (finding = {}) => {
+  const route = getDefectDojoRoute(finding);
+  return getScopeOptionValue({
+    id: route.projectId || finding.defectDojoProjectId,
+    key: route.productKey || getEntityRouteKey('product', route.projectId, route.projectName),
+    name: route.projectName || finding.defectDojoProjectName,
+  });
+};
+
+const getFindingEngagementScopeValue = (finding = {}) => {
+  const route = getDefectDojoRoute(finding);
+  return getScopeOptionValue({
+    id: route.engagementId || finding.defectDojoEngagementId,
+    key: route.engagementKey || getEntityRouteKey('engagement', route.engagementId, route.engagementName),
+    name: route.engagementName || finding.defectDojoEngagementName,
+  });
+};
+
+const findingMatchesProductScope = (productValue, finding = {}) => {
+  const selectedProduct = cleanText(productValue);
+  if (!selectedProduct) return false;
+  const route = getDefectDojoRoute(finding);
+  return routeValueMatches(
+    selectedProduct,
+    route.projectId,
+    route.productKey,
+    route.projectName,
+    finding.defectDojoProjectId,
+    finding.defectDojoProjectName,
+    getFindingProductScopeValue(finding)
+  );
+};
+
+const findingMatchesEngagementScope = (engagementValue, finding = {}) => {
+  const selectedEngagement = cleanText(engagementValue);
+  if (!selectedEngagement) return false;
+  const route = getDefectDojoRoute(finding);
+  return routeValueMatches(
+    selectedEngagement,
+    route.engagementId,
+    route.engagementKey,
+    route.engagementName,
+    finding.defectDojoEngagementId,
+    finding.defectDojoEngagementName,
+    getFindingEngagementScopeValue(finding)
+  );
+};
+
+const getRedmineSummaryBucket = (sync = {}) => {
+  if (!sync) return '';
+  const status = normalizeRedmineStatus(sync.status || sync.issue?.status?.name);
+  if (sync.action === 'existing_closed' || sync.isClosed || ['closed', 'done'].includes(status)) return 'ticketClosed';
+  if (['resolve', 'resolved'].includes(status)) return 'ticketResolve';
+  if (status === 'feedback') return 'ticketFeedback';
+  if (status === 'in progress') return 'ticketInProgress';
+  if (status === 'new' || sync.action === 'created') return 'ticketNew';
+  return '';
+};
+
+const REDMINE_STATUS_FILTER_OPTIONS = [
+  { id: 'all', label: 'All Redmine' },
+  { id: 'new', label: 'New' },
+  { id: 'in_progress', label: 'In Progress' },
+  { id: 'feedback', label: 'Feedback' },
+  { id: 'resolve', label: 'Resolve' },
+  { id: 'closed', label: 'Closed' },
+];
+const FINDINGS_SEVERITY_FILTER_OPTIONS = ['Critical', 'High', 'Medium', 'Low'];
+
+const normalizeRedmineStatusFilter = (value) => {
+  const normalized = cleanText(value).toLowerCase().replace(/[\s-]+/g, '_');
+  return REDMINE_STATUS_FILTER_OPTIONS.some(option => option.id === normalized) ? normalized : 'all';
+};
+
+const normalizeSeverityRouteFilter = (value) => (
+  FINDINGS_SEVERITY_FILTER_OPTIONS.find(severity => severity.toLowerCase() === cleanText(value).toLowerCase()) || 'All'
+);
+
+const getRedmineStatusFilterLabel = (statusKey) => (
+  REDMINE_STATUS_FILTER_OPTIONS.find(option => option.id === statusKey)?.label || 'Other'
+);
+
+const isFindingClosedFromRedmine = (sync = {}) => {
+  const redmineSync = sync || {};
+  const status = normalizeRedmineStatus(redmineSync.status || redmineSync.issue?.status?.name);
+  return Boolean(redmineSync.isClosed)
+    || redmineSync.action === 'existing_closed'
+    || ['closed', 'done'].includes(status);
+};
+
+const getRedmineStatusFilterKey = (sync = {}) => {
+  const redmineSync = sync || {};
+  const action = cleanText(redmineSync.action).toLowerCase();
+  const status = normalizeRedmineStatus(redmineSync.status || redmineSync.issue?.status?.name);
+  if (isFindingClosedFromRedmine(redmineSync)) return 'closed';
+  if (['resolve', 'resolved'].includes(status)) return 'resolve';
+  if (status === 'feedback') return 'feedback';
+  if (status === 'in progress') return 'in_progress';
+  if (status === 'new' || action === 'created') return 'new';
+};
+
+function App() {
+  const [findings, setFindings] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [activeFilter, setActiveFilter] = useState('All');
+  const [redmineStatusFilter, setRedmineStatusFilter] = useState('all');
+  const [selectedProductId, setSelectedProductId] = useState('');
+  const [selectedEngagementId, setSelectedEngagementId] = useState('');
+  const [dashboardSummary, setDashboardSummary] = useState(null);
+  const [compactedCveFindings, setCompactedCveFindings] = useState(null);
+  const [compactedCveScopeKey, setCompactedCveScopeKey] = useState('');
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [config, setConfig] = useState(() => createDefaultConfig());
+  const [currentHash, setCurrentHash] = useState(window.location.hash);
+  const [selectedFinding, setSelectedFinding] = useState(null);
+  const [openingRedmineId, setOpeningRedmineId] = useState(null);
+  const [bulkOpeningRedmine, setBulkOpeningRedmine] = useState(false);
+  const [showSyncAllFilters, setShowSyncAllFilters] = useState(false);
+  const [syncAllPullFilters, setSyncAllPullFilters] = useState(() => createPullFiltersDraft());
+  const [syncAllProgress, setSyncAllProgress] = useState(null);
+  const [syncProgressNow, setSyncProgressNow] = useState(0);
+  const [mitigationReviewToast, setMitigationReviewToast] = useState(null);
+  const [notificationNow, setNotificationNow] = useState(() => Date.now());
+  const [redmineSyncByTicket, setRedmineSyncByTicket] = useState({});
+  const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
+  const [scopeSearch, setScopeSearch] = useState('');
+  const [compactedSearch, setCompactedSearch] = useState('');
+  const [isScopePending, startScopeTransition] = useTransition();
+  const scopeMenuRef = useRef(null);
+
+  useEffect(() => {
+    localStorage.removeItem('defectdojo_redmine_sync');
+  }, []);
+
+  useEffect(() => {
+    if (!syncAllProgress) return undefined;
+    const timer = window.setInterval(() => setSyncProgressNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [syncAllProgress]);
+
+  useEffect(() => {
+    if (!mitigationReviewToast?.expiresAt) return undefined;
+    const timer = window.setInterval(() => setNotificationNow(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [mitigationReviewToast?.expiresAt]);
+
+  useEffect(() => {
+    if (!mitigationReviewToast?.expiresAt) return undefined;
+    const remainingMs = Math.max(0, Number(mitigationReviewToast.expiresAt) - Date.now());
+    const timer = window.setTimeout(() => setMitigationReviewToast(null), remainingMs);
+    return () => window.clearTimeout(timer);
+  }, [mitigationReviewToast?.expiresAt]);
+
+  useEffect(() => {
+    if (!scopeMenuOpen) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (scopeMenuRef.current && !scopeMenuRef.current.contains(event.target)) {
+        setScopeMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setScopeMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [scopeMenuOpen]);
+  
+  const findingsRefreshRef = useRef({ inFlight: false, queued: false });
+  const dashboardSyncVersionRef = useRef(null);
+  const dashboardSyncReconnectRef = useRef(0);
+  const mitigationReviewPendingRef = useRef(null);
+  const [configBackups, setConfigBackups] = useState([]);
+  const [selectedConfigBackup, setSelectedConfigBackup] = useState('');
+  const [user, setUser] = useState(() => getCurrentUser());
+  const [dashboardSync, setDashboardSync] = useState({
+    connected: false,
+    reason: 'connecting',
+    updatedAt: null,
+  });
+  const [redmineSyncStatus, setRedmineSyncStatus] = useState(DEFAULT_REDMINE_SYNC_STATUS);
+  const currentRoute = resolveAppRoute(currentHash);
+
+  useEffect(() => {
+    if (currentRoute.id !== APP_ROUTE_IDS.productFindings) return;
+    const queryString = String(currentHash || '').split('?')[1] || '';
+    const query = new URLSearchParams(queryString);
+    const productId = query.get('productId') || '';
+    const engagementId = query.get('engagementId') || '';
+    const redmineStatus = normalizeRedmineStatusFilter(query.get('redmineStatus') || query.get('redmine'));
+    const severity = normalizeSeverityRouteFilter(query.get('severity'));
+    const search = query.get('q') || query.get('search') || '';
+    queueMicrotask(() => {
+      setSelectedProductId(productId);
+      setSelectedEngagementId(engagementId);
+      setRedmineStatusFilter(redmineStatus);
+      setActiveFilter(severity);
+      setCompactedSearch(search);
+      setCompactedCveFindings(null);
+      setCompactedCveScopeKey('');
+    });
+  }, [currentHash, currentRoute.id]);
+
+  useEffect(() => {
+    if (currentRoute.id !== APP_ROUTE_IDS.findings) return;
+    queueMicrotask(() => {
+      setSelectedProductId('');
+      setSelectedEngagementId('');
+      setSelectedFinding(null);
+      setCompactedCveFindings(null);
+      setCompactedCveScopeKey('');
+      setCompactedSearch('');
+      setActiveFilter('All');
+      setRedmineStatusFilter('all');
+    });
+  }, [currentRoute.id]);
+
+  useEffect(() => {
+    if (currentRoute.id !== APP_ROUTE_IDS.dashboard) return;
+    queueMicrotask(() => {
+      setRedmineStatusFilter('all');
+    });
+  }, [currentRoute.id]);
+
+  const loadFindingsFromApi = async () => {
+    const res = await apiFetch('/findings');
+    const data = await res.json();
+    const fixedData = normalizeFetchedFindings(data);
+
+    if (!fixedData) {
+      console.error('Unexpected data format:', data);
+      return [];
+    }
+
+    return fixedData;
+  };
+
+  const fetchFindings = async ({ silent = false } = {}) => {
+    if (findingsRefreshRef.current.inFlight) {
+      findingsRefreshRef.current.queued = true;
+      return findings;
+    }
+
+    findingsRefreshRef.current.inFlight = true;
+    if (!silent) setLoading(true);
+    let nextFindings = [];
+    try {
+      nextFindings = await loadFindingsFromApi();
+      setFindings(nextFindings);
+    } catch (err) {
+      console.error('Error fetching findings:', err);
+    } finally {
+      findingsRefreshRef.current.inFlight = false;
+      if (!silent) setLoading(false);
+
+      if (findingsRefreshRef.current.queued) {
+        findingsRefreshRef.current.queued = false;
+        fetchFindings({ silent: true });
+      }
+    }
+
+    return nextFindings;
+  };
+
+  const buildScopedQuery = () => {
+    const params = new URLSearchParams();
+    if (selectedProductId) params.set('productId', selectedProductId);
+    if (selectedEngagementId) params.set('engagementId', selectedEngagementId);
+    if (activeFilter !== 'All') params.set('severity', activeFilter);
+    const query = params.toString();
+    return query ? `?${query}` : '';
+  };
+
+  const fetchDashboardData = async ({ silent = false } = {}) => {
+    if (!user) return;
+    if (!silent) setDashboardLoading(true);
+    try {
+      const query = buildScopedQuery();
+      const [summaryRes, cveRes] = await Promise.all([
+        apiFetch(`/dashboard/summary${query}`),
+        apiFetch(`/compacted-cves${query}`),
+      ]);
+      if (summaryRes.ok) {
+        const nextSummary = await summaryRes.json();
+        const nextPendingCount = Number(nextSummary?.mitigationReview?.pendingCount || 0);
+        if (user?.role === 'admin' && nextSummary?.mitigationReview) {
+          const previousPendingCount = mitigationReviewPendingRef.current;
+          if (previousPendingCount !== null && nextPendingCount > previousPendingCount && currentHash !== '#mitigation-review') {
+            const now = Date.now();
+            setNotificationNow(now);
+            setMitigationReviewToast({
+              count: nextPendingCount,
+              added: nextPendingCount - previousPendingCount,
+              createdAt: now,
+              expiresAt: now + MITIGATION_TOAST_DURATION_MS,
+              durationMs: MITIGATION_TOAST_DURATION_MS,
+            });
+          }
+          mitigationReviewPendingRef.current = nextPendingCount;
+        } else {
+          mitigationReviewPendingRef.current = null;
+          setMitigationReviewToast(null);
+        }
+        setDashboardSummary(nextSummary);
+      }
+      if (cveRes.ok) {
+        const groups = await cveRes.json();
+        setCompactedCveScopeKey(query);
+        setCompactedCveFindings(Array.isArray(groups) ? groups.map(normalizeBackendCveGroupForDisplay) : []);
+      }
+    } catch (err) {
+      console.warn('Unable to fetch dashboard summary:', err);
+    } finally {
+      if (!silent) setDashboardLoading(false);
+    }
+  };
+
+  const fetchConfig = async () => {
+    try {
+      const res = await apiFetch('/config');
+      if (res.ok) {
+        const data = await res.json();
+        const loadedConfig = normalizeConfig(data);
+        setConfig(loadedConfig);
+      }
+    } catch (err) {
+      console.error('Error fetching config:', err);
+    }
+  };
+
+  const fetchConfigBackups = async () => {
+    try {
+      const res = await apiFetch('/config/backups');
+      if (!res.ok) return;
+
+      const backups = await res.json();
+      const backupList = Array.isArray(backups) ? backups : [];
+      setConfigBackups(backupList);
+      if (backupList.length > 0 && !backupList.some(backup => backup.fileName === selectedConfigBackup)) {
+        setSelectedConfigBackup(backupList[0].fileName);
+      } else if (backupList.length === 0) {
+        setSelectedConfigBackup('');
+      }
+    } catch (err) {
+      console.error('Error fetching config backups:', err);
+    }
+  };
+
+  const updateConfig = async (newConfig) => {
+    try {
+      const res = await apiFetch('/config', {
+        method: 'POST',
+        body: JSON.stringify(newConfig)
+      });
+      if (res.ok) {
+        const savedConfig = normalizeConfig(await res.json().then(data => data.config || newConfig));
+        setConfig(savedConfig);
+        fetchRedmineSyncStatus();
+        fetchConfigBackups();
+        return savedConfig;
+      }
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || data.details || 'Failed to update configuration');
+    } catch (err) {
+      console.error('Error updating config:', err);
+      throw err;
+    }
+  };
+
+  const backupConfig = async () => {
+    try {
+      const res = await apiFetch('/config/backup', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`Backup failed: ${data.error || 'Unknown error'}`);
+        return;
+      }
+
+      await fetchConfigBackups();
+      setSelectedConfigBackup(data.backup?.fileName || selectedConfigBackup);
+      alert(`Config backup created${data.backup?.fileName ? `: ${data.backup.fileName}` : ''}.`);
+    } catch (err) {
+      console.error('Error backing up config:', err);
+      alert('Failed to backup config.');
+    }
+  };
+
+  const downloadBlobResponse = async (res, fallbackFileName) => {
+    const blob = await res.blob();
+    const contentDisposition = res.headers.get('Content-Disposition') || '';
+    const fileNameMatch = contentDisposition.match(/filename="([^"]+)"/);
+    const fileName = fileNameMatch?.[1] || fallbackFileName;
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  const exportConfig = async () => {
+    try {
+      const res = await apiFetch('/config/export');
+      if (!res.ok) {
+        const data = await res.json();
+        alert(`Export failed: ${data.error || 'Unknown error'}`);
+        return;
+      }
+
+      await downloadBlobResponse(res, 'defectdojo-viewer-config.json');
+    } catch (err) {
+      console.error('Error exporting config:', err);
+      alert('Failed to export config.');
+    }
+  };
+
+  const downloadConfigBackup = async () => {
+    if (!selectedConfigBackup) {
+      alert('No backup selected.');
+      return;
+    }
+
+    try {
+      const res = await apiFetch(`/config/backups/${encodeURIComponent(selectedConfigBackup)}/export`);
+      if (!res.ok) {
+        const data = await res.json();
+        alert(`Backup download failed: ${data.error || 'Unknown error'}`);
+        return;
+      }
+
+      await downloadBlobResponse(res, selectedConfigBackup);
+    } catch (err) {
+      console.error('Error downloading config backup:', err);
+      alert('Failed to download config backup.');
+    }
+  };
+
+  const importConfigFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const importedConfig = JSON.parse(await file.text());
+      const res = await apiFetch('/config/import', {
+        method: 'POST',
+        body: JSON.stringify(importedConfig),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`Import failed: ${data.error || 'Unknown error'}`);
+        return;
+      }
+
+      const loadedConfig = normalizeConfig(data.config);
+      setConfig(loadedConfig);
+      await fetchConfigBackups();
+      alert('Config imported. A pre-import backup was created first.');
+    } catch (err) {
+      console.error('Error importing config:', err);
+      alert('Failed to import config JSON.');
+    }
+  };
+
+  const restoreConfigBackup = async () => {
+    if (!selectedConfigBackup) {
+      alert('No backup selected.');
+      return;
+    }
+
+    if (!confirm(`Restore config from ${selectedConfigBackup}? Current config will be backed up first.`)) {
+      return;
+    }
+
+    try {
+      const res = await apiFetch('/config/restore', {
+        method: 'POST',
+        body: JSON.stringify({ fileName: selectedConfigBackup })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(`Restore failed: ${data.error || 'Unknown error'}`);
+        return;
+      }
+
+      const loadedConfig = normalizeConfig(data.config);
+      setConfig(loadedConfig);
+      await fetchConfigBackups();
+      alert(`Config restored from ${selectedConfigBackup}.`);
+    } catch (err) {
+      console.error('Error restoring config:', err);
+      alert('Failed to restore config backup.');
+    }
+  };
+
+  const rebuildRedmineStatus = async () => {
+    try {
+      const res = await apiFetch('/redmine/rebuild-status', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || data.details || 'Failed to rebuild Redmine status.');
+      }
+      await Promise.all([
+        fetchFindings({ silent: true }),
+        fetchDashboardData({ silent: true }),
+        fetchRedmineSyncStatus(),
+      ]);
+      const stats = data.stats || {};
+      alert(
+        `Redmine status rebuild complete.\n` +
+        `Checked: ${stats.checkedCount || 0}\n` +
+        `Changed: ${stats.changedCount || 0}\n` +
+        `Not found: ${stats.redmineNotFoundCount || 0}\n` +
+        `Errors: ${stats.redmineErrorCount || 0}`
+      );
+    } catch (err) {
+      console.error('Error rebuilding Redmine status:', err);
+      await fetchRedmineSyncStatus();
+      alert(err.message || 'Failed to rebuild Redmine status.');
+      throw err;
+    }
+  };
+
+  const fetchRedmineSyncStatus = async () => {
+    try {
+      const res = await apiFetch('/redmine/sync/status');
+      if (!res.ok) return;
+      const data = await res.json();
+      setRedmineSyncStatus({
+        ...DEFAULT_REDMINE_SYNC_STATUS,
+        ...data,
+      });
+    } catch (err) {
+      console.warn('Unable to fetch Redmine sync status:', err);
+    }
+  };
+
+  const getTicketActionId = useCallback((finding) => (
+    finding.compactedSyncKey || finding.compactGroupId || finding.id || finding.title
+  ), []);
+
+  const getRedmineSyncTimestamp = useCallback((sync) => (
+    Date.parse(sync?.updatedAt || sync?.checkedAt || '') || 0
+  ), []);
+
+  const chooseDashboardRedmineSync = useCallback((localSync, serverSync) => {
+    if (!localSync) return serverSync || null;
+    if (!serverSync) return localSync;
+
+    const localTimestamp = getRedmineSyncTimestamp(localSync);
+    const serverTimestamp = getRedmineSyncTimestamp(serverSync);
+    if (!localTimestamp || !serverTimestamp || serverTimestamp >= localTimestamp) {
+      return serverSync;
+    }
+    return localSync;
+  }, [getRedmineSyncTimestamp]);
+
+  const getStoredRedmineSync = (finding) => {
+    const candidateKeys = [
+      getTicketActionId(finding),
+      ...(Array.isArray(finding.legacySyncKeys) ? finding.legacySyncKeys : []),
+    ].filter(Boolean);
+    const localSync = candidateKeys.map(key => redmineSyncByTicket[key]).find(Boolean);
+    return chooseDashboardRedmineSync(localSync, finding.serverRedmineSync);
+  };
+
+  const getKnownRedmineIssueId = (finding) => {
+    const sync = getStoredRedmineSync(finding);
+    return sync?.issueId || sync?.issue?.id || '';
+  };
+
+  const setSyncProgress = ({ phase, current, total, message, append = true, summary = undefined, warnings = undefined, startedAt = undefined, updatedAt = undefined }) => {
+    setSyncAllProgress(prev => {
+      const previousLines = prev?.lines || [];
+      const nextLines = append && message
+        ? [...previousLines, message].slice(-8)
+        : previousLines;
+      const now = Date.now();
+
+      return {
+        phase: phase ?? prev?.phase ?? 'Preparing',
+        current: current ?? prev?.current ?? 0,
+        total: total ?? prev?.total ?? 0,
+        message: message ?? prev?.message ?? '',
+        startedAt: prev?.startedAt || startedAt || now,
+        updatedAt: updatedAt || now,
+        summary: summary === undefined ? prev?.summary : summary,
+        warnings: warnings === undefined ? prev?.warnings : warnings,
+        lines: nextLines,
+      };
+    });
+  };
+
+  const buildRedmineIssueRequest = (finding) => {
+    const normalizedConfig = normalizeConfig(config);
+    const findingRoute = getDefectDojoRoute(finding);
+    const defectDojoRoute = {
+      projectId: finding.defectDojoProjectId || findingRoute.projectId || normalizedConfig.pullFilters?.test__engagement__product || '',
+      projectName: finding.defectDojoProjectName || findingRoute.projectName || '',
+      engagementId: finding.defectDojoEngagementId || findingRoute.engagementId || normalizedConfig.pullFilters?.test__engagement || '',
+      engagementName: finding.defectDojoEngagementName || findingRoute.engagementName || '',
+    };
+    const missingRedmineConfig = !normalizedConfig.redmineUrl
+      || !normalizedConfig.redmineApiKey;
+
+    if (missingRedmineConfig) {
+      return {
+        error: 'Please configure Redmine URL and API Key first.',
+        openConfig: true,
+        normalizedConfig,
+      };
+    }
+
+    if (!finding.superTicketMarkdown) {
+      return {
+        error: 'Switch to Compacted View before opening a Redmine issue.',
+        normalizedConfig,
+      };
+    }
+
+    const hasProjectRouteCandidate = defectDojoRoute.projectName
+      || (defectDojoRoute.projectId && !/^\d+$/.test(defectDojoRoute.projectId));
+
+    if (!normalizedConfig.redmineProjectId && !hasProjectRouteCandidate) {
+      return {
+        error: 'Redmine Project Identifier override is empty and this compacted ticket has no DefectDojo project name or identifier to auto-route.',
+        openConfig: true,
+        normalizedConfig,
+      };
+    }
+
+    return {
+      normalizedConfig,
+      body: {
+        redmine: {
+          url: normalizedConfig.redmineUrl,
+          apiKey: normalizedConfig.redmineApiKey,
+          projectId: normalizedConfig.redmineProjectId,
+          trackerId: normalizedConfig.redmineTrackerId,
+          priorityId: getRedminePriorityIdForSeverity(finding.severity, normalizedConfig),
+        },
+        issue: {
+          subject: finding.title,
+          description: finding.superTicketMarkdown,
+          severity: finding.severity || '',
+          syncKey: getTicketActionId(finding),
+          issueId: getKnownRedmineIssueId(finding),
+          legacySyncKeys: finding.legacySyncKeys || [],
+          findingIds: finding.originalIds || [],
+          route: defectDojoRoute,
+        },
+      },
+    };
+  };
+
+  const syncRedmineIssue = async (finding, { openIssueTab = false, timeoutMs = 0 } = {}) => {
+    const request = buildRedmineIssueRequest(finding);
+    if (request.error) {
+      const error = new Error(request.error);
+      error.openConfig = request.openConfig;
+      error.normalizedConfig = request.normalizedConfig;
+      throw error;
+    }
+
+    const res = await runWithTimeout(
+      (signal) => apiFetch('/redmine/issues', {
+        method: 'POST',
+        body: JSON.stringify(request.body),
+        signal,
+      }),
+      timeoutMs,
+      `Timed out syncing "${finding.title}" after ${formatTimeoutSeconds(timeoutMs)} seconds`
+    );
+    const data = await res.json();
+
+    if (!res.ok) {
+      if (data.serverSync) {
+        setRedmineSyncByTicket(prev => ({
+          ...prev,
+          [getTicketActionId(finding)]: data.serverSync,
+        }));
+      }
+
+      const details = typeof data.details === 'string'
+        ? data.details
+        : JSON.stringify(data.details || '');
+      const error = new Error(`${data.error || 'Failed to create Redmine issue'}${details ? `\n${details}` : ''}`);
+      error.responseData = data;
+      throw error;
+    }
+
+    const ticketActionId = getTicketActionId(finding);
+    const resolvedProjectLabel = data.resolvedProject?.project?.name
+      || data.resolvedProject?.identifier
+      || data.resolvedProject?.id
+      || '';
+    const nextSync = data.serverSync || {
+      action: data.action,
+      issueId: data.issue?.id,
+      status: data.issue?.status?.name,
+      issueUrl: data.issueUrl,
+      isClosed: data.action === 'existing_closed',
+      projectName: resolvedProjectLabel,
+    };
+
+    setRedmineSyncByTicket(prev => ({
+      ...prev,
+      [ticketActionId]: nextSync,
+    }));
+
+    if (openIssueTab && data.issueUrl) {
+      window.open(data.issueUrl, '_blank', 'noopener,noreferrer');
+    }
+
+    return {
+      ...data,
+      resolvedProjectLabel,
+    };
+  };
+
+  const openRedmineIssue = async (finding) => {
+    if (user?.role !== 'admin') {
+      alert('Only admins can create or check Redmine issues.');
+      return;
+    }
+
+    const ticketActionId = getTicketActionId(finding);
+    setOpeningRedmineId(ticketActionId);
+    try {
+      const data = await syncRedmineIssue(finding, { openIssueTab: true });
+      const routeLabel = data.resolvedProjectLabel
+        ? ` → Project: "${data.resolvedProjectLabel}"`
+        : '';
+
+      if (data.action === 'existing_open') {
+        alert(`Existing Redmine issue is still ${data.issue?.status?.name || 'open'}; no new ticket created${data.issue?.id ? `: #${data.issue.id}` : ''}.${routeLabel}`);
+      } else if (data.action === 'existing_closed') {
+        alert(`Existing Redmine issue is closed; updated the compacted body${data.issue?.id ? ` on #${data.issue.id}` : ''}.${routeLabel}`);
+      } else {
+        alert(`Redmine issue created${data.issue?.id ? `: #${data.issue.id}` : ''}.${routeLabel}`);
+      }
+    } catch (err) {
+      console.error('Error creating Redmine issue:', err);
+      if (err.openConfig) {
+        setHashRoute('#settings');
+      }
+      alert(err.message || 'Failed to connect to backend server.');
+    } finally {
+      setOpeningRedmineId(null);
+    }
+  };
+
+  useEffect(() => {
+    if (user) {
+      let active = true;
+      queueMicrotask(() => {
+        if (!active) return;
+        fetchFindings();
+        if (user.role === 'admin') {
+          fetchConfig();
+          fetchConfigBackups();
+        }
+        fetchDashboardData({ silent: true });
+        fetchRedmineSyncStatus();
+      });
+
+      return () => {
+        active = false;
+      };
+    }
+    return undefined;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      dashboardSyncVersionRef.current = null;
+      queueMicrotask(() => {
+        setDashboardSync({ connected: false, reason: 'signed-out', updatedAt: null });
+      });
+      return undefined;
+    }
+
+    let stopped = false;
+    let reconnectTimer;
+    let abortController;
+
+    const connect = async () => {
+      abortController = new AbortController();
+      setDashboardSync(prev => ({
+        ...prev,
+        connected: false,
+        reason: prev.updatedAt ? 'reconnecting' : 'connecting',
+      }));
+
+      try {
+        await openDashboardSyncStream({
+          signal: abortController.signal,
+          onEvent: ({ event, data }) => {
+            if (stopped) return;
+
+            if (event === 'heartbeat') {
+              setDashboardSync(prev => ({ ...prev, connected: true }));
+              fetchRedmineSyncStatus();
+              return;
+            }
+
+            if (event !== 'dashboard-sync') return;
+
+            dashboardSyncReconnectRef.current = 0;
+            if (data.syncAllProgress) {
+              setSyncProgress(data.syncAllProgress);
+              if (isSyncAllTerminalPhase(data.syncAllProgress.phase)) {
+                setBulkOpeningRedmine(false);
+              }
+            }
+            setDashboardSync({
+              connected: true,
+              reason: data.reason || 'updated',
+              updatedAt: data.updatedAt || new Date().toISOString(),
+            });
+
+            const isSyncAllProgressEvent = data.reason === 'sync-all-progress' || Boolean(data.syncAllProgress);
+            const previousVersion = dashboardSyncVersionRef.current;
+            dashboardSyncVersionRef.current = data.version;
+            if (isSyncAllProgressEvent) return;
+
+            fetchRedmineSyncStatus();
+            if (previousVersion !== null && data.version !== previousVersion) {
+              fetchFindings({ silent: true });
+              fetchDashboardData({ silent: true });
+            }
+          }
+        });
+      } catch (err) {
+        if (stopped || err.name === 'AbortError') return;
+        console.warn('Dashboard live sync disconnected:', err);
+      }
+
+      if (!stopped) {
+        const reconnectMs = Math.min(30000, 1000 * 2 ** dashboardSyncReconnectRef.current);
+        dashboardSyncReconnectRef.current += 1;
+        setDashboardSync(prev => ({ ...prev, connected: false, reason: 'reconnecting' }));
+        reconnectTimer = setTimeout(connect, reconnectMs);
+      }
+    };
+
+    dashboardSyncReconnectRef.current = 0;
+    connect();
+
+    return () => {
+      stopped = true;
+      clearTimeout(reconnectTimer);
+      abortController?.abort();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  useEffect(() => {
+    const handleHashChange = () => setCurrentHash(window.location.hash);
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      setUser(null);
+      setConfig(createDefaultConfig());
+      setRedmineSyncStatus(DEFAULT_REDMINE_SYNC_STATUS);
+      setDashboardSync({ connected: false, reason: 'signed-out', updatedAt: null });
+      mitigationReviewPendingRef.current = null;
+      setMitigationReviewToast(null);
+    };
+
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      window.location.assign('/');
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (currentRoute.requiresAdmin && user?.role !== 'admin') {
+      setHashRoute('#dashboard');
+    }
+  }, [currentRoute.requiresAdmin, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    queueMicrotask(() => fetchDashboardData({ silent: true }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, selectedProductId, selectedEngagementId, activeFilter]);
+
+  const handleLogout = () => {
+    authFetch('/logout', { method: 'POST' }).catch(() => {});
+    removeAuthToken();
+    removeCurrentUser();
+    setConfig(createDefaultConfig());
+    setRedmineSyncStatus(DEFAULT_REDMINE_SYNC_STATUS);
+    mitigationReviewPendingRef.current = null;
+    setMitigationReviewToast(null);
+    setUser(null);
+  };
+
+  const availableProducts = useMemo(() => dashboardSummary?.filters?.products || [], [dashboardSummary?.filters?.products]);
+  const availableEngagements = useMemo(() => dashboardSummary?.filters?.engagements || [], [dashboardSummary?.filters?.engagements]);
+  const uniqueProducts = useMemo(() => availableProducts.map(product => product.name).filter(Boolean), [availableProducts]);
+
+  const productEngagementScopedFindings = useMemo(() => (
+    findings.filter(finding => {
+      if (selectedProductId && !findingMatchesProductScope(selectedProductId, finding)) return false;
+      return !selectedEngagementId || findingMatchesEngagementScope(selectedEngagementId, finding);
+    })
+  ), [findings, selectedProductId, selectedEngagementId]);
+
+  const filteredFindings = useMemo(() => (
+    activeFilter === 'All'
+      ? productEngagementScopedFindings
+      : productEngagementScopedFindings.filter(f => f.severity === activeFilter)
+  ), [activeFilter, productEngagementScopedFindings]);
+
+  const getCompactedFindings = useCallback((findingsToCompact) => {
+    const groups = new Map();
+    findingsToCompact.forEach(f => {
+      const defectDojoRoute = getDefectDojoRoute(f);
+      const fingerprint = getCompactFingerprint(f, defectDojoRoute, config);
+      const key = fingerprint.groupKey;
+      const target = parseUpgradeTarget(f);
+      const cves = fingerprint.cves;
+      const cwes = collectWeaknessIds(f);
+      const mitigation = getMitigationText(f);
+      const description = getDescriptionText(f);
+      const impact = getImpactText(f);
+      const rawDescription = f.description || '';
+      const rawImpact = f.impact || '';
+      const endpoints = Array.isArray(f.endpoints) && f.endpoints.length > 0
+        ? f.endpoints
+        : [{ id: 'N/A', host: 'Unknown host' }];
+
+      if (!groups.has(key)) {
+        groups.set(key, {
+          ...f,
+          compactSourceKey: key,
+          compactGroupId: `compact-${key}`,
+          originalIds: [],
+          compactFamilyKeysSet: new Set(),
+          compactFamilyTitlesSet: new Set(),
+          compactReasonsSet: new Set(),
+          legacySyncSourceMap: new Map(),
+          softwareFamilies: new Set(),
+          allEndpointsMap: new Map(),
+          allCVEsSet: new Set(),
+          allCWEsSet: new Set(),
+          allMitigationsSet: new Set(),
+          allDescriptionsMap: new Map(),
+          allImpactsMap: new Map(),
+          allTitlesSet: new Set(),
+          sourceGroupsMap: new Map(),
+          defectDojoProjectIdsSet: new Set(),
+          defectDojoProjectNamesSet: new Set(),
+          defectDojoEngagementIdsSet: new Set(),
+          defectDojoEngagementNamesSet: new Set(),
+          endpointDetailMap: new Map(),
+          highestUpgradeTarget: null,
+          serverRedmineSync: null,
+          findingStates: [],
+          activeCount: 0,
+          mitigatedCount: 0,
+          count: 0,
+          date: '',
+          dateTimestamp: 0,
+        });
+      }
+
+      const group = groups.get(key);
+      const dateCandidate = getFindingDateCandidate(f);
+      if (dateCandidate && dateCandidate.timestamp >= (group.dateTimestamp || 0)) {
+        group.date = dateCandidate.label;
+        group.dateTimestamp = dateCandidate.timestamp;
+      }
+      group.serverRedmineSync = chooseRedmineSync(group.serverRedmineSync, f.redmineSync);
+      group.count += 1;
+      group.originalIds.push(f.id);
+      group.severity = highestSeverity(group.severity || 'Info', f.severity || 'Info');
+      if (fingerprint.compactFamilyKey) group.compactFamilyKeysSet.add(fingerprint.compactFamilyKey);
+      if (fingerprint.compactFamilyTitle) group.compactFamilyTitlesSet.add(fingerprint.compactFamilyTitle);
+      if (fingerprint.compactReason) group.compactReasonsSet.add(fingerprint.compactReason);
+      if (fingerprint.softwareFamily) group.softwareFamilies.add(fingerprint.softwareFamily);
+      const legacyGroupKey = getLegacyFindingGroupKey(f, defectDojoRoute, config);
+      if (!group.legacySyncSourceMap.has(legacyGroupKey)) group.legacySyncSourceMap.set(legacyGroupKey, new Set());
+      group.legacySyncSourceMap.get(legacyGroupKey).add(f.id);
+      const sourceTitle = cleanText(f.title || f.name || 'Untitled finding');
+      group.allTitlesSet.add(sourceTitle);
+      cves.forEach(cve => group.allCVEsSet.add(cve));
+      cwes.forEach(cwe => group.allCWEsSet.add(cwe));
+      if (mitigation) group.allMitigationsSet.add(mitigation);
+      addTextSource(group.allDescriptionsMap, rawDescription || description, f.id);
+      addTextSource(group.allImpactsMap, rawImpact || impact, f.id);
+      if (!group.sourceGroupsMap.has(sourceTitle)) {
+        group.sourceGroupsMap.set(sourceTitle, {
+          title: sourceTitle,
+          findingIds: [],
+          severity: f.severity || 'Info',
+          cveIds: new Set(),
+          cweIds: new Set(),
+          endpointDetailMap: new Map(),
+          descriptionsMap: new Map(),
+          impactsMap: new Map(),
+          mitigations: new Set(),
+          activeCount: 0,
+          mitigatedCount: 0,
+        });
+      }
+      const sourceGroup = group.sourceGroupsMap.get(sourceTitle);
+      sourceGroup.findingIds.push(f.id);
+      sourceGroup.severity = highestSeverity(sourceGroup.severity, f.severity || 'Info');
+      cves.forEach(cve => sourceGroup.cveIds.add(cve));
+      cwes.forEach(cwe => sourceGroup.cweIds.add(cwe));
+      if (mitigation) sourceGroup.mitigations.add(mitigation);
+      addTextSource(sourceGroup.descriptionsMap, rawDescription || description, f.id);
+      addTextSource(sourceGroup.impactsMap, rawImpact || impact, f.id);
+      if (defectDojoRoute.projectId) group.defectDojoProjectIdsSet.add(defectDojoRoute.projectId);
+      if (defectDojoRoute.projectName) group.defectDojoProjectNamesSet.add(defectDojoRoute.projectName);
+      if (defectDojoRoute.engagementId) group.defectDojoEngagementIdsSet.add(defectDojoRoute.engagementId);
+      if (defectDojoRoute.engagementName) group.defectDojoEngagementNamesSet.add(defectDojoRoute.engagementName);
+
+      if (target && (!group.highestUpgradeTarget || compareVersions(target.version, group.highestUpgradeTarget.version) > 0)) {
+        group.highestUpgradeTarget = target;
+      }
+
+      endpoints.forEach(endpoint => {
+        const keyForEndpoint = endpointKey(endpoint);
+        group.allEndpointsMap.set(keyForEndpoint, endpoint);
+
+        if (!group.endpointDetailMap.has(keyForEndpoint)) {
+          group.endpointDetailMap.set(keyForEndpoint, {
+            endpoint,
+            label: endpointLabel(endpoint),
+            host: endpointHost(endpoint),
+            severity: f.severity || 'Info',
+            cves: new Set(),
+            cwes: new Set(),
+            mitigations: new Set(),
+            findingIds: [],
+          });
+        }
+
+        const detail = group.endpointDetailMap.get(keyForEndpoint);
+        detail.severity = highestSeverity(detail.severity, f.severity || 'Info');
+        detail.findingIds.push(f.id);
+        cves.forEach(cve => detail.cves.add(cve));
+        cwes.forEach(cwe => detail.cwes.add(cwe));
+        if (mitigation) detail.mitigations.add(mitigation);
+
+        if (!sourceGroup.endpointDetailMap.has(keyForEndpoint)) {
+          sourceGroup.endpointDetailMap.set(keyForEndpoint, {
+            endpoint,
+            label: endpointLabel(endpoint),
+            host: endpointHost(endpoint),
+            severity: f.severity || 'Info',
+            cves: new Set(),
+            cwes: new Set(),
+            mitigations: new Set(),
+            findingIds: [],
+          });
+        }
+
+        const sourceDetail = sourceGroup.endpointDetailMap.get(keyForEndpoint);
+        sourceDetail.severity = highestSeverity(sourceDetail.severity, f.severity || 'Info');
+        sourceDetail.findingIds.push(f.id);
+        cves.forEach(cve => sourceDetail.cves.add(cve));
+        cwes.forEach(cwe => sourceDetail.cwes.add(cwe));
+        if (mitigation) sourceDetail.mitigations.add(mitigation);
+      });
+
+      const mitigatedState = Boolean(f.mitigated || f.is_mitigated);
+      if (mitigatedState) {
+        group.mitigatedCount += 1;
+        sourceGroup.mitigatedCount += 1;
+      } else if (f.active !== false) {
+        group.activeCount += 1;
+        sourceGroup.activeCount += 1;
+      }
+      group.findingStates.push({
+        findingId: f.id,
+        title: cleanText(f.title || f.name || 'Untitled finding'),
+        severity: f.severity || 'Info',
+        mitigated: mitigatedState,
+        active: f.active !== false && !mitigatedState,
+        endpoint: endpoints.map(endpointLabel).join(', '),
+        cveIds: cves,
+        cweIds: cwes,
+        date: dateCandidate?.label || '',
+        mitigationConfirmedAt: f.mitigation_confirmed_at || f.mitigation_confirmed || f.mitigated_at || null,
+      });
+    });
+
+    return Array.from(groups.values()).map(group => {
+      const allMitigations = sortStrings(group.allMitigationsSet);
+      const allDescriptionSources = sortTextSources(group.allDescriptionsMap);
+      const allImpactSources = sortTextSources(group.allImpactsMap);
+      const allDescriptions = allDescriptionSources.map(source => source.text);
+      const allImpacts = allImpactSources.map(source => source.text);
+      const allTitles = sortStrings(group.allTitlesSet);
+      const softwareFamily = sortStrings(group.softwareFamilies)[0] || '';
+      const defectDojoProjectIds = sortStrings(group.defectDojoProjectIdsSet);
+      const defectDojoProjectNames = sortStrings(group.defectDojoProjectNamesSet);
+      const defectDojoEngagementIds = sortStrings(group.defectDojoEngagementIdsSet);
+      const defectDojoEngagementNames = sortStrings(group.defectDojoEngagementNamesSet);
+      const originalIds = sortFindingIds(group.originalIds);
+      const pullProjectId = cleanText(config.pullFilters?.test__engagement__product || '');
+      const pullEngagementId = cleanText(config.pullFilters?.test__engagement || '');
+
+      if (defectDojoProjectIds.length === 0 && pullProjectId) defectDojoProjectIds.push(pullProjectId);
+      if (defectDojoEngagementIds.length === 0 && pullEngagementId) defectDojoEngagementIds.push(pullEngagementId);
+      const compactedSyncKey = buildCompactedSyncKey({
+        groupKey: group.compactSourceKey || group.compactGroupId || '',
+        productIds: defectDojoProjectIds,
+        engagementIds: defectDojoEngagementIds,
+      });
+      const legacySyncKeys = Array.from(new Set([
+        buildLegacyCompactedSyncKey({
+          groupKey: group.compactSourceKey || group.compactGroupId || '',
+          findingIds: originalIds,
+          productIds: defectDojoProjectIds,
+          engagementIds: defectDojoEngagementIds,
+        }),
+        ...Array.from(group.legacySyncSourceMap.entries()).map(([legacyGroupKey, legacyFindingIds]) => (
+          buildLegacyCompactedSyncKey({
+            groupKey: legacyGroupKey,
+            findingIds: sortFindingIds(legacyFindingIds),
+            productIds: defectDojoProjectIds,
+            engagementIds: defectDojoEngagementIds,
+          })
+        )),
+      ].filter(key => key && key !== compactedSyncKey)));
+      const compactFamilyTitle = sortStrings(group.compactFamilyTitlesSet)[0] || '';
+      const compactFamilyKey = sortStrings(group.compactFamilyKeysSet)[0] || group.compactSourceKey || '';
+      const compactReason = sortStrings(group.compactReasonsSet)[0] || 'strict-fingerprint';
+
+      const endpointDetails = finalizeEndpointDetails(group.endpointDetailMap);
+      const sourceGroups = finalizeSourceGroups(group.sourceGroupsMap);
+      const currentStatus = group.activeCount > 0 && group.mitigatedCount > 0
+        ? 'mixed'
+        : group.activeCount > 0
+          ? 'active'
+          : 'mitigated';
+
+      const compactedTicket = {
+        ...group,
+        compactedSyncKey,
+        compactGroupId: compactedSyncKey,
+        compactFamilyKey,
+        compactFamilyTitle,
+        compactReason,
+        legacySyncKeys,
+        originalIds,
+        findingCount: originalIds.length || group.count || 1,
+        sourceFindingCount: originalIds.length || group.count || 1,
+        title: chooseDisplayTitle(allTitles, compactFamilyTitle || getSoftwareFamilyTitle(softwareFamily, allTitles) || group.title),
+        description: allDescriptions[0] || group.description,
+        impact: allImpacts[0] || group.impact,
+        allEndpoints: Array.from(group.allEndpointsMap.values()),
+        allCVEs: sortStrings(group.allCVEsSet).map(vulnerability_id => ({ vulnerability_id })),
+        allCWEs: sortStrings(group.allCWEsSet).map(weakness_id => ({ weakness_id })),
+        cweIds: sortStrings(group.allCWEsSet),
+        allMitigations,
+        allDescriptions,
+        allImpacts,
+        allDescriptionSources,
+        allImpactSources,
+        allTitles,
+        sourceGroups,
+        softwareFamily,
+        defectDojoProjectId: defectDojoProjectIds[0] || '',
+        defectDojoProjectName: defectDojoProjectNames[0] || '',
+        defectDojoEngagementId: defectDojoEngagementIds[0] || '',
+        defectDojoEngagementName: defectDojoEngagementNames[0] || '',
+        date: group.date || '',
+        allDefectDojoProjectIds: defectDojoProjectIds,
+        allDefectDojoProjectNames: defectDojoProjectNames,
+        allDefectDojoEngagementIds: defectDojoEngagementIds,
+        allDefectDojoEngagementNames: defectDojoEngagementNames,
+        endpointDetails,
+        currentStatus,
+      };
+      compactedTicket.redmineSubject = buildActionRequiredSubject(compactedTicket);
+      compactedTicket.subject = compactedTicket.redmineSubject;
+
+      delete compactedTicket.allEndpointsMap;
+      delete compactedTicket.softwareFamilies;
+      delete compactedTicket.allCVEsSet;
+      delete compactedTicket.allCWEsSet;
+      delete compactedTicket.allMitigationsSet;
+      delete compactedTicket.allDescriptionsMap;
+      delete compactedTicket.allImpactsMap;
+      delete compactedTicket.allTitlesSet;
+      delete compactedTicket.compactFamilyKeysSet;
+      delete compactedTicket.compactFamilyTitlesSet;
+      delete compactedTicket.compactReasonsSet;
+      delete compactedTicket.legacySyncSourceMap;
+      delete compactedTicket.sourceGroupsMap;
+      delete compactedTicket.defectDojoProjectIdsSet;
+      delete compactedTicket.defectDojoProjectNamesSet;
+      delete compactedTicket.defectDojoEngagementIdsSet;
+      delete compactedTicket.defectDojoEngagementNamesSet;
+      delete compactedTicket.endpointDetailMap;
+      delete compactedTicket.compactSourceKey;
+      delete compactedTicket.dateTimestamp;
+
+      return {
+        ...compactedTicket,
+        superTicketMarkdown: buildSuperTicketMarkdown(compactedTicket),
+      };
+    });
+  }, [config]);
+
+  const getFindingRedmineSync = useCallback((finding) => {
+    const candidateKeys = [
+      getTicketActionId(finding),
+      ...(Array.isArray(finding.legacySyncKeys) ? finding.legacySyncKeys : []),
+    ].filter(Boolean);
+    const localSync = candidateKeys.map(key => redmineSyncByTicket[key]).find(Boolean);
+    return chooseDashboardRedmineSync(localSync, finding.serverRedmineSync);
+  }, [chooseDashboardRedmineSync, getTicketActionId, redmineSyncByTicket]);
+
+  const findingMatchesRedmineStatusFilter = useCallback((finding, statusFilter = redmineStatusFilter) => {
+    const normalizedStatus = normalizeRedmineStatusFilter(statusFilter);
+    if (normalizedStatus === 'all') return true;
+    return getRedmineStatusFilterKey(getFindingRedmineSync(finding)) === normalizedStatus;
+  }, [getFindingRedmineSync, redmineStatusFilter]);
+
+
+
+  const renderFindingDetailModal = () => (
+    <FindingDetailModal
+      selectedFinding={selectedFinding}
+      onClose={() => setSelectedFinding(null)}
+      findingRedmineSync={selectedFinding ? getFindingRedmineSync(selectedFinding) : null}
+      isAdmin={user?.role === 'admin'}
+      bulkOpeningRedmine={bulkOpeningRedmine}
+      openingRedmineId={openingRedmineId}
+      getTicketActionId={getTicketActionId}
+      openRedmineIssue={openRedmineIssue}
+    />
+  );
+
+  const allCompactedFindings = useMemo(() => getCompactedFindings(findings), [findings, getCompactedFindings]);
+  const fallbackCompactedFindings = useMemo(() => {
+    if (!selectedProductId && !selectedEngagementId && activeFilter === 'All') return allCompactedFindings;
+    return getCompactedFindings(filteredFindings);
+  }, [activeFilter, allCompactedFindings, filteredFindings, getCompactedFindings, selectedEngagementId, selectedProductId]);
+  const currentCompactedCveScopeKey = buildScopedQuery();
+  const scopedCompactedCveFindings = useMemo(() => {
+    if (compactedCveScopeKey !== currentCompactedCveScopeKey || !compactedCveFindings) return null;
+    return compactedCveFindings.filter(finding => {
+      if (selectedProductId && !findingMatchesProductScope(selectedProductId, finding)) return false;
+      return !selectedEngagementId || findingMatchesEngagementScope(selectedEngagementId, finding);
+    });
+  }, [compactedCveFindings, compactedCveScopeKey, currentCompactedCveScopeKey, selectedEngagementId, selectedProductId]);
+  const baseDisplayFindings = scopedCompactedCveFindings ?? fallbackCompactedFindings;
+  const redmineStatusFilteredBaseDisplayFindings = useMemo(() => (
+    baseDisplayFindings.filter(finding => findingMatchesRedmineStatusFilter(finding))
+  ), [baseDisplayFindings, findingMatchesRedmineStatusFilter]);
+  const compactedSearchTokens = useMemo(() => (
+    cleanText(compactedSearch).toLowerCase().split(/\s+/).filter(Boolean)
+  ), [compactedSearch]);
+  const displayFindings = useMemo(() => {
+    if (compactedSearchTokens.length === 0) return redmineStatusFilteredBaseDisplayFindings;
+
+    return redmineStatusFilteredBaseDisplayFindings.filter(finding => {
+      const route = getDefectDojoRoute(finding);
+      const redmineSync = getFindingRedmineSync(finding);
+      const redmineStatusKey = getRedmineStatusFilterKey(redmineSync);
+      const searchableValues = [
+        finding.title,
+        finding.subject,
+        finding.redmineSubject,
+        finding.severity,
+        finding.date,
+        route.projectId,
+        route.projectName,
+        route.engagementId,
+        route.engagementName,
+        finding.defectDojoProjectId,
+        finding.defectDojoProjectName,
+        finding.defectDojoEngagementId,
+        finding.defectDojoEngagementName,
+        finding.compactedSyncKey,
+        finding.compactGroupId,
+        finding.groupKey,
+        redmineSync?.issueId,
+        redmineSync?.issueId ? `#${redmineSync.issueId}` : '',
+        redmineSync?.status,
+        normalizeRedmineStatus(redmineSync?.status || redmineSync?.issue?.status?.name),
+        getRedmineStatusFilterLabel(redmineStatusKey),
+        redmineSync?.projectName,
+        getRedmineSyncLabel(redmineSync),
+        ...(finding.allCVEs || []).map(cve => cve?.vulnerability_id || cve?.name || cve?.id || cve),
+        ...(finding.allCWEs || []).map(cwe => cwe?.weakness_id || cwe?.cwe_id || cwe?.name || cwe?.id || cwe),
+        ...(finding.cweIds || []),
+        ...(finding.allMitigations || []),
+        ...(finding.allDescriptions || []),
+        ...(finding.allImpacts || []),
+        ...(finding.allTitles || []),
+        ...(finding.allEndpoints || []).map(endpointLabel),
+      ];
+      const haystack = searchableValues.map(cleanText).filter(Boolean).join(' ').toLowerCase();
+      return compactedSearchTokens.every(token => haystack.includes(token));
+    });
+  }, [compactedSearchTokens, getFindingRedmineSync, redmineStatusFilteredBaseDisplayFindings]);
+  const compactedSearchActive = compactedSearchTokens.length > 0;
+  const compactedFindingsForStats = allCompactedFindings;
+  const dashboardCompactedFindingsForStats = redmineStatusFilteredBaseDisplayFindings;
+  const dashboardScopedProducts = useMemo(() => {
+    if (!selectedProductId && !selectedEngagementId) return uniqueProducts;
+    const productNames = new Set();
+    dashboardCompactedFindingsForStats.forEach(finding => {
+      const route = getDefectDojoRoute(finding);
+      const productName = route.projectName
+        || finding.defectDojoProjectName
+        || route.projectId
+        || finding.defectDojoProjectId;
+      if (productName) productNames.add(String(productName));
+    });
+    return Array.from(productNames);
+  }, [dashboardCompactedFindingsForStats, selectedEngagementId, selectedProductId, uniqueProducts]);
+  const dashboardRedmineSummary = useMemo(() => {
+    const redmine = createDashboardSummary().redmine;
+    dashboardCompactedFindingsForStats.forEach(finding => {
+      const redmineBucket = getRedmineSummaryBucket(getFindingRedmineSync(finding));
+      if (redmineBucket) redmine[redmineBucket] += 1;
+    });
+    return redmine;
+  }, [dashboardCompactedFindingsForStats, getFindingRedmineSync]);
+  const compactedFindingsForSeverity = useMemo(() => {
+    if (!selectedProductId && !selectedEngagementId) return allCompactedFindings;
+    return getCompactedFindings(productEngagementScopedFindings);
+  }, [allCompactedFindings, getCompactedFindings, productEngagementScopedFindings, selectedEngagementId, selectedProductId]);
+  const redmineStatusCounts = useMemo(() => {
+    const counts = Object.fromEntries(REDMINE_STATUS_FILTER_OPTIONS.map(option => [option.id, 0]));
+    compactedFindingsForSeverity.forEach(finding => {
+      const statusKey = getRedmineStatusFilterKey(getFindingRedmineSync(finding));
+      counts[statusKey] = (counts[statusKey] || 0) + 1;
+      counts.all += 1;
+    });
+    return counts;
+  }, [compactedFindingsForSeverity, getFindingRedmineSync]);
+  const redmineStatusFilteredCompactedFindingsForSeverity = useMemo(() => (
+    compactedFindingsForSeverity.filter(finding => findingMatchesRedmineStatusFilter(finding))
+  ), [compactedFindingsForSeverity, findingMatchesRedmineStatusFilter]);
+  const compactedSeverityCounts = useMemo(() => {
+    const counts = Object.fromEntries(PULL_SEVERITY_OPTIONS.map(severity => [severity, 0]));
+    redmineStatusFilteredCompactedFindingsForSeverity.forEach(finding => {
+      const severity = PULL_SEVERITY_OPTIONS.includes(finding.severity) ? finding.severity : 'Info';
+      counts[severity] += 1;
+    });
+    return counts;
+  }, [redmineStatusFilteredCompactedFindingsForSeverity]);
+  const scopeProducts = useMemo(() => {
+    const scopeProductMap = new Map();
+    const scopeEngagementMap = new Map();
+    const productCountMap = new Map();
+    const engagementCountMap = new Map();
+    const increment = (map, key) => {
+      if (!key) return;
+      map.set(key, (map.get(key) || 0) + 1);
+    };
+    const addScopeProduct = (product = {}) => {
+      const id = cleanText(product.id || product.projectId);
+      const key = cleanText(product.key || product.productKey);
+      const name = cleanText(product.name || product.projectName || id || key);
+      const value = getScopeOptionValue({ id, key, name });
+      if (!value) return null;
+      const existing = scopeProductMap.get(value) || {};
+      const next = {
+        id: existing.id || id,
+        key: existing.key || key,
+        name: existing.name || name || 'Unknown product',
+        value,
+      };
+      scopeProductMap.set(value, next);
+      return next;
+    };
+    const addScopeEngagement = (engagement = {}) => {
+      const id = cleanText(engagement.id || engagement.engagementId);
+      const key = cleanText(engagement.key || engagement.engagementKey);
+      const name = cleanText(engagement.name || engagement.engagementName || id || key);
+      const product = addScopeProduct({
+        id: engagement.productId || engagement.projectId,
+        key: engagement.productKey,
+        name: engagement.productName || engagement.projectName,
+      });
+      const productValue = product?.value || cleanText(engagement.productId || engagement.productKey || engagement.productName);
+      const value = getScopeOptionValue({ id, key, name });
+      if (!value || !productValue) return null;
+      const mapKey = `${productValue}::${value}`;
+      const existing = scopeEngagementMap.get(mapKey) || {};
+      const next = {
+        id: existing.id || id,
+        key: existing.key || key,
+        name: existing.name || name || 'Unknown engagement',
+        value,
+        productValue,
+      };
+      scopeEngagementMap.set(mapKey, next);
+      return next;
+    };
+
+    availableProducts.forEach(addScopeProduct);
+    availableEngagements.forEach(addScopeEngagement);
+    findings.forEach(finding => {
+      const route = getDefectDojoRoute(finding);
+      const product = addScopeProduct({
+        id: route.projectId,
+        key: route.productKey || getEntityRouteKey('product', route.projectId, route.projectName),
+        name: route.projectName,
+      });
+      if (route.engagementId || route.engagementName || route.engagementKey) {
+        addScopeEngagement({
+          id: route.engagementId,
+          key: route.engagementKey || getEntityRouteKey('engagement', route.engagementId, route.engagementName),
+          name: route.engagementName,
+          productId: product?.id || route.projectId,
+          productKey: product?.key || route.productKey || getEntityRouteKey('product', route.projectId, route.projectName),
+          productName: product?.name || route.projectName,
+        });
+      }
+    });
+
+    allCompactedFindings.forEach(finding => {
+      const route = getDefectDojoRoute(finding);
+      const productValue = getScopeOptionValue({
+        id: route.projectId || finding.defectDojoProjectId,
+        key: route.productKey || getEntityRouteKey('product', route.projectId, route.projectName),
+        name: route.projectName || finding.defectDojoProjectName,
+      });
+      const engagementValue = getScopeOptionValue({
+        id: route.engagementId || finding.defectDojoEngagementId,
+        key: route.engagementKey || getEntityRouteKey('engagement', route.engagementId, route.engagementName),
+        name: route.engagementName || finding.defectDojoEngagementName,
+      });
+      increment(productCountMap, productValue);
+      if (productValue && engagementValue) increment(engagementCountMap, `${productValue}::${engagementValue}`);
+    });
+
+    return Array.from(scopeProductMap.values())
+      .map(product => ({
+        ...product,
+        count: productCountMap.get(product.value) || 0,
+        engagements: Array.from(scopeEngagementMap.values())
+          .filter(engagement => engagement.productValue === product.value)
+          .map(engagement => ({
+            ...engagement,
+            count: engagementCountMap.get(`${product.value}::${engagement.value}`) || 0,
+          }))
+          .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true })),
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }));
+  }, [allCompactedFindings, availableEngagements, availableProducts, findings]);
+
+  const visibleScopeProducts = useMemo(() => {
+    const normalizedScopeSearch = cleanText(scopeSearch).toLowerCase();
+    return scopeProducts
+      .map(product => {
+        const productMatches = product.name.toLowerCase().includes(normalizedScopeSearch);
+        const engagements = product.engagements.filter(engagement => (
+          productMatches || engagement.name.toLowerCase().includes(normalizedScopeSearch)
+        ));
+        return {
+          ...product,
+          engagements,
+          hiddenBySearch: normalizedScopeSearch && !productMatches && engagements.length === 0,
+        };
+      })
+      .filter(product => !product.hiddenBySearch);
+  }, [scopeProducts, scopeSearch]);
+  const selectedScopeProduct = useMemo(() => scopeProducts.find(product => routeValueMatches(
+    selectedProductId,
+    product.id,
+    product.key,
+    product.name,
+    product.value
+  )), [scopeProducts, selectedProductId]);
+  const selectedScopeEngagement = useMemo(() => scopeProducts
+    .flatMap(product => product.engagements.map(engagement => ({ ...engagement, product })))
+    .find(item => routeValueMatches(selectedEngagementId, item.id, item.key, item.name, item.value)), [scopeProducts, selectedEngagementId]);
+  const scopeLabel = selectedEngagementId
+    ? `${selectedScopeEngagement?.product?.name || selectedScopeProduct?.name || 'Product'} / ${selectedScopeEngagement?.name || selectedEngagementId}`
+    : selectedProductId
+      ? selectedScopeProduct?.name || selectedProductId
+      : 'All Products';
+  const scopeBaseDescription = isScopePending
+    ? 'Updating scope...'
+    : selectedEngagementId
+      ? 'Engagement scope'
+      : selectedProductId
+        ? 'Product scope'
+        : `${scopeProducts.length} product${scopeProducts.length !== 1 ? 's' : ''}`;
+  const redmineFilterLabel = redmineStatusFilter === 'all'
+    ? 'All Redmine'
+    : `${getRedmineStatusFilterLabel(redmineStatusFilter)} (${redmineStatusCounts[redmineStatusFilter] || 0})`;
+  const scopeDescription = `${scopeBaseDescription} · ${redmineFilterLabel}`;
+  const productDashboardProductId = currentRoute.id === APP_ROUTE_IDS.productDashboard
+    ? currentRoute.query.get('productId') || ''
+    : '';
+  const productDashboardData = useMemo(() => {
+    const product = scopeProducts.find(item => routeValueMatches(
+      productDashboardProductId,
+      item.id,
+      item.key,
+      item.name,
+      item.value
+    ));
+
+    if (!productDashboardProductId || !product) {
+      return {
+        product: null,
+        summary: createDashboardSummary(),
+        severityCounts: createSeverityCounts(),
+        engagements: [],
+      };
+    }
+
+    const productFindings = findings.filter(finding => findingMatchesProductScope(product.value, finding));
+    const productCompactedFindings = allCompactedFindings.filter(finding => findingMatchesProductScope(product.value, finding));
+    const summary = createDashboardSummary();
+    const severityCounts = createSeverityCounts();
+
+    productFindings.forEach(finding => {
+      const mitigated = Boolean(finding.mitigated || finding.is_mitigated);
+      if (mitigated) {
+        summary.defectDojo.mitigatedFindings += 1;
+      } else if (finding.active !== false) {
+        summary.defectDojo.activeFindings += 1;
+      }
+    });
+
+    productCompactedFindings.forEach(finding => {
+      const severity = PULL_SEVERITY_OPTIONS.includes(finding.severity) ? finding.severity : 'Info';
+      severityCounts[severity] += 1;
+      const redmineBucket = getRedmineSummaryBucket(getFindingRedmineSync(finding));
+      if (redmineBucket) summary.redmine[redmineBucket] += 1;
+    });
+
+    const engagements = product.engagements.map(engagement => {
+      const engagementSeverityCounts = createSeverityCounts();
+      const engagementFindings = productCompactedFindings.filter(finding => (
+        findingMatchesEngagementScope(engagement.value, finding)
+      ));
+      engagementFindings.forEach(finding => {
+        const severity = PULL_SEVERITY_OPTIONS.includes(finding.severity) ? finding.severity : 'Info';
+        engagementSeverityCounts[severity] += 1;
+      });
+      return {
+        ...engagement,
+        count: engagementFindings.length,
+        severityCounts: engagementSeverityCounts,
+      };
+    });
+
+    return {
+      product: {
+        ...product,
+        count: productCompactedFindings.length,
+      },
+      summary,
+      severityCounts,
+      engagements,
+    };
+  }, [allCompactedFindings, findings, getFindingRedmineSync, productDashboardProductId, scopeProducts]);
+  const selectAllScope = () => {
+    setScopeSearch('');
+    setScopeMenuOpen(false);
+    startScopeTransition(() => {
+      setCompactedCveFindings(null);
+      setCompactedCveScopeKey('');
+      setSelectedProductId('');
+      setSelectedEngagementId('');
+      setSelectedFinding(null);
+    });
+  };
+  const selectProductScope = (product) => {
+    setScopeSearch('');
+    setScopeMenuOpen(false);
+    startScopeTransition(() => {
+      setCompactedCveFindings(null);
+      setCompactedCveScopeKey('');
+      setSelectedProductId(product.value);
+      setSelectedEngagementId('');
+      setSelectedFinding(null);
+    });
+  };
+  const selectEngagementScope = (product, engagement) => {
+    setScopeSearch('');
+    setScopeMenuOpen(false);
+    startScopeTransition(() => {
+      setCompactedCveFindings(null);
+      setCompactedCveScopeKey('');
+      setSelectedProductId(product.value);
+      setSelectedEngagementId(engagement.value);
+      setSelectedFinding(null);
+    });
+  };
+  const openProductFindings = (product, engagement = null) => {
+    const productValue = product?.value || '';
+    const engagementValue = engagement?.value || '';
+    const params = new URLSearchParams();
+    if (productValue) params.set('productId', productValue);
+    if (engagementValue) params.set('engagementId', engagementValue);
+    setCompactedSearch('');
+    startScopeTransition(() => {
+      setCompactedCveFindings(null);
+      setCompactedCveScopeKey('');
+      setSelectedProductId(productValue);
+      setSelectedEngagementId(engagementValue);
+      setSelectedFinding(null);
+      setActiveFilter('All');
+      setRedmineStatusFilter('all');
+    });
+    setHashRoute(`#product-findings${params.toString() ? `?${params.toString()}` : ''}`);
+  };
+  const openProductDashboard = (product) => {
+    const productValue = product?.value || '';
+    const params = new URLSearchParams();
+    if (productValue) params.set('productId', productValue);
+    setSelectedFinding(null);
+    setHashRoute(`#product-dashboard${params.toString() ? `?${params.toString()}` : ''}`);
+  };
+  const openAllFindings = () => {
+    setScopeSearch('');
+    setCompactedSearch('');
+    startScopeTransition(() => {
+      setCompactedCveFindings(null);
+      setCompactedCveScopeKey('');
+      setSelectedProductId('');
+      setSelectedEngagementId('');
+      setSelectedFinding(null);
+      setActiveFilter('All');
+      setRedmineStatusFilter('all');
+    });
+    setHashRoute('#findings');
+  };
+  const handleRedmineStatusChange = (statusFilter) => {
+    const normalizedStatus = normalizeRedmineStatusFilter(statusFilter);
+    setRedmineStatusFilter(normalizedStatus);
+    if (currentRoute.id !== APP_ROUTE_IDS.productFindings) return;
+
+    const queryString = String(currentHash || '').split('?')[1] || '';
+    const query = new URLSearchParams(queryString);
+    if (normalizedStatus === 'all') {
+      query.delete('redmineStatus');
+    } else {
+      query.set('redmineStatus', normalizedStatus);
+    }
+    setHashRoute(`#product-findings${query.toString() ? `?${query.toString()}` : ''}`);
+  };
+  const handleShellNavigate = (hash) => {
+    if (hash === '#findings') {
+      openAllFindings();
+      return;
+    }
+    setHashRoute(hash);
+  };
+  const renderScopeMenu = () => (
+    <div className="scope-menu" ref={scopeMenuRef}>
+      <button
+        type="button"
+        className="scope-trigger"
+        onClick={() => setScopeMenuOpen(open => !open)}
+        aria-haspopup="menu"
+        aria-expanded={scopeMenuOpen}
+        aria-controls="dashboard-scope-menu"
+      >
+        <span>
+          <strong>{scopeLabel}</strong>
+          <small>{scopeDescription}</small>
+        </span>
+        <ChevronDown size={16} aria-hidden="true" />
+      </button>
+      {scopeMenuOpen && (
+        <>
+          <button
+            type="button"
+            className="scope-backdrop"
+            onClick={() => setScopeMenuOpen(false)}
+            aria-label="Close scope menu"
+            tabIndex={-1}
+          />
+          <div className="scope-popover" id="dashboard-scope-menu" role="menu" aria-label="Select scope and Redmine status">
+            <label className="scope-search">
+              <span className="sr-only">Search products and engagements</span>
+              <Search size={15} aria-hidden="true" />
+              <input
+                type="search"
+                value={scopeSearch}
+                onChange={(e) => setScopeSearch(e.target.value)}
+                placeholder="Search product or engagement"
+                autoFocus
+              />
+            </label>
+
+            {/* ── Redmine Status Section ── */}
+            <div className="scope-section-label">Redmine Status</div>
+            <div className="scope-redmine-pills" role="group" aria-label="Filter by Redmine status">
+              {REDMINE_STATUS_FILTER_OPTIONS.map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={`scope-redmine-pill${redmineStatusFilter === option.id ? ' active' : ''}`}
+                  onClick={() => handleRedmineStatusChange(option.id)}
+                  aria-pressed={redmineStatusFilter === option.id}
+                >
+                  {option.label}
+                  <span className="scope-redmine-pill-count">{redmineStatusCounts[option.id] || 0}</span>
+                </button>
+              ))}
+            </div>
+
+            <hr className="scope-section-divider" />
+
+            {/* ── Product Scope Section ── */}
+            <div className="scope-section-label">Product Scope</div>
+            <button
+              type="button"
+              className={`scope-option scope-product-row ${!selectedProductId && !selectedEngagementId ? 'active' : ''}`}
+              onClick={selectAllScope}
+              role="menuitem"
+              aria-current={!selectedProductId && !selectedEngagementId ? 'true' : undefined}
+            >
+              <span>
+                <strong>All Products</strong>
+                <small>{compactedFindingsForStats.length} compacted finding{compactedFindingsForStats.length !== 1 ? 's' : ''}</small>
+              </span>
+              {!selectedProductId && !selectedEngagementId && <Check size={15} aria-hidden="true" />}
+            </button>
+            <div className="scope-options">
+              {visibleScopeProducts.length > 0 ? (
+                visibleScopeProducts.map(product => {
+                  const productActive = selectedProductId && !selectedEngagementId && routeValueMatches(
+                    selectedProductId,
+                    product.id,
+                    product.key,
+                    product.name,
+                    product.value
+                  );
+                  return (
+                    <div className="scope-product-group" key={product.value}>
+                      <button
+                        type="button"
+                        className={`scope-option scope-product-row ${productActive ? 'active' : ''}`}
+                        onClick={() => selectProductScope(product)}
+                        role="menuitem"
+                        aria-current={productActive ? 'true' : undefined}
+                      >
+                        <span>
+                          <strong>{product.name}</strong>
+                          <small>{product.count} compacted finding{product.count !== 1 ? 's' : ''}</small>
+                        </span>
+                        {productActive && <Check size={15} aria-hidden="true" />}
+                      </button>
+                      {product.engagements.map(engagement => {
+                        const engagementActive = selectedEngagementId && routeValueMatches(
+                          selectedEngagementId,
+                          engagement.id,
+                          engagement.key,
+                          engagement.name,
+                          engagement.value
+                        );
+                        return (
+                          <button
+                            key={`${product.value}-${engagement.value}`}
+                            type="button"
+                            className={`scope-option scope-engagement-row ${engagementActive ? 'active' : ''}`}
+                            onClick={() => selectEngagementScope(product, engagement)}
+                            role="menuitem"
+                            aria-current={engagementActive ? 'true' : undefined}
+                          >
+                            <span>
+                              <strong>{engagement.name}</strong>
+                              <small>{engagement.count} compacted finding{engagement.count !== 1 ? 's' : ''}</small>
+                            </span>
+                            {engagementActive && <Check size={15} aria-hidden="true" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="scope-empty">No products or engagements match.</p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  const openSyncAllFilters = () => {
+    if (user?.role !== 'admin') {
+      alert('Only admins can create or check Redmine issues.');
+      return;
+    }
+
+    if (bulkOpeningRedmine) {
+      return;
+    }
+
+    setSyncAllPullFilters(createPullFiltersDraft(config.pullFilters));
+    setShowSyncAllFilters(true);
+  };
+
+  const updateSyncAllPullFilter = (field, value) => {
+    setSyncAllPullFilters(prev => ({
+      ...prev,
+      [field]: value,
+    }));
+  };
+
+  const toggleSyncAllSeverity = (severity) => {
+    setSyncAllPullFilters(prev => {
+      const current = prev.severity || [];
+      const updated = current.includes(severity)
+        ? current.filter(item => item !== severity)
+        : [...current, severity];
+
+      return { ...prev, severity: updated };
+    });
+  };
+
+  const openAllRedmineIssues = async (pullFilters) => {
+    if (user?.role !== 'admin') {
+      alert('Only admins can create or check Redmine issues.');
+      return;
+    }
+
+    if (bulkOpeningRedmine) {
+      return;
+    }
+
+    const filtersForSync = createPullFiltersDraft(pullFilters);
+    const startedAt = Date.now();
+    setSyncProgressNow(startedAt);
+
+    setSyncAllProgress({
+      phase: 'Starting',
+      current: 0,
+      total: 8,
+      message: 'Starting Sync All',
+      startedAt,
+      updatedAt: startedAt,
+      summary: null,
+      warnings: [],
+      lines: ['Starting Sync All'],
+    });
+    setBulkOpeningRedmine(true);
+    try {
+      setSyncProgress({
+        phase: 'Pulling DefectDojo',
+        current: 1,
+        total: 8,
+        message: 'Pulling DefectDojo data, syncing Redmine, and rechecking mitigations',
+      });
+
+      const normalizedConfig = normalizeConfig(config);
+      const checkRes = await apiFetch('/sync-all', {
+        method: 'POST',
+        body: JSON.stringify({
+          url: normalizedConfig.defectDojoUrl,
+          apiKey: normalizedConfig.defectDojoApiKey,
+          filters: filtersForSync,
+          redmine: {
+            url: normalizedConfig.redmineUrl,
+            apiKey: normalizedConfig.redmineApiKey,
+            projectId: normalizedConfig.redmineProjectId,
+            trackerId: normalizedConfig.redmineTrackerId,
+          },
+        }),
+      });
+      const data = await checkRes.json();
+
+      if (!checkRes.ok) {
+        alert(`Error during Sync All: ${data.error || 'Failed'}\n${JSON.stringify(data.details || '')}`);
+        return;
+      }
+
+      setSyncProgress({
+        phase: 'Complete',
+        current: 8,
+        total: 8,
+        message: 'Sync All finished',
+        summary: buildSyncAllSummary(data),
+        warnings: data.mitigationRecheck?.warnings || [],
+      });
+      await Promise.all([fetchFindings({ silent: true }), fetchDashboardData({ silent: true }), fetchRedmineSyncStatus()]);
+    } catch (err) {
+      console.error('Error during Sync All:', err);
+      setSyncProgress({
+        phase: 'Failed',
+        message: err.message || 'Sync All failed unexpectedly.',
+        summary: [{
+          title: 'Sync Failed',
+          items: [
+            ['Error', err.message || 'Sync All failed unexpectedly.'],
+          ],
+        }],
+      });
+      alert(err.message || 'Sync All failed unexpectedly.');
+    } finally {
+      setOpeningRedmineId(null);
+      setBulkOpeningRedmine(false);
+    }
+  };
+
+  const submitSyncAllFilters = async (event) => {
+    event.preventDefault();
+    const filtersForSync = createPullFiltersDraft(syncAllPullFilters);
+    setShowSyncAllFilters(false);
+    await openAllRedmineIssues(filtersForSync);
+  };
+
+  const dashboardSyncLabel = dashboardSync.connected
+    ? 'Live sync'
+    : dashboardSync.reason === 'connecting'
+      ? 'Connecting'
+      : 'Reconnecting';
+  const dashboardSyncTitle = dashboardSync.updatedAt
+    ? `Last server update: ${new Date(dashboardSync.updatedAt).toLocaleString()}`
+    : 'Waiting for server sync';
+  const redmineSyncLabel = redmineSyncStatus.running
+    ? redmineSyncStatus.discoveryMode
+      ? 'Redmine discovering'
+      : 'Redmine syncing'
+    : redmineSyncStatus.enabled
+      ? `Redmine ${redmineSyncStatus.intervalSeconds}s`
+      : redmineSyncStatus.configured
+        ? 'Redmine sync off'
+        : 'Redmine not configured';
+  const redmineSyncTitle = [
+    redmineSyncStatus.enabled ? `Interval: ${redmineSyncStatus.intervalSeconds} seconds` : 'Background Redmine sync is disabled',
+    redmineSyncStatus.discoveryMode ? 'Mode: discovery from current DefectDojo findings' : '',
+    `Last run: ${formatSyncTimestamp(redmineSyncStatus.lastFinishedAt)}`,
+    `Next run: ${formatSyncTimestamp(redmineSyncStatus.nextRunAt)}`,
+    `Checked: ${redmineSyncStatus.checkedCount || 0}`,
+    `Changed: ${redmineSyncStatus.changedCount || 0}`,
+    `Redmine API calls: ${(redmineSyncStatus.redmineMetadataRequests || 0) + (redmineSyncStatus.redmineIssueRequests || 0) + (redmineSyncStatus.redmineProjectIssueRequests || 0)}`,
+    `Redmine issue checks: ${redmineSyncStatus.redmineIssueRequests || 0}`,
+    `Redmine project issue lists: ${redmineSyncStatus.redmineProjectIssueRequests || 0}`,
+    `Not found: ${redmineSyncStatus.redmineNotFoundCount || 0}`,
+    `Errors: ${redmineSyncStatus.redmineErrorCount || 0}`,
+    redmineSyncStatus.lastError ? `Last error: ${redmineSyncStatus.lastError}` : '',
+  ].filter(Boolean).join('\n');
+  const syncProgressMetrics = syncAllProgress
+    ? getSyncProgressMetrics(syncAllProgress, syncProgressNow)
+    : null;
+  const syncAllProgressFinished = syncAllProgress ? isSyncAllTerminalPhase(syncAllProgress.phase) : false;
+  const mitigationReviewPendingCount = user?.role === 'admin'
+    ? Number(dashboardSummary?.mitigationReview?.pendingCount || 0)
+    : 0;
+
+  if (!user) {
+    return (
+      <div style={{ backgroundColor: '#0f1624', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <p style={{ color: '#9ca8bc', fontFamily: 'sans-serif' }}>Redirecting to security hub...</p>
+      </div>
+    );
+  }
+
+  const renderMitigationReviewToast = () => {
+    if (user?.role !== 'admin' || !mitigationReviewToast || currentHash === '#mitigation-review') return null;
+    const count = Number(mitigationReviewToast.count || 0);
+    if (count <= 0) return null;
+    const durationMs = Number(mitigationReviewToast.durationMs || MITIGATION_TOAST_DURATION_MS);
+    const expiresAt = Number(mitigationReviewToast.expiresAt || 0);
+    const remainingMs = expiresAt ? Math.max(0, expiresAt - notificationNow) : durationMs;
+    const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+    const progressPercent = durationMs > 0
+      ? Math.max(0, Math.min(100, (remainingMs / durationMs) * 100))
+      : 0;
+
+    return (
+      <div className="mitigation-toast" role="status" aria-live="polite">
+        <div className="mitigation-toast-icon">
+          <Bell size={18} />
+        </div>
+        <div className="mitigation-toast-copy">
+          <strong>{count} mitigation review{count !== 1 ? 's' : ''} awaiting closure</strong>
+          <span>
+            {mitigationReviewToast.added} new item{mitigationReviewToast.added !== 1 ? 's' : ''} added
+            {' '}to the queue · hides in {remainingSeconds}s
+          </span>
+        </div>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={() => {
+            setMitigationReviewToast(null);
+            setHashRoute('#mitigation-review');
+          }}
+        >
+          Open Review
+        </button>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => setMitigationReviewToast(null)}
+          aria-label="Dismiss mitigation review notification"
+          title="Dismiss"
+        >
+          <X size={16} />
+        </button>
+        <div
+          className="mitigation-toast-progress"
+          role="progressbar"
+          aria-label="Notification time remaining"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow={Math.round(progressPercent)}
+        >
+          <span style={{ width: `${progressPercent}%` }} />
+        </div>
+      </div>
+    );
+  };
+
+  const renderShell = (children) => (
+    <AppShell
+      currentHash={currentHash}
+      dashboardLoading={dashboardLoading}
+      loading={loading}
+      mitigationReviewPendingCount={mitigationReviewPendingCount}
+      onLogout={handleLogout}
+      onNavigate={handleShellNavigate}
+      onOpenMitigationReview={() => {
+        setMitigationReviewToast(null);
+        setHashRoute('#mitigation-review');
+      }}
+      onRefresh={() => {
+        fetchFindings();
+        fetchDashboardData({ silent: true });
+      }}
+      user={user}
+    >
+      {children}
+    </AppShell>
+  );
+
+  if (currentRoute.id === APP_ROUTE_IDS.products) {
+    return renderShell(
+      <>
+        <ProductsPage
+          scopeProducts={scopeProducts}
+          onSelectProduct={(product) => openProductDashboard(product)}
+          onSelectEngagement={(product, engagement) => openProductFindings(product, engagement)}
+        />
+        {renderMitigationReviewToast()}
+      </>
+    );
+  }
+
+  if (currentRoute.id === APP_ROUTE_IDS.productDashboard) {
+    return renderShell(
+      <>
+        <ProductDashboardPage
+          product={productDashboardData.product}
+          summary={productDashboardData.summary}
+          severityCounts={productDashboardData.severityCounts}
+          severityOptions={PULL_SEVERITY_OPTIONS}
+          engagements={productDashboardData.engagements}
+          onBackToProducts={() => setHashRoute('#products')}
+          onViewFindings={() => openProductFindings(productDashboardData.product)}
+          onViewEngagementFindings={(engagement) => openProductFindings(productDashboardData.product, engagement)}
+        />
+        {renderMitigationReviewToast()}
+      </>
+    );
+  }
+
+  if (currentRoute.id === APP_ROUTE_IDS.notifyManagement) {
+    if (user?.role !== 'admin') {
+      return null;
+    }
+    setHashRoute('#settings?tab=mapped-assets');
+    return null;
+  }
+
+  if (currentRoute.id === APP_ROUTE_IDS.findings || currentRoute.id === APP_ROUTE_IDS.productFindings) {
+    return renderShell(
+      <FindingsPage
+        activeFilter={activeFilter}
+        baseDisplayFindings={redmineStatusFilteredBaseDisplayFindings}
+        compactedFindingsForSeverity={redmineStatusFilteredCompactedFindingsForSeverity}
+        compactedSearch={compactedSearch}
+        compactedSearchActive={compactedSearchActive}
+        compactedSeverityCounts={compactedSeverityCounts}
+        displayFindings={displayFindings}
+        loading={loading}
+        onClearSearch={() => setCompactedSearch('')}
+        onSearchChange={setCompactedSearch}
+        renderFindingDetailModal={renderFindingDetailModal}
+        renderMitigationReviewToast={renderMitigationReviewToast}
+        renderScopeMenu={renderScopeMenu}
+        setActiveFilter={setActiveFilter}
+        severityOptions={PULL_SEVERITY_OPTIONS}
+        user={user}
+        selectedFinding={selectedFinding}
+        setSelectedFinding={setSelectedFinding}
+        getFindingRedmineSync={getFindingRedmineSync}
+        getTicketActionId={getTicketActionId}
+        openRedmineIssue={openRedmineIssue}
+        bulkOpeningRedmine={bulkOpeningRedmine}
+        openingRedmineId={openingRedmineId}
+      />
+    );
+  }
+
+  if (currentRoute.id === APP_ROUTE_IDS.users) {
+    if (user?.role !== 'admin') {
+      return null;
+    }
+    setHashRoute('#settings?tab=users');
+    return null;
+  }
+
+  if (currentRoute.id === APP_ROUTE_IDS.settings) {
+    if (user?.role !== 'admin') {
+      return null;
+    }
+    return renderShell(
+      <>
+        <Topbar
+          icon={Settings}
+          eyebrow="Administration"
+          title="Configuration & Settings"
+        />
+        <PageMain className="settings-main">
+          <SettingsView 
+            config={config} 
+            onSaveConfig={async (newConfig) => {
+              return updateConfig(newConfig);
+            }}
+            onClearData={async () => {
+              if (confirm('Clear all local findings, Redmine ticket state, sync history, mitigation reviews, and dashboard data? Users and settings will be kept.')) {
+                await apiFetch('/clear', { method: 'POST' });
+                setSelectedFinding(null);
+                setFindings([]);
+                setSelectedProductId('');
+                setSelectedEngagementId('');
+                setRedmineStatusFilter('all');
+                setRedmineSyncByTicket({});
+                setCompactedCveFindings([]);
+                setCompactedCveScopeKey('');
+                setDashboardSummary(null);
+                await Promise.all([
+                  fetchFindings({ silent: true }),
+                  fetchDashboardData({ silent: true }),
+                  fetchRedmineSyncStatus(),
+                ]);
+                alert('Local data cleared. Run Sync All or Rebuild Redmine Status after pulling findings to repopulate Redmine workflow counts.');
+              }
+            }}
+            onRebuildRedmineStatus={rebuildRedmineStatus}
+            configBackups={configBackups}
+            selectedConfigBackup={selectedConfigBackup}
+            setSelectedConfigBackup={setSelectedConfigBackup}
+            onBackupConfig={backupConfig}
+            onExportConfig={exportConfig}
+            onImportConfig={importConfigFile}
+            onDownloadConfigBackup={downloadConfigBackup}
+            onRestoreConfigBackup={restoreConfigBackup}
+            user={user}
+            compactedFindings={allCompactedFindings}
+            products={scopeProducts}
+            onRefreshMappedAssets={async () => {
+              await Promise.all([
+                fetchFindings({ silent: true }),
+                fetchDashboardData({ silent: true }),
+              ]);
+            }}
+          />
+        </PageMain>
+        {renderMitigationReviewToast()}
+      </>
+    );
+  }
+
+  if (currentRoute.id === APP_ROUTE_IDS.syncHistory) {
+    if (user?.role !== 'admin') return null;
+    return renderShell(
+      <>
+        <SyncHistory onBack={() => setHashRoute('#dashboard')} />
+        {renderMitigationReviewToast()}
+      </>
+    );
+  }
+
+  if (currentRoute.id === APP_ROUTE_IDS.mitigationReview) {
+    if (user?.role !== 'admin') return null;
+    return renderShell(
+      <>
+        <Topbar
+          icon={ShieldCheck}
+          eyebrow="Administration"
+          title="Mitigation Review"
+        />
+        <PageMain>
+          <MitigationReview onBack={() => setHashRoute('#dashboard')} config={config} />
+        </PageMain>
+        {renderMitigationReviewToast()}
+      </>
+    );
+  }
+
+  return renderShell(
+    <>
+      <DashboardPage
+        bulkOpeningRedmine={bulkOpeningRedmine}
+        compactedFindingsForStats={dashboardCompactedFindingsForStats}
+        dashboardLoading={dashboardLoading}
+        dashboardRedmineSummary={dashboardRedmineSummary}
+        dashboardSummary={dashboardSummary}
+        dashboardSync={dashboardSync}
+        dashboardSyncLabel={dashboardSyncLabel}
+        dashboardSyncTitle={dashboardSyncTitle}
+        onOpenSyncAllFilters={openSyncAllFilters}
+        findingsContent={(
+          <FindingsPage
+            activeFilter={activeFilter}
+            baseDisplayFindings={redmineStatusFilteredBaseDisplayFindings}
+            compactedFindingsForSeverity={redmineStatusFilteredCompactedFindingsForSeverity}
+            compactedSearch={compactedSearch}
+            compactedSearchActive={compactedSearchActive}
+            compactedSeverityCounts={compactedSeverityCounts}
+            displayFindings={displayFindings}
+            embedded
+            loading={loading}
+            onClearSearch={() => setCompactedSearch('')}
+            onSearchChange={setCompactedSearch}
+            renderFindingDetailModal={renderFindingDetailModal}
+            renderMitigationReviewToast={() => null}
+            renderScopeMenu={renderScopeMenu}
+            setActiveFilter={setActiveFilter}
+            severityOptions={PULL_SEVERITY_OPTIONS}
+            user={user}
+            selectedFinding={selectedFinding}
+            setSelectedFinding={setSelectedFinding}
+            getFindingRedmineSync={getFindingRedmineSync}
+            getTicketActionId={getTicketActionId}
+            openRedmineIssue={openRedmineIssue}
+            bulkOpeningRedmine={bulkOpeningRedmine}
+            openingRedmineId={openingRedmineId}
+          />
+        )}
+        redmineSyncLabel={redmineSyncLabel}
+        redmineSyncStatus={redmineSyncStatus}
+        redmineSyncTitle={redmineSyncTitle}
+        syncAllCount={compactedFindingsForStats.length}
+        uniqueProducts={dashboardScopedProducts}
+        user={user}
+      />
+      {renderMitigationReviewToast()}
+
+      {syncAllProgress && (
+        <div className="modal-overlay sync-progress-overlay">
+          <div className="modal-content log-modal sync-progress-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-heading-with-icon">
+                <RefreshCw size={20} className={bulkOpeningRedmine && !syncAllProgressFinished ? 'spin' : ''} />
+                Sync All Progress
+              </h2>
+            </div>
+            <div className="sync-progress-summary">
+              <div>
+                <span>{syncAllProgress.phase}</span>
+                <strong>
+                  {syncAllProgress.total > 0
+                    ? `${syncAllProgress.current}/${syncAllProgress.total}`
+                    : syncAllProgress.phase === 'Complete'
+                      ? 'Complete'
+                      : 'Working'}
+                </strong>
+              </div>
+              <p>{syncAllProgress.message}</p>
+            </div>
+            {syncProgressMetrics?.hasActualTotal && (
+              <div className="sync-progress-bar" aria-hidden="true">
+                <span style={{ width: `${syncProgressMetrics?.percent || 0}%` }} />
+              </div>
+            )}
+            <div className="sync-progress-metrics" aria-label="Sync All timing">
+              <div>
+                <span>Elapsed</span>
+                <strong>{syncProgressMetrics?.elapsed || '0s'}</strong>
+              </div>
+              <div>
+                <span>Remaining</span>
+                <strong>{syncProgressMetrics?.remaining || 'calculating'}</strong>
+              </div>
+              <div>
+                <span>Progress</span>
+                <strong>
+                  {syncProgressMetrics?.hasActualTotal
+                    ? `${syncProgressMetrics.percent}%`
+                    : 'Awaiting totals'}
+                </strong>
+              </div>
+            </div>
+            {!syncProgressMetrics?.hasActualTotal && (
+              <p className="sync-progress-note">
+                Sync All will keep running until the server finishes. Time remaining appears only when real item totals are available.
+              </p>
+            )}
+            <div className="sync-result-summary" aria-label="Sync All result summary">
+              {syncAllProgress.summary ? (
+                syncAllProgress.summary.map(section => (
+                  <section key={section.title} className="sync-result-section">
+                    <h3>{section.title}</h3>
+                    <div className="sync-result-items">
+                      {section.items.map(([label, value]) => (
+                        <div key={label} className="sync-result-item">
+                          <span>{label}</span>
+                          <strong>{value}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ))
+              ) : (
+                <section className="sync-result-section pending">
+                  <h3>Sync Summary</h3>
+                  <p>The summary will appear here when Sync All finishes.</p>
+                </section>
+              )}
+              {syncAllProgress.warnings?.length > 0 && (
+                <section className="sync-result-section warning">
+                  <h3>Warnings</h3>
+                  <ul>
+                    {syncAllProgress.warnings.slice(0, 5).map((warning, index) => (
+                      <li key={`${warning}-${index}`}>{warning}</li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+            </div>
+            {(!bulkOpeningRedmine || syncAllProgressFinished) && (
+              <div className="modal-actions">
+                <button type="button" className="btn-primary" onClick={() => setSyncAllProgress(null)}>
+                  Done
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showSyncAllFilters && (
+        <div className="modal-overlay" onClick={() => !bulkOpeningRedmine && setShowSyncAllFilters(false)}>
+          <form className="modal-content config-modal" onClick={e => e.stopPropagation()} onSubmit={submitSyncAllFilters}>
+            <div className="modal-header">
+              <h2 className="modal-heading-with-icon">
+                <Filter size={20} />
+                Sync All Pull Filters
+              </h2>
+            </div>
+
+            <div className="sync-filter-grid">
+              <div className="form-group sync-filter-severity">
+                <label>Severity</label>
+                <div className="severity-picker">
+                  <button
+                    type="button"
+                    className={`severity-choice severity-clear ${syncAllPullFilters.severity.length === 0 ? 'selected' : ''}`}
+                    onClick={() => updateSyncAllPullFilter('severity', [])}
+                    disabled={bulkOpeningRedmine}
+                  >
+                    All
+                  </button>
+                  {PULL_SEVERITY_OPTIONS.map(severity => (
+                    <label
+                      key={severity}
+                      className={`severity-choice ${syncAllPullFilters.severity.includes(severity) ? 'selected' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={syncAllPullFilters.severity.includes(severity)}
+                        onChange={() => toggleSyncAllSeverity(severity)}
+                        disabled={bulkOpeningRedmine}
+                      />
+                      <span className={`severity-dot ${severity.toLowerCase()}`} />
+                      {severity}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Product IDs</label>
+                <input
+                  type="text"
+                  value={syncAllPullFilters.test__engagement__product}
+                  onChange={(e) => updateSyncAllPullFilter('test__engagement__product', e.target.value)}
+                  placeholder="e.g. 5, 12, 23 (empty for all)"
+                  disabled={bulkOpeningRedmine}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Engagement ID</label>
+                <input
+                  type="text"
+                  value={syncAllPullFilters.test__engagement}
+                  onChange={(e) => updateSyncAllPullFilter('test__engagement', e.target.value)}
+                  placeholder="empty for all"
+                  disabled={bulkOpeningRedmine}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Active</label>
+                <select
+                  value={syncAllPullFilters.active}
+                  onChange={(e) => updateSyncAllPullFilter('active', e.target.value)}
+                  disabled={bulkOpeningRedmine}
+                >
+                  <option value="">Any</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Verified</label>
+                <select
+                  value={syncAllPullFilters.verified}
+                  onChange={(e) => updateSyncAllPullFilter('verified', e.target.value)}
+                  disabled={bulkOpeningRedmine}
+                >
+                  <option value="">Any</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Mitigated</label>
+                <select
+                  value={syncAllPullFilters.is_mitigated}
+                  onChange={(e) => updateSyncAllPullFilter('is_mitigated', e.target.value)}
+                  disabled={bulkOpeningRedmine}
+                >
+                  <option value="">Any</option>
+                  <option value="false">No</option>
+                  <option value="true">Yes</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setShowSyncAllFilters(false)}
+                disabled={bulkOpeningRedmine}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="btn-primary" disabled={bulkOpeningRedmine}>
+                <RefreshCw size={16} className={bulkOpeningRedmine ? 'spin' : ''} />
+                {bulkOpeningRedmine ? 'Syncing...' : 'Pull & Sync'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+    </>
+  );
+}
+
+export default App;

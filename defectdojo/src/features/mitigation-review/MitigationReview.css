@@ -1,0 +1,319 @@
+/* MitigationReview component styles */
+
+.review-view-tabs {
+  width: fit-content;
+  max-width: 100%;
+  display: inline-flex;
+  gap: 0.35rem;
+  margin: 0 0 0.85rem;
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: var(--bg-subtle);
+}
+
+.review-view-tabs button {
+  min-height: 2.35rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: var(--font-weight-semibold);
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
+}
+
+.review-view-tabs button:hover,
+.review-view-tabs button.active {
+  color: var(--text-main);
+  border-color: var(--border-subtle);
+  background: var(--bg-subtle-hover);
+}
+
+.review-view-tabs button.active {
+  color: var(--primary);
+  border-color: var(--bg-active-border);
+  background: var(--bg-active);
+}
+
+.review-view-tabs button span {
+  min-width: 1.45rem;
+  padding: 0.08rem 0.38rem;
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.action-badge {
+  flex: 0 0 auto;
+  width: fit-content;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--info-border);
+  border-radius: 999px;
+  background: var(--info-bg);
+  color: var(--info-text);
+  font-size: 0.68rem;
+  font-weight: var(--font-weight-uppercase);
+  letter-spacing: 0.04em;
+  text-transform: var(--text-transform-uppercase);
+}
+
+.action-badge.success {
+  border-color: var(--success-border);
+  background: var(--success-bg);
+  color: var(--success-text);
+}
+
+.action-badge.warning {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+/* ── Headers & Links ── */
+.sortable-header {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: var(--font-weight-semibold);
+  text-align: left;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.sortable-header:hover,
+.sortable-header:focus-visible {
+  color: var(--text-main);
+}
+
+.sort-indicator {
+  color: var(--primary);
+  font-size: 0.75rem;
+}
+
+.review-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  width: fit-content;
+  color: var(--info-text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.review-link:hover,
+.review-link:focus-visible {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 0.18rem;
+}
+
+.review-link.muted {
+  color: var(--text-muted);
+}
+
+/* ── Modal Confirmation Form ── */
+.review-confirm-modal,
+.mitigation-detail-popup {
+  background: var(--bg-glass) !important;
+  backdrop-filter: blur(16px);
+}
+
+.review-confirm-modal .finding-meta-grid {
+  margin-top: 0.9rem;
+}
+
+.review-reason-field {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.9rem;
+}
+
+.review-reason-field span {
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  font-weight: var(--font-weight-uppercase);
+  letter-spacing: 0.06em;
+  text-transform: var(--text-transform-uppercase);
+}
+
+.review-reason-field textarea {
+  width: 100%;
+  min-height: 6rem;
+  resize: vertical;
+  padding: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  outline: 0;
+  background: var(--bg-input);
+  color: var(--text-main);
+  font: inherit;
+  line-height: 1.45;
+}
+
+.review-reason-field textarea:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.14);
+}
+
+.review-reason-field textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.compact-empty {
+  margin: 0.75rem;
+  padding: 2rem 1rem;
+}
+
+/* ── Responsive Overrides ── */
+@media (max-width: 768px) {
+  .review-view-tabs {
+    width: 100%;
+  }
+
+  .review-view-tabs button {
+    flex: 1 1 0;
+    justify-content: center;
+  }
+
+}
+
+/* ── Queue and History Table Wrapper Styles ── */
+.review-queue-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* ── CVE & CWE Badges ── */
+.cve-cwe-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.38rem;
+  border-radius: 0.3rem;
+  font-size: 0.65rem;
+  font-weight: var(--font-weight-uppercase);
+  text-transform: var(--text-transform-uppercase);
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.cve-cwe-tag.cve {
+  background: var(--critical-bg);
+  color: var(--critical-text);
+  border: 1px solid var(--critical-border);
+}
+
+.cve-cwe-tag.cwe {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border: 1px solid var(--warning-border);
+}
+
+.cve-cwe-separator {
+  color: var(--text-muted);
+  font-size: 0.6rem;
+  opacity: 0.5;
+}
+
+.cell-empty {
+  color: var(--text-muted);
+  opacity: 0.4;
+  font-size: 0.78rem;
+}
+
+/* ── Mitigation Detail Popup Modal ── */
+.mitigation-detail-popup {
+  max-width: 620px;
+  padding: 1.35rem;
+}
+
+.mitigation-detail-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem;
+}
+
+.mitigation-detail-meta-card {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.6rem;
+  background: var(--bg-card);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.mitigation-detail-meta-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.66rem;
+  font-weight: var(--font-weight-uppercase);
+  color: var(--text-soft);
+  text-transform: var(--text-transform-uppercase);
+  letter-spacing: 0.06em;
+}
+
+.mitigation-detail-meta-value {
+  font-size: 0.82rem;
+  color: var(--text-main);
+}
+
+.mitigation-detail-primary-text {
+  color: var(--text-main);
+  font-size: 0.82rem;
+  font-weight: var(--font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.mitigation-detail-reference-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.mitigation-detail-note-section {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.mitigation-detail-quote {
+  margin: 0;
+  padding: 0.75rem 0.95rem;
+  border-left: 4px solid var(--primary);
+  background: var(--bg-subtle-hover);
+  border-radius: 0 0.5rem 0.5rem 0;
+  color: var(--text-soft);
+  font-style: italic;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 600px) {
+  .mitigation-detail-popup {
+    max-width: 100%;
+    padding: 1rem;
+  }
+
+  .mitigation-detail-meta-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,105 +1,135 @@
-# DefectDojo Viewer
+# Internal Security Middleware Hub
 
-React and Express viewer for pulling DefectDojo findings, creating or checking Redmine tickets, and managing viewer users.
+A high-performance, containerized microservices suite that serves as a centralized single sign-on (SSO) gateway and dashboard switcher for internal security tools, including **DefectDojo Viewer** and a mockup of the **Wazuh Viewer**.
 
-## Run Locally
+---
 
-Install dependencies:
+## System Architecture
 
-```powershell
-npm install
+The suite consists of six containers orchestrated via Docker Compose:
+
+```mermaid
+graph TB
+    User["Browser (http://localhost)"] --> Gateway["Nginx Gateway\n(Port :80)"]
+    
+    Gateway -->|"/"| Hub["Hub Service\n(Port :3000)\nExpress + React"]
+    Gateway -->|"/defectdojo/*"| DDojo["DefectDojo Service\n(Port :3001)\nExpress + React"]
+    Gateway -->|"/wazuh/*"| Wazuh["Wazuh Service\n(Port :3002)\nStatic React + Nginx"]
+    
+    Hub --> AuthDB[(Auth PostgreSQL 16)]
+    Hub -. first-start import .-> DB[(App PostgreSQL 16)]
+    DDojo --> DB
+    DDojo -->|token introspection| Hub
+
+    style Gateway fill:#6366f1,color:#fff
+    style Hub fill:#172033,stroke:#6366f1,color:#f1f4f9
+    style DDojo fill:#172033,stroke:#f59e0b,color:#f1f4f9
+    style Wazuh fill:#172033,stroke:#22c55e,color:#f1f4f9
+    style AuthDB fill:#0f1624,stroke:#6366f1,color:#f1f4f9
+    style DB fill:#0f1624,stroke:#2d3748,color:#f1f4f9
 ```
 
-Start the API and Vite frontend:
+### 1. Nginx Gateway (`gateway` · Port `80`)
+The main gateway of the system. It handles:
+- **Routing**: Proxy-passes requests from the browser to the backend services based on subpaths (`/` for Hub, `/defectdojo/` for DefectDojo, `/wazuh/` for Wazuh).
+- **DNS Resolution**: Dynamically re-resolves container hostnames at runtime using Docker's internal DNS resolver (`127.0.0.11`) to prevent broken gateways when containers restart or receive new IPs.
+- **SSE Buffering**: Disables proxy buffering for Server-Sent Events (SSE) stream endpoints (`/defectdojo/api/sync/events`) to enable real-time synchronization.
+- **Security Headers**: Injects headers (`X-Frame-Options`, `X-Content-Type-Options`, `X-XSS-Protection`, `Referrer-Policy`) and enforces rate limiting (5r/s) on `/api/login` to prevent brute force attacks.
+
+### 2. SSO Hub Service (`hub` · Port `3000`)
+The entry point switcher portal:
+- **Backend (Express)**: Owns authentication, initializes the `auth_*` schema in the separate auth database, manages sessions, and issues HMAC-SHA256 JWT access tokens valid for 1 hour.
+- **Frontend (React)**: Split-screen brand layout login page, landing portal switcher card grid, and central user-management screen. Dynamically checks client-side health by querying endpoints (`/defectdojo/api/health` and `/wazuh/`) and displaying status badges (Healthy/Offline).
+
+### 3. DefectDojo Viewer (`defectdojo` · Port `3001`)
+Vulnerability workflow management tool:
+- **Backend (Express)**: Validates Hub-issued JWTs, optionally introspects active sessions with the Hub, and connects only to the app database for findings/configuration/sync state.
+- **Frontend (React)**: Displays pulled vulnerability findings, CVE compactions, and coordinates ticket workflows with Redmine. A "Back to Hub" nav item is integrated to return to the portal switcher.
+
+### 4. Wazuh Viewer (`wazuh` · Port `3002`)
+A frontend-only static mockup representing the SIEM & incident management dashboard:
+- **Frontend (React)**: Interactive dashboard, filterable alerts feed, incident creation form, OS agent grid, and investigation timelines built from realistic mockup datasets.
+- **Runtime (Nginx)**: Serves static compiled React assets. Validates auth token presence in `localStorage` on the frontend before loading.
+
+### 5. Auth Database (`auth-db` · Port `5432` internally)
+A PostgreSQL 16 database used only by the Hub for users, credentials, app memberships, sessions, and audit events.
+
+### 6. App Database (`db` · Port `5432` internally)
+A PostgreSQL 16 database used by DefectDojo Viewer for configuration, findings, Redmine sync state, sync history, mitigation reviews, and mapped product/engagement data. On first start, Hub can import legacy users from this database through `LEGACY_DATABASE_URL`, then identity is managed from `auth-db`.
+
+---
+
+## Single Sign-On (SSO) Mechanism
+
+Because all containers are served behind the Nginx Gateway on port 80 under the same domain host (`http://localhost`), they share a **single origin**. 
+
+1. When the user logs in at `http://localhost/`, the Hub backend checks `auth-db`, creates an active session, and issues a JWT token.
+2. The Hub frontend saves this token in `localStorage` under `middleware_token` and the user profile under `middleware_user`.
+3. When the user clicks on **DefectDojo Viewer** (`/defectdojo/`) or **Wazuh Viewer** (`/wazuh/`), the browser retains the shared `localStorage` state.
+4. Each service extracts `middleware_token` from `localStorage` and appends it to requests as `Authorization: Bearer <token>`.
+5. DefectDojo validates issuer/audience/app claims and, in Docker, calls Hub introspection so logout, suspension, and role changes take effect before token expiry.
+
+---
+
+## Getting Started
+
+### Prerequisites
+- Docker and Docker Compose installed.
+
+### Setup and Start
+
+1. **Configure Environment Variables**:
+   Copy `.env.example` to `.env` and configure your settings:
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+2. **Boot the Orchestration Stack**:
+   Start all containers in detached mode:
+   ```powershell
+   docker compose up -d --build
+   ```
+
+3. **Access the Application**:
+   Open **`http://localhost`** in your browser.
+   - **Default Credentials**: 
+     - **Username**: `admin`
+     - **Password**: `admin`
+
+---
+
+## How to Use & Operations
+
+### Independent Service Control
+You can start, stop, or rebuild individual containers without affecting others. The Nginx gateway dynamically handles backend failover:
 
 ```powershell
-npm run dev:all
+# Stop a single service to test offline states
+docker compose stop defectdojo
+
+# Hub switcher dashboard will dynamically update the card status badge to "Offline"
+# Restart the service to bring it back online
+docker compose start defectdojo
+
+# Rebuild a single service after making changes (e.g. Wazuh frontend)
+docker compose up -d --build wazuh
 ```
 
-The backend listens on `http://localhost:3001` and the frontend uses the Vite URL printed by the dev server.
+### User Management
+User administration is centralized:
+- Log in as the `admin` user.
+- Click **User Management** in the administration section of the Hub.
+- The Hub API writes to `auth-db`. DefectDojo Viewer reads the current user identity from Hub-issued tokens and Hub introspection rather than storing password hashes locally.
 
-## Docker Deploy
+### Database Credentials Note
+> [!WARNING]
+> Database volumes persist in Docker. If you update the app DB credentials (`PG_USER`, `PG_PASSWORD`, or `PG_DB`) or auth DB credentials (`AUTH_PG_USER`, `AUTH_PG_PASSWORD`, or `AUTH_PG_DB`) in `.env`, you must delete the relevant old database volume (`docker compose down -v`) for PostgreSQL to apply new credentials on initialization, otherwise you will encounter `FATAL: password authentication failed` errors.
 
-Create a local `.env` from `.env.example`, then change `POSTGRES_PASSWORD`:
+---
 
-```powershell
-Copy-Item .env.example .env
-```
+## Directory Layout
 
-Build and start the app with PostgreSQL:
-
-```powershell
-docker compose up --build -d
-```
-
-Open `http://localhost:3001`. The container serves both the React frontend and the Express API from the same port, so the frontend uses `/api` by default. PostgreSQL data is stored in the `postgres-data` Docker volume, and fallback JSON data is stored in the `app-data` volume at `/app/data`.
-
-Useful Docker commands:
-
-```powershell
-docker compose logs -f app
-docker compose down
-```
-
-## Project Layout
-
-- `backend/` contains the Express API server and PostgreSQL storage adapter.
-- `src/app/` contains the React application shell.
-- `src/features/` contains route-sized UI areas such as login and settings.
-- `src/services/` contains client-side API and storage helpers.
-- Root JSON files such as `config.json`, `users.json`, `sync-state.json`, and `config-backups/*.json` remain the default local data store. Set `DATA_DIR` before `npm run server` to point the backend at another data directory.
-
-## PostgreSQL Storage
-
-The app now supports PostgreSQL for persistent data. When PostgreSQL is configured, the backend stores users, configuration, configuration backups, Redmine sync state, and pulled findings in database tables. If PostgreSQL is not configured, it keeps using the existing local JSON files.
-
-Set either `DATABASE_URL` or standard `PG*` environment variables before starting the server:
-
-```powershell
-$env:DATABASE_URL = "postgres://postgres:postgres@localhost:5432/defectdojo_viewer"
-npm run server
-```
-
-For SSL connections, set `PGSSLMODE`:
-
-```powershell
-$env:PGSSLMODE = "require"
-```
-
-Use `PGSSLMODE=no-verify` only for environments that require TLS without local certificate validation.
-
-On first PostgreSQL startup, the backend creates these tables automatically:
-
-- `defectdojo_viewer_users`
-- `defectdojo_viewer_config`
-- `defectdojo_viewer_config_backups`
-- `defectdojo_viewer_redmine_sync`
-- `defectdojo_viewer_findings`
-
-If the tables are empty, existing `users.json`, `config.json`, `config-backups/*.json`, `sync-state.json`, and findings from the configured scan folder are imported into PostgreSQL once. After that, PostgreSQL is treated as the source of truth while it remains configured.
-
-## Config Backup Workflow
-
-Admins can create server-side config backups from Settings. Backups are stored in `DATA_DIR/config-backups` when using local JSON storage, or in the PostgreSQL `defectdojo_viewer_config_backups` table when database storage is enabled.
-
-- `Backup Now` saves the current server config as a restorable backup.
-- `Download Selected` downloads a selected server backup as an importable JSON file for another deployment.
-- `Import JSON` accepts either an older raw config export or a downloaded backup JSON with metadata, and creates a pre-import backup first.
-- `Restore Selected` applies a backup already stored on the server, and creates a pre-restore backup first.
-
-## Useful Commands
-
-Build the frontend:
-
-```powershell
-npm run build
-```
-
-Run linting:
-
-```powershell
-npm run lint
-```
-# Middleware-2.0
-# Middleware-2.0
-# Middleware-2.0
+- `/gateway` — Nginx gateway configuration file.
+- `/hub` — Express + React code for the authentication and portal switcher app.
+- `/defectdojo` — Express + React code for vulnerability management.
+- `/wazuh` — Static React code for the SIEM mockup.

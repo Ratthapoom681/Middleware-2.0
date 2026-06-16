@@ -1,0 +1,29 @@
+{
+  "defectDojoUrl": "",
+  "defectDojoApiKey": "",
+  "redmineUrl": "",
+  "redmineApiKey": "",
+  "redmineProjectId": "",
+  "redmineTrackerId": "",
+  "redminePriorityId": "",
+  "redminePriorityCriticalId": "",
+  "redminePriorityHighId": "",
+  "redminePriorityMediumId": "",
+  "redminePriorityLowId": "",
+  "redminePriorityInfoId": "",
+  "redmineStatusNewId": "",
+  "redmineStatusFeedbackId": "",
+  "redmineStatusInProgressId": "",
+  "redmineStatusResolveId": "",
+  "redmineStatusClosedId": "",
+  "redmineStatusPollIntervalSeconds": 60,
+  "pullFilters": {
+    "severity": [],
+    "active": "true",
+    "verified": "",
+    "is_mitigated": "false",
+    "test__engagement__product": "",
+    "test__engagement": ""
+  },
+  "notifyIpMappings": []
+}
