@@ -68,7 +68,7 @@ export default function App() {
 
   if (!token || !user) {
     return (
-      <div style={{ backgroundColor: '#0a0c10', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ backgroundColor: '#0f1624', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <p style={{ color: '#9ca8bc', fontFamily: 'sans-serif' }}>Redirecting to security hub...</p>
       </div>
     );

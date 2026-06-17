@@ -5,19 +5,19 @@
 
 :root {
   /* Surface Palette */
-  --bg-body: #0a0c10;
-  --bg-card: #13161e;
-  --bg-subtle: #13161e;
-  --bg-elevated: #1e2330;
+  --bg-body: #0f1624;
+  --bg-card: #172033;
+  --bg-subtle: #131a2a;
+  --bg-elevated: #1e293f;
 
   /* Text */
   --text-main: #f1f4f9;
   --text-muted: #9ca8bc;
 
   /* Borders */
-  --border: #2a3145;
-  --border-subtle: #2a3145;
-  --border-strong: #2a3145;
+  --border: #2d3748;
+  --border-subtle: #212b3d;
+  --border-strong: #3b475e;
 
   /* Primary (Green Accent for Wazuh) */
   --primary: #22c55e;

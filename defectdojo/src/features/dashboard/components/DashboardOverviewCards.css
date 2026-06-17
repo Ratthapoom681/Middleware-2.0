@@ -3,7 +3,7 @@
 .dashboard-soc-overview {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: var(--space-lg);
+  gap: var(--space-md);
   margin-bottom: var(--space-lg);
 }
 
@@ -13,7 +13,7 @@
   position: relative;
   min-width: 0;
   overflow: hidden;
-  padding: var(--space-lg);
+  padding: var(--space-md);
   border: 1px solid var(--border);
   border-radius: var(--rounded-md);
   background: var(--bg-card);
@@ -39,7 +39,7 @@
 .soc-card-header {
   position: relative;
   z-index: 1;
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-sm);
 }
 
 .soc-card-title-row {
@@ -51,8 +51,8 @@
 .soc-card-title-row > svg {
   flex: 0 0 auto;
   color: var(--primary);
-  width: 1.3rem;
-  height: 1.3rem;
+  width: 1.15rem;
+  height: 1.15rem;
 }
 
 .soc-card-vulnerability .soc-card-title-row > svg {
@@ -70,7 +70,7 @@
 .soc-card-header h2 {
   margin: 0;
   color: var(--text-main);
-  font-size: 0.92rem;
+  font-size: 0.82rem;
   font-family: var(--font-sans);
   line-height: 1.25;
   font-weight: var(--font-weight-uppercase);
@@ -81,7 +81,7 @@
 .soc-card-header p {
   margin: var(--space-xs) 0 0;
   color: var(--text-muted);
-  font-size: 0.82rem;
+  font-size: 0.74rem;
   font-weight: var(--font-weight-medium);
 }
 
@@ -100,7 +100,7 @@
 .vulnerability-count-box {
   min-width: 0;
   height: 100%;
-  padding: var(--space-md) var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
   border: 1px solid var(--border-subtle);
   border-radius: var(--rounded-sm);
   background: var(--bg-subtle);
@@ -111,33 +111,40 @@
 }
 
 .vulnerability-count-box.active {
-  border-color: color-mix(in srgb, var(--color-feedback) 75%, #ffffff);
-  background: color-mix(in srgb, var(--color-feedback) 65%, #000000);
+  border-color: var(--high-border);
+  background: var(--high-bg);
 }
 
 .vulnerability-count-box.mitigated {
-  border-color: color-mix(in srgb, var(--color-resolved) 75%, #ffffff);
-  background: color-mix(in srgb, var(--color-resolved) 65%, #000000);
+  border-color: var(--success-border);
+  background: var(--success-bg);
 }
 
 .vulnerability-count-box strong {
-  font-size: 2.35rem;
+  font-size: 2rem;
   line-height: 0.95;
   font-weight: var(--font-weight-bold);
   font-variant-numeric: tabular-nums;
   font-family: var(--font-sans);
-  color: #ffffff;
+}
+
+.vulnerability-count-box.active strong {
+  color: var(--high-text);
+}
+
+.vulnerability-count-box.mitigated strong {
+  color: var(--success-text);
 }
 
 .vulnerability-count-box span {
-  color: #ffffff;
-  font-size: 0.9rem;
+  color: var(--text-main);
+  font-size: 0.8rem;
   font-weight: var(--font-weight-bold);
 }
 
 .vulnerability-count-box small {
-  color: rgb(255, 255, 255);
-  font-size: 0.74rem;
+  color: var(--text-muted);
+  font-size: 0.68rem;
   font-weight: var(--font-weight-medium);
 }
 
@@ -175,12 +182,11 @@
 
 .workflow-tile {
   min-width: 0;
-  min-height: 5.8rem;
+  min-height: 5.25rem;
   padding: var(--space-xs);
   border: 1px solid var(--tile-border, var(--border));
   border-radius: var(--rounded-sm);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent),
-    var(--tile-bg, var(--bg-subtle));
+  background: var(--tile-bg, var(--bg-subtle));
   color: var(--tile-color, var(--text-main));
   display: grid;
   grid-template-rows: auto 1fr auto;
@@ -207,7 +213,7 @@
 
 .workflow-tile strong {
   color: var(--tile-color, var(--text-main));
-  font-size: 1.55rem;
+  font-size: 1.35rem;
   line-height: 1;
   font-weight: var(--font-weight-bold);
   font-variant-numeric: tabular-nums;
@@ -218,8 +224,8 @@
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  color: #ffffff;
-  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-size: 0.66rem;
   font-weight: var(--font-weight-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -272,7 +278,7 @@
 
 .severity-distribution-block {
   min-width: 0;
-  min-height: 6.6rem;
+  min-height: 6rem;
   padding: var(--space-sm) var(--space-xs);
   background: var(--bg-subtle);
   color: var(--text-main);
@@ -299,7 +305,7 @@
 
 .severity-distribution-block strong {
   color: var(--tile-color, var(--text-main));
-  font-size: 1.75rem;
+  font-size: 1.5rem;
   line-height: 1;
   font-weight: var(--font-weight-bold);
   font-variant-numeric: tabular-nums;
@@ -310,17 +316,17 @@
   width: 100%;
   padding-top: var(--space-xs);
   border-top: 2px solid var(--tile-line, var(--border));
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   font-weight: var(--font-weight-uppercase);
   letter-spacing: 0.05em;
   text-transform: var(--text-transform-uppercase);
-  color: var(--tile-color);
+  color: var(--text-muted);
 }
 
 /* Severity status colors */
 .severity-distribution-block.critical {
-  --tile-color: #D21404;
-  --tile-line: #D21404;
+  --tile-color: var(--critical-text);
+  --tile-line: var(--critical);
 }
 
 .severity-distribution-block.high {
