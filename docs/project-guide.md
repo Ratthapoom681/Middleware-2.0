@@ -52,7 +52,7 @@ Local development:
 Docker:
 
 - `docker compose up --build -d` builds the frontend and serves it from the Express app.
-- The app container listens on port `3001`; compose maps it to `${APP_PORT:-3056}`.
+- The app containers listen on internal Docker ports; compose publishes only the gateway as `${GATEWAY_PORT:-80}:80`.
 - PostgreSQL runs as the `db` service.
 - `DATABASE_URL` is set automatically from compose environment variables.
 - Runtime data is stored in Docker volumes:

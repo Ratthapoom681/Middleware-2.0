@@ -10,7 +10,7 @@ The suite consists of six containers orchestrated via Docker Compose:
 
 ```mermaid
 graph TB
-    User["Browser (http://localhost)"] --> Gateway["Nginx Gateway\n(Port :80)"]
+    User["Browser (http://localhost or cloud host)"] --> Gateway["Nginx Gateway\n(Port :80)"]
     
     Gateway -->|"/"| Hub["Hub Service\n(Port :3000)\nExpress + React"]
     Gateway -->|"/defectdojo/*"| DDojo["DefectDojo Service\n(Port :3001)\nExpress + React"]
@@ -61,9 +61,9 @@ A PostgreSQL 16 database used by DefectDojo Viewer for configuration, findings, 
 
 ## Single Sign-On (SSO) Mechanism
 
-Because all containers are served behind the Nginx Gateway on port 80 under the same domain host (`http://localhost`), they share a **single origin**. 
+Because all containers are served behind the Nginx Gateway on port 80 under the same domain host (`http://localhost` locally, or `http://<server-ip-or-domain>` on a cloud server), they share a **single origin**. 
 
-1. When the user logs in at `http://localhost/`, the Hub backend checks `auth-db`, creates an active session, and issues a JWT token.
+1. When the user logs in at the gateway root URL, the Hub backend checks `auth-db`, creates an active session, and issues a JWT token.
 2. The Hub frontend saves this token in `localStorage` under `middleware_token` and the user profile under `middleware_user`.
 3. When the user clicks on **DefectDojo Viewer** (`/defectdojo/`) or **Wazuh Viewer** (`/wazuh/`), the browser retains the shared `localStorage` state.
 4. Each service extracts `middleware_token` from `localStorage` and appends it to requests as `Authorization: Bearer <token>`.
@@ -91,10 +91,29 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
    ```
 
 3. **Access the Application**:
-   Open **`http://localhost`** in your browser.
+   Open **`http://localhost:8080`** in your browser.
    - **Default Credentials**: 
      - **Username**: `admin`
      - **Password**: `admin`
+
+### Cloud Server Access
+
+On a cloud VM, access the app through the gateway port only:
+
+```powershell
+http://<server-public-ip>:8080/
+http://<server-public-ip>:8080/defectdojo/
+http://<server-public-ip>:8080/wazuh/
+```
+
+The `hub`, `defectdojo`, `wazuh`, and database ports are intentionally internal Docker ports. If containers are healthy but the browser says the site cannot be reached, verify the host is publishing the gateway and the cloud firewall allows inbound TCP traffic on the chosen gateway port:
+
+```powershell
+docker compose ps
+curl -I http://127.0.0.1/
+```
+
+`docker compose ps` should show `gateway` with `0.0.0.0:${GATEWAY_PORT:-8080}->80/tcp`. Open inbound TCP `8080`, then browse to `http://<server-public-ip>:8080/`.
 
 ---
 
