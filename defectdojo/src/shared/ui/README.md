@@ -19,12 +19,18 @@ Keep page CSS focused on the meaning inside cells, such as badges, action button
 
 ## Search Options
 
-Use `SearchOptionsPanel`, `SearchOptionsCommandBar`, `SearchOptionsSearch`, `SearchOptionsResultCount`, `SearchOptionsFilterGroup`, and `SearchOptionsFilterButton` for reusable search/filter controls above a list. Findings owns the visual source style; new pages should pass their own search value, clear handler, result counts, filter labels, active state, counts, and click handlers instead of copying search CSS.
+Use `SearchOptionsPanel`, `SearchOptionsCommandBar`, `SearchOptionsSearch`, and `SearchOptionsFilterGroup` for reusable search/filter controls above a list. Findings owns the visual source style; new pages should pass their own search value, clear handler, panel result count, filter value, filter options, and change handlers instead of copying search CSS.
 
 Example:
 
 ```jsx
-<SearchOptionsPanel bodyId="assets-filter-body" open={open} onToggle={() => setOpen(value => !value)}>
+<SearchOptionsPanel
+  bodyId="assets-filter-body"
+  open={open}
+  onToggle={() => setOpen(value => !value)}
+  resultCount={`${rows.length}`}
+  resultLabel="rows"
+>
   <SearchOptionsCommandBar>
     <SearchOptionsSearch
       label="Search assets"
@@ -34,21 +40,19 @@ Example:
       placeholder="Search host, label, or port..."
       showClear={Boolean(query)}
     />
-    <SearchOptionsResultCount value={`${rows.length}`} label="rows" />
   </SearchOptionsCommandBar>
-  <SearchOptionsFilterGroup ariaLabel="Filter assets by severity" title="Severity" total={`${allRows.length} total`}>
-    {filters.map(filter => (
-      <SearchOptionsFilterButton
-        key={filter.value}
-        active={activeFilter === filter.value}
-        count={filter.count}
-        label={filter.label}
-        meterPercent={filter.percent}
-        onClick={() => setActiveFilter(filter.value)}
-        tone={filter.tone}
-      />
-    ))}
-  </SearchOptionsFilterGroup>
+  <SearchOptionsFilterGroup
+    ariaLabel="Filter assets by severity"
+    title="Severity"
+    total={`${allRows.length} total`}
+    value={activeFilter}
+    options={filters.map(filter => ({
+      value: filter.value,
+      label: filter.label,
+      count: filter.count,
+    }))}
+    onChange={setActiveFilter}
+  />
 </SearchOptionsPanel>
 ```
 

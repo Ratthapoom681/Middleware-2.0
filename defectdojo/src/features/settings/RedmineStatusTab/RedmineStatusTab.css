@@ -14,7 +14,7 @@
 .settings-subsection h3 {
   margin: 0 0 var(--space-md);
   color: var(--text-main);
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
   font-weight: var(--font-weight-uppercase);
   text-transform: var(--text-transform-uppercase);
   letter-spacing: 0.08em;

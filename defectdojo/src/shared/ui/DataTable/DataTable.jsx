@@ -129,7 +129,7 @@ export const DataTablePagination = ({
         disabled={currentPage <= 1}
         aria-label={`Previous ${itemLabel} page`}
       >
-        <ChevronLeft size={16} />
+        <ChevronLeft size={17} />
         Previous
       </button>
       <span>Page {currentPage} of {pageCount}</span>
@@ -141,7 +141,7 @@ export const DataTablePagination = ({
         aria-label={`Next ${itemLabel} page`}
       >
         Next
-        <ChevronRight size={16} />
+        <ChevronRight size={17} />
       </button>
     </div>
   </div>

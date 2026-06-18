@@ -5,7 +5,6 @@ import { DataTable, DataTableCell, DataTablePagination, DataTableRow, DataTableS
 import {
   SearchOptionsCommandBar,
   SearchOptionsPanel,
-  SearchOptionsResultCount,
   SearchOptionsSearch,
 } from '../../../shared/ui/SearchOptions/SearchOptions';
 import './UserManagement.css';
@@ -73,7 +72,7 @@ const UserManagement = ({ user }) => {
   const [userPageSize, setUserPageSize] = useState(10);
   const [userEditorOpen, setUserEditorOpen] = useState(false);
   const [userEditorMode, setUserEditorMode] = useState('create');
-  const [filterPanelOpen, setFilterPanelOpen] = useState(true);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
 
   const userRoles = Array.from(new Set(users.map(item => item.role).filter(Boolean))).sort();
   const filteredUsers = users
@@ -286,6 +285,8 @@ const UserManagement = ({ user }) => {
           bodyId="user-filter-body"
           open={filterPanelOpen}
           onToggle={() => setFilterPanelOpen(open => !open)}
+          resultCount={resultCountText}
+          resultLabel={`user${filteredUsers.length !== 1 ? 's' : ''}`}
         >
           <SearchOptionsCommandBar className="user-search-command-bar">
             <SearchOptionsSearch
@@ -332,11 +333,6 @@ const UserManagement = ({ user }) => {
                 <option value="none">No products</option>
               </select>
             </label>
-
-            <SearchOptionsResultCount
-              value={resultCountText}
-              label={`user${filteredUsers.length !== 1 ? 's' : ''}`}
-            />
           </SearchOptionsCommandBar>
         </SearchOptionsPanel>
 

@@ -17,7 +17,7 @@
   color: var(--warning-text);
   display: inline-flex;
   align-items: center;
-  font-size: 0.78rem;
+  font-size: var(--text-table-sm);
   font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
@@ -28,7 +28,7 @@
   border-radius: 0.65rem;
   background: var(--danger-bg);
   color: var(--danger-text);
-  font-size: 0.84rem;
+  font-size: var(--text-sm);
   font-weight: var(--font-weight-semibold);
 }
 
@@ -44,29 +44,36 @@
 .sync-history-empty h2 {
   margin: 0 0 0.4rem;
   color: var(--text-main);
-  font-size: 1rem;
+  font-size: var(--text-md);
   font-weight: var(--font-weight-semibold);
 }
 
 .sync-history-empty p {
   margin: 0 auto;
   max-width: 32rem;
-  font-size: 0.84rem;
+  font-size: var(--text-sm);
   line-height: 1.55;
 }
 
-.sync-history-cell-id,
+.sync-history-cell-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-table-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--tbl-accent);
+  white-space: nowrap;
+}
+
 .sync-history-cell-number,
 .sync-history-cell-date {
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: var(--text-table-sm);
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   white-space: nowrap;
 }
 
 .sync-history-cell-finding {
-  font-size: 0.8rem;
+  font-size: var(--text-table-sm);
   font-weight: var(--font-weight-bold);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -75,8 +82,8 @@
 .sync-history-finding-count {
   display: inline-flex;
   align-items: center;
-  min-height: 1.75rem;
-  padding: 0.15rem 0.45rem;
+  min-height: 1.9rem;
+  padding: 0.18rem 0.5rem;
   border: 1px solid var(--border-subtle);
   border-radius: 0.35rem;
   background: var(--bg-subtle);
@@ -101,7 +108,7 @@
 .sync-history-cell-scope {
   overflow: hidden;
   color: var(--text-main);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   font-weight: var(--font-weight-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -116,13 +123,13 @@
   align-items: center;
   justify-content: center;
   min-width: 5.8rem;
-  min-height: 1.45rem;
-  padding: 0.15rem 0.55rem;
+  min-height: 1.6rem;
+  padding: 0.16rem 0.62rem;
   border: 1px solid var(--border);
-  border-radius: 0.35rem;
+  border-radius: 20px;
   background: var(--bg-subtle);
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: var(--text-label-sm);
   font-weight: var(--font-weight-uppercase);
   line-height: 1;
   text-transform: var(--text-transform-uppercase);
@@ -162,8 +169,8 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 1rem;
-  min-height: 2.4rem;
-  padding: 0.55rem 0.7rem;
+  min-height: 2.55rem;
+  padding: 0.62rem 0.78rem;
   border: 1px solid var(--border);
   border-radius: 0.45rem;
   background: var(--bg-subtle);
@@ -171,7 +178,7 @@
 
 .sync-history-severity-row span {
   color: var(--text-main);
-  font-size: 0.84rem;
+  font-size: var(--text-sm);
   font-weight: var(--font-weight-semibold);
 }
 
@@ -179,7 +186,7 @@
   min-width: 2.4rem;
   color: var(--text-main);
   font-family: var(--font-mono);
-  font-size: 0.95rem;
+  font-size: var(--text-md);
   font-weight: var(--font-weight-bold);
   font-variant-numeric: tabular-nums;
   text-align: right;

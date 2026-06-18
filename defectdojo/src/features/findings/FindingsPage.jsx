@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import {
-  Filter,
   Layers,
   ShieldAlert,
   ShieldCheck,
@@ -13,10 +12,8 @@ import Topbar from '../../shared/ui/Topbar/Topbar';
 import { DataTable, DataTablePagination, DataTableSection, DataTableRow, DataTableCell } from '../../shared/ui/DataTable/DataTable';
 import {
   SearchOptionsCommandBar,
-  SearchOptionsFilterButton,
   SearchOptionsFilterGroup,
   SearchOptionsPanel,
-  SearchOptionsResultCount,
   SearchOptionsSearch,
 } from '../../shared/ui/SearchOptions/SearchOptions';
 import { cleanText, formatRouteValue, getRedmineSyncBadgeClass } from '../../shared/lib/dashboardUtils';
@@ -219,12 +216,20 @@ const FindingsPage = ({
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
-  const [filterPanelOpen, setFilterPanelOpen] = useState(true);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const visibleSeverityOptions = useMemo(
     () => severityOptions.filter(severity => FINDINGS_SEVERITY_FILTERS.includes(severity)),
     [severityOptions]
   );
   const totalSeverityCount = compactedFindingsForSeverity.length;
+  const severityFilterOptions = useMemo(() => [
+    { value: 'All', label: 'All', count: totalSeverityCount },
+    ...visibleSeverityOptions.map(severity => ({
+      value: severity,
+      label: severity,
+      count: compactedSeverityCounts[severity] || 0,
+    })),
+  ], [compactedSeverityCounts, totalSeverityCount, visibleSeverityOptions]);
   const totalRows = displayFindings.length;
   const pageCount = Math.max(1, Math.ceil(totalRows / pageSize));
   const currentPage = Math.min(page, pageCount);
@@ -234,9 +239,6 @@ const FindingsPage = ({
   const pagedDisplayFindings = useMemo(
     () => displayFindings.slice(pageStartIndex, pageStartIndex + pageSize),
     [displayFindings, pageSize, pageStartIndex]
-  );
-  const getSeverityPercent = (count) => (
-    totalSeverityCount > 0 ? Math.max(4, Math.round((count / totalSeverityCount) * 100)) : 0
   );
   const resultCountText = compactedSearchActive
     ? `${displayFindings.length} of ${baseDisplayFindings.length}`
@@ -251,6 +253,9 @@ const FindingsPage = ({
         bodyId="findings-filter-body"
         open={filterPanelOpen}
         onToggle={() => setFilterPanelOpen(open => !open)}
+        resultCount={resultCountText}
+        resultIcon={Layers}
+        resultLabel={`row${displayFindings.length !== 1 ? 's' : ''}`}
       >
         <SearchOptionsCommandBar>
           <SearchOptionsSearch
@@ -270,44 +275,18 @@ const FindingsPage = ({
           />
 
           {renderScopeMenu()}
-
-          <SearchOptionsResultCount
-            icon={Layers}
-            value={resultCountText}
-            label={`row${displayFindings.length !== 1 ? 's' : ''}`}
-          />
         </SearchOptionsCommandBar>
 
-        <SearchOptionsFilterGroup ariaLabel="Filter by severity" title="Severity" total={`${totalSeverityCount} total`}>
-          <SearchOptionsFilterButton
-            active={activeFilter === 'All'}
-            count={totalSeverityCount}
-            icon={Filter}
-            label="All"
-            onClick={() => {
-              setPage(1);
-              setActiveFilter('All');
-            }}
-            tone="all"
-          />
-          {visibleSeverityOptions.map(severity => {
-            const count = compactedSeverityCounts[severity] || 0;
-            return (
-              <SearchOptionsFilterButton
-                key={severity}
-                active={activeFilter === severity}
-                count={count}
-                label={severity}
-                meterPercent={getSeverityPercent(count)}
-                onClick={() => {
-                  setPage(1);
-                  setActiveFilter(severity);
-                }}
-                tone={severity.toLowerCase()}
-              />
-            );
-          })}
-        </SearchOptionsFilterGroup>
+        <SearchOptionsFilterGroup
+          ariaLabel="Filter by severity"
+          title="Severity"
+          value={activeFilter}
+          options={severityFilterOptions}
+          onChange={(nextFilter) => {
+            setPage(1);
+            setActiveFilter(nextFilter);
+          }}
+        />
       </SearchOptionsPanel>
 
       {/* ── Findings List ── */}

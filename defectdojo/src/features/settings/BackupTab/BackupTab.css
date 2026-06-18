@@ -34,13 +34,13 @@
 
 .backup-select {
   width: 100%;
-  min-height: 2.55rem;
-  padding: var(--space-sm, 0.6rem 0.7rem);
+  min-height: var(--control-height-md);
+  padding: 0.62rem 0.76rem;
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--rounded-sm, 0.5rem);
   color: var(--text-main);
-  font-size: 0.88rem;
+  font-size: var(--text-base);
   cursor: pointer;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;

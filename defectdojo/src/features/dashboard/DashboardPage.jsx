@@ -15,9 +15,6 @@ const DashboardPage = ({
   dashboardSyncTitle,
   onOpenSyncAllFilters,
   findingsContent,
-  redmineSyncLabel,
-  redmineSyncStatus,
-  redmineSyncTitle,
   syncAllCount,
   uniqueProducts,
   user,
@@ -39,14 +36,6 @@ const DashboardPage = ({
             <Database size={14} />
             {dashboardSyncLabel}
           </span>
-          <span
-            className={`redmine-sync-pill ${redmineSyncStatus.lastError ? 'error' : redmineSyncStatus.enabled ? 'enabled' : 'disabled'}`}
-            title={redmineSyncTitle}
-          >
-            <RefreshCw size={14} className={redmineSyncStatus.running ? 'spin' : ''} />
-            {redmineSyncLabel}
-          </span>
-
           {user?.role === 'admin' && (
           <button
             type="button"

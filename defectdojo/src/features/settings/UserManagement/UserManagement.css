@@ -30,7 +30,7 @@
 
 /* Custom Search options command bar overrides */
 .user-search-command-bar {
-  grid-template-columns: minmax(180px, 1.2fr) repeat(3, minmax(110px, 150px)) max-content;
+  grid-template-columns: repeat(3, minmax(110px, 1fr));
   align-items: end;
 }
 
@@ -43,22 +43,22 @@
 
 .user-filter span {
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: var(--text-label-sm);
   font-weight: var(--font-weight-uppercase);
   letter-spacing: 0.06em;
   text-transform: var(--text-transform-uppercase);
 }
 
 .user-filter select {
-  min-height: var(--search-options-control-height, 2.15rem);
-  height: var(--search-options-control-height, 2.15rem);
-  padding: 0 1.85rem 0 0.65rem;
+  min-height: var(--search-options-control-height, var(--control-height-xs));
+  height: var(--search-options-control-height, var(--control-height-xs));
+  padding: 0 1.95rem 0 0.72rem;
   border: 1px solid var(--border);
   border-radius: 0.35rem;
   background: var(--bg-card);
   color: var(--text-main);
   font: inherit;
-  font-size: 0.82rem;
+  font-size: var(--text-table-sm);
   font-weight: var(--font-weight-semibold);
   cursor: pointer;
   outline: none;
@@ -81,14 +81,14 @@
 .user-identity-cell strong,
 .user-access-cell strong {
   color: var(--text-main);
-  font-size: 0.9rem;
+  font-size: var(--text-base);
 }
 
 .user-identity-cell span,
 .user-access-cell span,
 .muted-cell {
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-table-sm);
 }
 
 .role-badge {
@@ -96,7 +96,7 @@
   width: fit-content;
   padding: 0.16rem 0.5rem;
   border-radius: 999px;
-  font-size: 0.68rem;
+  font-size: var(--text-label-sm);
   font-weight: var(--font-weight-uppercase);
   letter-spacing: 0.04em;
   text-transform: var(--text-transform-uppercase);
@@ -119,7 +119,7 @@
   width: fit-content;
   padding: 0.16rem 0.5rem;
   border-radius: 999px;
-  font-size: 0.68rem;
+  font-size: var(--text-label-sm);
   font-weight: var(--font-weight-uppercase);
   letter-spacing: 0.04em;
   text-transform: var(--text-transform-uppercase);
@@ -184,7 +184,7 @@
 
 .sort-indicator {
   color: var(--primary);
-  font-size: 0.75rem;
+  font-size: var(--text-label);
 }
 
 .modal-content.user-editor-modal {

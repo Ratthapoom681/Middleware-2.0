@@ -13,8 +13,8 @@
 }
 
 .review-view-tabs button {
-  min-height: 2.35rem;
-  padding: 0.45rem 0.7rem;
+  min-height: var(--control-height-sm);
+  padding: 0.5rem 0.78rem;
   border: 1px solid transparent;
   border-radius: 0.5rem;
   background: transparent;
@@ -41,12 +41,12 @@
 }
 
 .review-view-tabs button span {
-  min-width: 1.45rem;
-  padding: 0.08rem 0.38rem;
+  min-width: 1.6rem;
+  padding: 0.1rem 0.42rem;
   border-radius: 999px;
   background: var(--bg-input);
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: var(--text-label-sm);
   text-align: center;
 }
 
@@ -58,7 +58,7 @@
   border-radius: 999px;
   background: var(--info-bg);
   color: var(--info-text);
-  font-size: 0.68rem;
+  font-size: var(--text-label-sm);
   font-weight: var(--font-weight-uppercase);
   letter-spacing: 0.04em;
   text-transform: var(--text-transform-uppercase);
@@ -101,7 +101,7 @@
 
 .sort-indicator {
   color: var(--primary);
-  font-size: 0.75rem;
+  font-size: var(--text-label);
 }
 
 .review-link {
@@ -144,7 +144,7 @@
 
 .review-reason-field span {
   color: var(--text-soft);
-  font-size: 0.72rem;
+  font-size: var(--text-label-sm);
   font-weight: var(--font-weight-uppercase);
   letter-spacing: 0.06em;
   text-transform: var(--text-transform-uppercase);
@@ -198,14 +198,31 @@
   gap: 1rem;
 }
 
+/* ── ID Cell ── */
+.data-table-cell.cell-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-table-sm);
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.data-table-cell.cell-id.has-id {
+  color: var(--tbl-accent);
+  opacity: 0.85;
+}
+
 /* ── CVE & CWE Badges ── */
 .cve-cwe-tag {
   display: inline-flex;
   align-items: center;
-  padding: 0.1rem 0.38rem;
-  border-radius: 0.3rem;
-  font-size: 0.65rem;
-  font-weight: var(--font-weight-uppercase);
+  padding: 0.15rem 0.45rem;
+  border-radius: 5px;
+  font-size: 0.7rem;
+  font-weight: 700;
   text-transform: var(--text-transform-uppercase);
   letter-spacing: 0.03em;
   white-space: nowrap;
@@ -226,20 +243,20 @@
 
 .cve-cwe-separator {
   color: var(--text-muted);
-  font-size: 0.6rem;
+  font-size: 0.66rem;
   opacity: 0.5;
 }
 
 .cell-empty {
   color: var(--text-muted);
   opacity: 0.4;
-  font-size: 0.78rem;
+  font-size: var(--text-table-sm);
 }
 
 /* ── Mitigation Detail Popup Modal ── */
 .mitigation-detail-popup {
   max-width: 620px;
-  padding: 1.35rem;
+  padding: 1.45rem;
 }
 
 .mitigation-detail-meta-grid {
@@ -262,7 +279,7 @@
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   font-weight: var(--font-weight-uppercase);
   color: var(--text-soft);
   text-transform: var(--text-transform-uppercase);
@@ -270,13 +287,13 @@
 }
 
 .mitigation-detail-meta-value {
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   color: var(--text-main);
 }
 
 .mitigation-detail-primary-text {
   color: var(--text-main);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   font-weight: var(--font-weight-semibold);
   overflow-wrap: anywhere;
 }
@@ -303,7 +320,7 @@
   border-radius: 0 0.5rem 0.5rem 0;
   color: var(--text-soft);
   font-style: italic;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 

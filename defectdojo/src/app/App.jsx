@@ -5,9 +5,6 @@ import {
   Filter,
   X,
   ShieldCheck,
-  Search,
-  ChevronDown,
-  Check,
   Bell
 } from 'lucide-react';
 import { AUTH_EXPIRED_EVENT, apiFetch, authFetch, getCurrentUser, openDashboardSyncStream, removeAuthToken, removeCurrentUser } from '../shared/api/api';
@@ -176,6 +173,14 @@ const REDMINE_STATUS_FILTER_OPTIONS = [
   { id: 'closed', label: 'Closed' },
 ];
 const FINDINGS_SEVERITY_FILTER_OPTIONS = ['Critical', 'High', 'Medium', 'Low'];
+const ALL_COMPANY_SCOPE_VALUE = 'all';
+const ALL_ENGAGEMENT_SCOPE_VALUE = 'all';
+const SCOPE_VALUE_SEPARATOR = '::';
+
+const encodeScopeSelectPart = (value) => encodeURIComponent(String(value || ''));
+const getEngagementSelectValue = (productValue, engagementValue) => (
+  `${encodeScopeSelectPart(productValue)}${SCOPE_VALUE_SEPARATOR}${encodeScopeSelectPart(engagementValue)}`
+);
 
 const normalizeRedmineStatusFilter = (value) => {
   const normalized = cleanText(value).toLowerCase().replace(/[\s-]+/g, '_');
@@ -232,11 +237,8 @@ function App() {
   const [mitigationReviewToast, setMitigationReviewToast] = useState(null);
   const [notificationNow, setNotificationNow] = useState(() => Date.now());
   const [redmineSyncByTicket, setRedmineSyncByTicket] = useState({});
-  const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
-  const [scopeSearch, setScopeSearch] = useState('');
   const [compactedSearch, setCompactedSearch] = useState('');
   const [isScopePending, startScopeTransition] = useTransition();
-  const scopeMenuRef = useRef(null);
 
   useEffect(() => {
     localStorage.removeItem('defectdojo_redmine_sync');
@@ -261,28 +263,6 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [mitigationReviewToast?.expiresAt]);
 
-  useEffect(() => {
-    if (!scopeMenuOpen) return undefined;
-
-    const handlePointerDown = (event) => {
-      if (scopeMenuRef.current && !scopeMenuRef.current.contains(event.target)) {
-        setScopeMenuOpen(false);
-      }
-    };
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        setScopeMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [scopeMenuOpen]);
-  
   const findingsRefreshRef = useRef({ inFlight: false, queued: false });
   const dashboardSyncVersionRef = useRef(null);
   const dashboardSyncReconnectRef = useRef(0);
@@ -1581,22 +1561,6 @@ function App() {
       .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }));
   }, [allCompactedFindings, availableEngagements, availableProducts, findings]);
 
-  const visibleScopeProducts = useMemo(() => {
-    const normalizedScopeSearch = cleanText(scopeSearch).toLowerCase();
-    return scopeProducts
-      .map(product => {
-        const productMatches = product.name.toLowerCase().includes(normalizedScopeSearch);
-        const engagements = product.engagements.filter(engagement => (
-          productMatches || engagement.name.toLowerCase().includes(normalizedScopeSearch)
-        ));
-        return {
-          ...product,
-          engagements,
-          hiddenBySearch: normalizedScopeSearch && !productMatches && engagements.length === 0,
-        };
-      })
-      .filter(product => !product.hiddenBySearch);
-  }, [scopeProducts, scopeSearch]);
   const selectedScopeProduct = useMemo(() => scopeProducts.find(product => routeValueMatches(
     selectedProductId,
     product.id,
@@ -1606,23 +1570,55 @@ function App() {
   )), [scopeProducts, selectedProductId]);
   const selectedScopeEngagement = useMemo(() => scopeProducts
     .flatMap(product => product.engagements.map(engagement => ({ ...engagement, product })))
-    .find(item => routeValueMatches(selectedEngagementId, item.id, item.key, item.name, item.value)), [scopeProducts, selectedEngagementId]);
-  const scopeLabel = selectedEngagementId
-    ? `${selectedScopeEngagement?.product?.name || selectedScopeProduct?.name || 'Product'} / ${selectedScopeEngagement?.name || selectedEngagementId}`
-    : selectedProductId
-      ? selectedScopeProduct?.name || selectedProductId
-      : 'All Products';
-  const scopeBaseDescription = isScopePending
-    ? 'Updating scope...'
-    : selectedEngagementId
-      ? 'Engagement scope'
-      : selectedProductId
-        ? 'Product scope'
-        : `${scopeProducts.length} product${scopeProducts.length !== 1 ? 's' : ''}`;
-  const redmineFilterLabel = redmineStatusFilter === 'all'
-    ? 'All Redmine'
-    : `${getRedmineStatusFilterLabel(redmineStatusFilter)} (${redmineStatusCounts[redmineStatusFilter] || 0})`;
-  const scopeDescription = `${scopeBaseDescription} · ${redmineFilterLabel}`;
+    .find(item => (
+      routeValueMatches(selectedEngagementId, item.id, item.key, item.name, item.value)
+      && (
+        !selectedProductId
+        || routeValueMatches(selectedProductId, item.product.id, item.product.key, item.product.name, item.product.value)
+      )
+    )), [scopeProducts, selectedEngagementId, selectedProductId]);
+  const redmineStatusSelectOptions = useMemo(() => (
+    REDMINE_STATUS_FILTER_OPTIONS.map(option => ({
+      value: option.id,
+      label: `${option.label} (${redmineStatusCounts[option.id] || 0})`,
+    }))
+  ), [redmineStatusCounts]);
+  const companySelectOptions = useMemo(() => [
+    {
+      value: ALL_COMPANY_SCOPE_VALUE,
+      label: `All Companies (${compactedFindingsForStats.length})`,
+    },
+    ...scopeProducts.map(product => ({
+      value: product.value,
+      label: `${product.name} (${product.count})`,
+    })),
+  ], [compactedFindingsForStats.length, scopeProducts]);
+  const engagementSelectItems = useMemo(() => {
+    const products = selectedScopeProduct ? [selectedScopeProduct] : scopeProducts;
+    return products.flatMap(product => (
+      product.engagements.map(engagement => ({ product, engagement }))
+    ));
+  }, [scopeProducts, selectedScopeProduct]);
+  const engagementSelectOptions = useMemo(() => [
+    {
+      value: ALL_ENGAGEMENT_SCOPE_VALUE,
+      label: selectedScopeProduct
+        ? `All Engagements (${selectedScopeProduct.count})`
+        : `All Engagements (${compactedFindingsForStats.length})`,
+    },
+    ...engagementSelectItems.map(({ product, engagement }) => ({
+      value: getEngagementSelectValue(product.value, engagement.value),
+      label: selectedScopeProduct
+        ? `${engagement.name} (${engagement.count})`
+        : `${product.name} / ${engagement.name} (${engagement.count})`,
+    })),
+  ], [compactedFindingsForStats.length, engagementSelectItems, selectedScopeProduct]);
+  const selectedCompanyValue = selectedProductId && selectedScopeProduct
+    ? selectedScopeProduct.value
+    : ALL_COMPANY_SCOPE_VALUE;
+  const selectedEngagementValue = selectedEngagementId && selectedScopeEngagement
+    ? getEngagementSelectValue(selectedScopeEngagement.product.value, selectedScopeEngagement.value)
+    : ALL_ENGAGEMENT_SCOPE_VALUE;
   const productDashboardProductId = currentRoute.id === APP_ROUTE_IDS.productDashboard
     ? currentRoute.query.get('productId') || ''
     : '';
@@ -1692,8 +1688,6 @@ function App() {
     };
   }, [allCompactedFindings, findings, getFindingRedmineSync, productDashboardProductId, scopeProducts]);
   const selectAllScope = () => {
-    setScopeSearch('');
-    setScopeMenuOpen(false);
     startScopeTransition(() => {
       setCompactedCveFindings(null);
       setCompactedCveScopeKey('');
@@ -1703,8 +1697,6 @@ function App() {
     });
   };
   const selectProductScope = (product) => {
-    setScopeSearch('');
-    setScopeMenuOpen(false);
     startScopeTransition(() => {
       setCompactedCveFindings(null);
       setCompactedCveScopeKey('');
@@ -1714,8 +1706,6 @@ function App() {
     });
   };
   const selectEngagementScope = (product, engagement) => {
-    setScopeSearch('');
-    setScopeMenuOpen(false);
     startScopeTransition(() => {
       setCompactedCveFindings(null);
       setCompactedCveScopeKey('');
@@ -1749,8 +1739,24 @@ function App() {
     setSelectedFinding(null);
     setHashRoute(`#product-dashboard${params.toString() ? `?${params.toString()}` : ''}`);
   };
+  const updateProductFindingsScopeRoute = (productValue = '', engagementValue = '') => {
+    if (currentRoute.id !== APP_ROUTE_IDS.productFindings) return;
+
+    const queryString = String(currentHash || '').split('?')[1] || '';
+    const query = new URLSearchParams(queryString);
+    if (productValue) {
+      query.set('productId', productValue);
+    } else {
+      query.delete('productId');
+    }
+    if (engagementValue) {
+      query.set('engagementId', engagementValue);
+    } else {
+      query.delete('engagementId');
+    }
+    setHashRoute(`#product-findings${query.toString() ? `?${query.toString()}` : ''}`);
+  };
   const openAllFindings = () => {
-    setScopeSearch('');
     setCompactedSearch('');
     startScopeTransition(() => {
       setCompactedCveFindings(null);
@@ -1762,6 +1768,40 @@ function App() {
       setRedmineStatusFilter('all');
     });
     setHashRoute('#findings');
+  };
+  const handleCompanyChange = (companyValue) => {
+    if (companyValue === ALL_COMPANY_SCOPE_VALUE) {
+      selectAllScope();
+      updateProductFindingsScopeRoute('', '');
+      return;
+    }
+
+    const product = scopeProducts.find(item => item.value === companyValue);
+    if (product) {
+      selectProductScope(product);
+      updateProductFindingsScopeRoute(product.value, '');
+    }
+  };
+
+  const handleEngagementChange = (engagementValue) => {
+    if (engagementValue === ALL_ENGAGEMENT_SCOPE_VALUE) {
+      if (selectedScopeProduct) {
+        selectProductScope(selectedScopeProduct);
+        updateProductFindingsScopeRoute(selectedScopeProduct.value, '');
+        return;
+      }
+
+      selectAllScope();
+      updateProductFindingsScopeRoute('', '');
+      return;
+    }
+
+    const matchedEngagement = engagementSelectItems
+      .find(item => getEngagementSelectValue(item.product.value, item.engagement.value) === engagementValue);
+    if (matchedEngagement) {
+      selectEngagementScope(matchedEngagement.product, matchedEngagement.engagement);
+      updateProductFindingsScopeRoute(matchedEngagement.product.value, matchedEngagement.engagement.value);
+    }
   };
   const handleRedmineStatusChange = (statusFilter) => {
     const normalizedStatus = normalizeRedmineStatusFilter(statusFilter);
@@ -1785,137 +1825,45 @@ function App() {
     setHashRoute(hash);
   };
   const renderScopeMenu = () => (
-    <div className="scope-menu" ref={scopeMenuRef}>
-      <button
-        type="button"
-        className="scope-trigger"
-        onClick={() => setScopeMenuOpen(open => !open)}
-        aria-haspopup="menu"
-        aria-expanded={scopeMenuOpen}
-        aria-controls="dashboard-scope-menu"
-      >
-        <span>
-          <strong>{scopeLabel}</strong>
-          <small>{scopeDescription}</small>
-        </span>
-        <ChevronDown size={16} aria-hidden="true" />
-      </button>
-      {scopeMenuOpen && (
-        <>
-          <button
-            type="button"
-            className="scope-backdrop"
-            onClick={() => setScopeMenuOpen(false)}
-            aria-label="Close scope menu"
-            tabIndex={-1}
-          />
-          <div className="scope-popover" id="dashboard-scope-menu" role="menu" aria-label="Select scope and Redmine status">
-            <label className="scope-search">
-              <span className="sr-only">Search products and engagements</span>
-              <Search size={15} aria-hidden="true" />
-              <input
-                type="search"
-                value={scopeSearch}
-                onChange={(e) => setScopeSearch(e.target.value)}
-                placeholder="Search product or engagement"
-                autoFocus
-              />
-            </label>
-
-            {/* ── Redmine Status Section ── */}
-            <div className="scope-section-label">Redmine Status</div>
-            <div className="scope-redmine-pills" role="group" aria-label="Filter by Redmine status">
-              {REDMINE_STATUS_FILTER_OPTIONS.map(option => (
-                <button
-                  key={option.id}
-                  type="button"
-                  className={`scope-redmine-pill${redmineStatusFilter === option.id ? ' active' : ''}`}
-                  onClick={() => handleRedmineStatusChange(option.id)}
-                  aria-pressed={redmineStatusFilter === option.id}
-                >
-                  {option.label}
-                  <span className="scope-redmine-pill-count">{redmineStatusCounts[option.id] || 0}</span>
-                </button>
-              ))}
-            </div>
-
-            <hr className="scope-section-divider" />
-
-            {/* ── Product Scope Section ── */}
-            <div className="scope-section-label">Product Scope</div>
-            <button
-              type="button"
-              className={`scope-option scope-product-row ${!selectedProductId && !selectedEngagementId ? 'active' : ''}`}
-              onClick={selectAllScope}
-              role="menuitem"
-              aria-current={!selectedProductId && !selectedEngagementId ? 'true' : undefined}
-            >
-              <span>
-                <strong>All Products</strong>
-                <small>{compactedFindingsForStats.length} compacted finding{compactedFindingsForStats.length !== 1 ? 's' : ''}</small>
-              </span>
-              {!selectedProductId && !selectedEngagementId && <Check size={15} aria-hidden="true" />}
-            </button>
-            <div className="scope-options">
-              {visibleScopeProducts.length > 0 ? (
-                visibleScopeProducts.map(product => {
-                  const productActive = selectedProductId && !selectedEngagementId && routeValueMatches(
-                    selectedProductId,
-                    product.id,
-                    product.key,
-                    product.name,
-                    product.value
-                  );
-                  return (
-                    <div className="scope-product-group" key={product.value}>
-                      <button
-                        type="button"
-                        className={`scope-option scope-product-row ${productActive ? 'active' : ''}`}
-                        onClick={() => selectProductScope(product)}
-                        role="menuitem"
-                        aria-current={productActive ? 'true' : undefined}
-                      >
-                        <span>
-                          <strong>{product.name}</strong>
-                          <small>{product.count} compacted finding{product.count !== 1 ? 's' : ''}</small>
-                        </span>
-                        {productActive && <Check size={15} aria-hidden="true" />}
-                      </button>
-                      {product.engagements.map(engagement => {
-                        const engagementActive = selectedEngagementId && routeValueMatches(
-                          selectedEngagementId,
-                          engagement.id,
-                          engagement.key,
-                          engagement.name,
-                          engagement.value
-                        );
-                        return (
-                          <button
-                            key={`${product.value}-${engagement.value}`}
-                            type="button"
-                            className={`scope-option scope-engagement-row ${engagementActive ? 'active' : ''}`}
-                            onClick={() => selectEngagementScope(product, engagement)}
-                            role="menuitem"
-                            aria-current={engagementActive ? 'true' : undefined}
-                          >
-                            <span>
-                              <strong>{engagement.name}</strong>
-                              <small>{engagement.count} compacted finding{engagement.count !== 1 ? 's' : ''}</small>
-                            </span>
-                            {engagementActive && <Check size={15} aria-hidden="true" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  );
-                })
-              ) : (
-                <p className="scope-empty">No products or engagements match.</p>
-              )}
-            </div>
-          </div>
-        </>
-      )}
+    <div className="scope-select-group">
+      <label className="scope-select-field">
+        <span>Redmine Status</span>
+        <select
+          value={redmineStatusFilter}
+          onChange={(event) => handleRedmineStatusChange(event.target.value)}
+          aria-label="Filter by Redmine status"
+        >
+          {redmineStatusSelectOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+      <label className="scope-select-field">
+        <span>{isScopePending ? 'Company - Updating' : 'Company'}</span>
+        <select
+          value={selectedCompanyValue}
+          onChange={(event) => handleCompanyChange(event.target.value)}
+          aria-label="Filter by company"
+          disabled={isScopePending}
+        >
+          {companySelectOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+      <label className="scope-select-field">
+        <span>{isScopePending ? 'Engagement - Updating' : 'Engagement'}</span>
+        <select
+          value={selectedEngagementValue}
+          onChange={(event) => handleEngagementChange(event.target.value)}
+          aria-label="Filter by engagement"
+          disabled={isScopePending || engagementSelectOptions.length <= 1}
+        >
+          {engagementSelectOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </label>
     </div>
   );
 
@@ -2083,7 +2031,7 @@ function App() {
 
   if (!user) {
     return (
-      <div style={{ backgroundColor: '#0a0c10', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ backgroundColor: '#0f1624', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <p style={{ color: '#9ca8bc', fontFamily: 'sans-serif' }}>Redirecting to security hub...</p>
       </div>
     );

@@ -1,33 +1,26 @@
 import {
   Archive,
-  ArrowRight,
   CheckCircle2,
-  CircleAlert,
-  Flame,
-  Gauge,
-  Info,
   Inbox,
   MessageSquareWarning,
-  ShieldAlert,
-  ShieldCheck,
   Timer,
 } from 'lucide-react';
 import './DashboardOverviewCards.css';
 
 const severityItems = [
-  { key: 'Critical', label: 'Critical', className: 'critical', Icon: CircleAlert },
-  { key: 'High', label: 'High', className: 'high', Icon: Flame },
-  { key: 'Medium', label: 'Medium', className: 'medium', Icon: Gauge },
-  { key: 'Low', label: 'Low', className: 'low', Icon: ShieldCheck },
-  { key: 'Info', label: 'Info', className: 'info', Icon: Info },
+  { key: 'Critical', label: 'Critical', className: 'critical', color: '#FF2E63' },
+  { key: 'High', label: 'High', className: 'high', color: '#FFA72B' },
+  { key: 'Medium', label: 'Medium', className: 'medium', color: '#FFD60A' },
+  { key: 'Low', label: 'Low', className: 'low', color: '#39FF88' },
+  { key: 'Info', label: 'Info', className: 'info', color: '#22D3EE' },
 ];
 
 const workflowItems = [
-  { key: 'ticketNew', label: 'New', className: 'new', Icon: Inbox },
-  { key: 'ticketInProgress', label: 'In Progress', className: 'progress', Icon: Timer },
-  { key: 'ticketFeedback', label: 'Feedback', className: 'feedback', Icon: MessageSquareWarning },
-  { key: 'ticketResolve', label: 'Resolved', className: 'resolved', Icon: CheckCircle2 },
-  { key: 'ticketClosed', label: 'Closed', className: 'closed', Icon: Archive },
+  { key: 'ticketNew', label: 'New', className: 'accent-blue', Icon: Inbox },
+  { key: 'ticketInProgress', label: 'In Progress', className: 'accent-yellow', Icon: Timer },
+  { key: 'ticketFeedback', label: 'Feedback', className: 'accent-pink', Icon: MessageSquareWarning },
+  { key: 'ticketResolve', label: 'Resolved', className: 'accent-green-fill', Icon: CheckCircle2 },
+  { key: 'ticketClosed', label: 'Closed', className: 'accent-grey', Icon: Archive },
 ];
 
 const formatCount = (value, loading) => {
@@ -57,76 +50,76 @@ const DashboardOverviewCards = ({
   const defectDojo = summary?.defectDojo || {};
   const redmine = redmineSummary || summary?.redmine || {};
   const severityCounts = buildSeverityCounts(compactedFindings);
+  const totalSeverity = Object.values(severityCounts).reduce((sum, count) => sum + count, 0);
 
   return (
-    <section className="dashboard-soc-overview" aria-label="Dashboard summary">
-      <article className="soc-card soc-card-vulnerability">
-        <div className="soc-card-header">
-          <div className="soc-card-title-row">
-            <ShieldAlert size={26} aria-hidden="true" />
-            <div>
-              <h2>Vulnerability Status</h2>
+    <section className="dashboard-soc-overview-new" aria-label="Dashboard summary">
+      <div className="soc-top-row">
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div className="vuln-panel-title">🛡 Vulnerability Status</div>
+          <div className="vuln-panel" style={{ flex: 1 }}>
+            <div className="outline-card outline-critical">
+              <div className="outline-top">
+                <div className="outline-value red">{formatCount(defectDojo.activeFindings, loading)}</div>
+              </div>
+              <div className="outline-label">Active Findings</div>
+              <div className="outline-sub">Volume of unmitigated issues</div>
+            </div>
+            <div className="vuln-arrow">→</div>
+            <div className="outline-card outline-mitigated">
+              <div className="outline-top">
+                <div className="outline-value green">{formatCount(defectDojo.mitigatedFindings, loading)}</div>
+              </div>
+              <div className="outline-label">Mitigated Findings</div>
+              <div className="outline-sub">Successfully resolved issues</div>
             </div>
           </div>
         </div>
 
-        <div className="vulnerability-flow" aria-label="Active and mitigated findings">
-          <div className="vulnerability-count-box active">
-            <strong>{formatCount(defectDojo.activeFindings, loading)}</strong>
-            <span>Active Findings</span>
-          </div>
-          <div className="vulnerability-flow-arrow" aria-hidden="true">
-            <span />
-            <ArrowRight size={28} />
-          </div>
-          <div className="vulnerability-count-box mitigated">
-            <strong>{formatCount(defectDojo.mitigatedFindings, loading)}</strong>
-            <span>Mitigated Findings</span>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div className="ticket-panel-title">🎫 Ticket Workflow</div>
+          <div className="soc-stats-grid ticket-grid">
+            {workflowItems.map(({ key, label, className, Icon }) => (
+              <div key={key} className={`soc-stat-card ${className}`}>
+                <div className="soc-stat-label">{label}</div>
+                <div className="soc-stat-value">{formatCount(redmine[key], loading)}</div>
+                <div className="soc-stat-icon">
+                  <Icon size={20} strokeWidth={2.5} />
+                </div>
+              </div>
+            ))}
           </div>
         </div>
-      </article>
+      </div>
 
-      <article className="soc-card soc-card-workflow">
-        <div className="soc-card-header">
-          <div className="soc-card-title-row">
-            <CheckCircle2 size={26} aria-hidden="true" />
-            <div>
-              <h2>Ticket Workflow</h2>
-            </div>
-          </div>
-        </div>
+      <div className="severity-panel">
+        <div className="severity-panel-title">◐ Severity &amp; Risk Distribution</div>
+        <div className="severity-grid">
+          {severityItems.map(({ key, label, className, color }) => {
+            const val = severityCounts[key] || 0;
+            const p = totalSeverity > 0 ? val / totalSeverity : 0;
+            const angle = Math.PI * (1 - p);
+            const x = 60 + 48 * Math.cos(angle);
+            const y = 64 - 48 * Math.sin(angle);
+            const pathData = val === 0
+              ? ''
+              : (p === 1 ? 'M 12 64 A 48 48 0 0 1 108 64' : `M 12 64 A 48 48 0 0 1 ${x} ${y}`);
 
-        <div className="ticket-workflow-grid">
-          {workflowItems.map(({ key, label, className, Icon }) => (
-            <div key={key} className={`workflow-tile ${className}`}>
-              <strong>{formatCount(redmine[key], loading)}</strong>
-              <Icon size={24} aria-hidden="true" />
-              <span>{label}</span>
-            </div>
-          ))}
+            return (
+              <div key={key} className={`gauge-card gauge-${className}`}>
+                <svg className="gauge-svg" width="120" height="72" viewBox="0 0 120 72">
+                  <path d="M 12 64 A 48 48 0 0 1 108 64" fill="none" stroke="#262838" strokeWidth="9" strokeLinecap="round" />
+                  {pathData && (
+                    <path d={pathData} fill="none" stroke={color} strokeWidth="9" strokeLinecap="round" style={{ filter: `drop-shadow(0 0 6px ${color})` }} />
+                  )}
+                </svg>
+                <div className="gauge-value">{formatCount(val, loading)}</div>
+                <div className="gauge-name">{label}</div>
+              </div>
+            );
+          })}
         </div>
-      </article>
-
-      <article className="soc-card soc-card-severity">
-        <div className="soc-card-header">
-          <div className="soc-card-title-row">
-            <Gauge size={26} aria-hidden="true" />
-            <div>
-              <h2>Severity &amp; Risk Distribution</h2>
-            </div>
-          </div>
-        </div>
-
-        <div className="severity-distribution-grid">
-          {severityItems.map(({ key, label, className, Icon }) => (
-            <div key={key} className={`severity-distribution-block ${className}`}>
-              <Icon size={26} aria-hidden="true" />
-              <strong>{formatCount(severityCounts[key], loading)}</strong>
-              <span>{label}</span>
-            </div>
-          ))}
-        </div>
-      </article>
+      </div>
     </section>
   );
 };

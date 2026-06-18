@@ -22,6 +22,26 @@
   --text-transform-label: capitalize;
   --text-transform-uppercase: var(--text-transform-label);
 
+  /* Type and control scale */
+  --text-xs: 0.76rem;
+  --text-sm: 0.86rem;
+  --text-base: 0.94rem;
+  --text-md: 1rem;
+  --text-lg: 1.16rem;
+  --text-xl: 1.52rem;
+  --text-2xl: 2rem;
+  --text-label-sm: 0.72rem;
+  --text-label: 0.78rem;
+  --text-badge: 0.74rem;
+  --text-table-sm: 0.8rem;
+  --text-table: 0.86rem;
+  --control-height-xs: 2.2rem;
+  --control-height-sm: 2.4rem;
+  --control-height-md: 2.6rem;
+  --control-height-lg: 3rem;
+  --icon-btn-size: 2.5rem;
+  --table-row-min-height: 4.05rem;
+
   /* Spacing Scale */
   --space-xs: 0.25rem;  /* 4px */
   --space-sm: 0.5rem;   /* 8px */
@@ -39,25 +59,25 @@
   /* ==========================================
      DARK THEME (Default & Active)
      ========================================== */
-  --bg-body: #0a0c10;
-  --bg-body-gradient: linear-gradient(135deg, #0a0c10 0%, #0a0c10 100%);
-  --bg-card: #13161e;
-  --bg-subtle: #13161e;
-  --bg-subtle-hover: #1e2330;
-  --bg-active: rgba(42, 49, 69, 0.4); /* Subtle highlight matching border */
-  --bg-active-border: rgba(42, 49, 69, 0.4);
-  --bg-input: #13161e;
-  --bg-glass: rgba(19, 22, 30, 0.7);
-  --bg-glass-strong: rgba(10, 12, 16, 0.85);
-  --bg-elevated: #1e2330;
+  --bg-body: oklch(14% 0.012 250); /* #0f1624 */
+  --bg-body-gradient: linear-gradient(135deg, oklch(14% 0.012 250) 0%, oklch(11% 0.01 250) 100%);
+  --bg-card: oklch(19% 0.016 250); /* #172033 */
+  --bg-subtle: oklch(16% 0.014 250); /* #131a2a */
+  --bg-subtle-hover: oklch(22% 0.018 250); /* #1e293f */
+  --bg-active: oklch(20% 0.025 250 / 0.4); /* Subtle indigo highlight */
+  --bg-active-border: oklch(40% 0.08 250 / 0.4);
+  --bg-input: oklch(16% 0.014 250); /* #131a2a */
+  --bg-glass: rgba(23, 32, 51, 0.7);
+  --bg-glass-strong: rgba(15, 22, 36, 0.85);
+  --bg-elevated: oklch(22% 0.018 250); /* #1e293f (elevated card background) */
 
   --text-main: oklch(96% 0.005 250); /* #f1f4f9 */
-  --text-muted: oklch(86% 0.01 250); /* Improved contrast dark theme: #d1d5db */
-  --text-soft: oklch(78% 0.015 250); /* Improved contrast dark theme: #9ca8bc */
+  --text-muted: oklch(78% 0.015 250); /* #9ca8bc */
+  --text-soft: oklch(70% 0.015 250); /* #8895aa */
 
-  --border: #2a3145;
-  --border-subtle: #2a3145;
-  --border-strong: #2a3145;
+  --border: oklch(26% 0.02 250); /* #2d3748 */
+  --border-subtle: oklch(22% 0.018 250); /* #212b3d */
+  --border-strong: oklch(32% 0.022 250); /* #3b475e */
   --border-focus: oklch(65% 0.18 250); /* #6366f1 (Indigo 500) */
 
   --primary: oklch(65% 0.18 250); /* #6366f1 */
@@ -134,26 +154,21 @@
   --success-text: oklch(82% 0.14 145);
 
   /* Unified Ticket Workflow Status Colors */
-  --color-new: #3b82f6;
-  --color-progress: #eab308;
-  --color-feedback: #f97316;
-  --color-resolved: #10b981;
+  --workflow-new-text: var(--primary);
+  --workflow-new-border: var(--bg-active-border);
+  --workflow-new-bg: var(--bg-active);
 
-  --workflow-new-text: #ffffff;
-  --workflow-new-border: color-mix(in srgb, var(--color-new) 75%, #ffffff);
-  --workflow-new-bg: color-mix(in srgb, var(--color-new) 65%, #000000);
+  --workflow-progress-text: var(--info-text);
+  --workflow-progress-border: var(--info-border);
+  --workflow-progress-bg: var(--info-bg);
 
-  --workflow-progress-text: #ffffff;
-  --workflow-progress-border: color-mix(in srgb, var(--color-progress) 75%, #ffffff);
-  --workflow-progress-bg: color-mix(in srgb, var(--color-progress) 65%, #000000);
+  --workflow-feedback-text: var(--danger-text);
+  --workflow-feedback-border: var(--danger-border);
+  --workflow-feedback-bg: var(--danger-bg);
 
-  --workflow-feedback-text: #ffffff;
-  --workflow-feedback-border: color-mix(in srgb, var(--color-feedback) 75%, #ffffff);
-  --workflow-feedback-bg: color-mix(in srgb, var(--color-feedback) 65%, #000000);
-
-  --workflow-resolved-text: #ffffff;
-  --workflow-resolved-border: color-mix(in srgb, var(--color-resolved) 75%, #ffffff);
-  --workflow-resolved-bg: color-mix(in srgb, var(--color-resolved) 65%, #000000);
+  --workflow-resolved-text: var(--success-text);
+  --workflow-resolved-border: var(--success-border);
+  --workflow-resolved-bg: var(--success-bg);
 
   --workflow-closed-text: var(--text-soft);
   --workflow-closed-border: var(--border-subtle);
@@ -162,25 +177,25 @@
 
 /* Redundant selector for specificity */
 html[data-theme="dark"] {
-  --bg-body: #0a0c10;
-  --bg-body-gradient: linear-gradient(135deg, #0a0c10 0%, #0a0c10 100%);
-  --bg-card: #13161e;
-  --bg-subtle: #13161e;
-  --bg-subtle-hover: #1e2330;
-  --bg-active: rgba(42, 49, 69, 0.4);
-  --bg-active-border: rgba(42, 49, 69, 0.4);
-  --bg-input: #13161e;
-  --bg-glass: rgba(19, 22, 30, 0.7);
-  --bg-glass-strong: rgba(10, 12, 16, 0.85);
-  --bg-elevated: #1e2330;
+  --bg-body: oklch(14% 0.012 250);
+  --bg-body-gradient: linear-gradient(135deg, oklch(14% 0.012 250) 0%, oklch(11% 0.01 250) 100%);
+  --bg-card: oklch(19% 0.016 250);
+  --bg-subtle: oklch(16% 0.014 250);
+  --bg-subtle-hover: oklch(22% 0.018 250);
+  --bg-active: oklch(20% 0.025 250 / 0.4);
+  --bg-active-border: oklch(40% 0.08 250 / 0.4);
+  --bg-input: oklch(16% 0.014 250);
+  --bg-glass: rgba(23, 32, 51, 0.7);
+  --bg-glass-strong: rgba(15, 22, 36, 0.85);
+  --bg-elevated: oklch(22% 0.018 250);
 
   --text-main: oklch(96% 0.005 250);
-  --text-muted: oklch(86% 0.01 250);
-  --text-soft: oklch(78% 0.015 250);
+  --text-muted: oklch(78% 0.015 250);
+  --text-soft: oklch(70% 0.015 250);
 
-  --border: #2a3145;
-  --border-subtle: #2a3145;
-  --border-strong: #2a3145;
+  --border: oklch(26% 0.02 250);
+  --border-subtle: oklch(22% 0.018 250);
+  --border-strong: oklch(32% 0.022 250);
   --border-focus: oklch(65% 0.18 250);
 
   --primary: oklch(65% 0.18 250);
@@ -192,25 +207,25 @@ html[data-theme="dark"] {
    LIGHT THEME OVERRIDES
    ========================================== */
 html[data-theme="light"] {
-  --bg-body: #0a0c10;
-  --bg-body-gradient: linear-gradient(135deg, #0a0c10 0%, #0a0c10 100%);
-  --bg-card: #13161e;
-  --bg-subtle: #13161e;
-  --bg-subtle-hover: #1e2330;
-  --bg-active: rgba(42, 49, 69, 0.4);
-  --bg-active-border: rgba(42, 49, 69, 0.4);
-  --bg-input: #13161e;
-  --bg-glass: rgba(19, 22, 30, 0.7);
-  --bg-glass-strong: rgba(10, 12, 16, 0.85);
-  --bg-elevated: #1e2330;
+  --bg-body: oklch(98% 0.005 250); /* #f8fafc */
+  --bg-body-gradient: linear-gradient(135deg, oklch(98% 0.005 250) 0%, oklch(95% 0.005 250) 100%);
+  --bg-card: oklch(100% 0 0); /* #ffffff */
+  --bg-subtle: oklch(96% 0.005 250); /* #f1f5f9 */
+  --bg-subtle-hover: oklch(93% 0.01 250); /* #e2e8f0 */
+  --bg-active: oklch(93% 0.02 250); /* Indigo 50 */
+  --bg-active-border: oklch(85% 0.05 250);
+  --bg-input: oklch(100% 0 0);
+  --bg-glass: rgba(255, 255, 255, 0.7);
+  --bg-glass-strong: rgba(248, 250, 252, 0.85);
+  --bg-elevated: oklch(100% 0 0); /* #ffffff */
 
   --text-main: oklch(20% 0.015 250); /* Slate 900 */
-  --text-muted: oklch(42% 0.015 250); /* Slate 700 (Improved contrast) */
-  --text-soft: oklch(35% 0.015 250); /* Slate 800 (Improved contrast) */
+  --text-muted: oklch(55% 0.015 250); /* Slate 500 */
+  --text-soft: oklch(45% 0.015 250);
 
-  --border: #2a3145;
-  --border-subtle: #2a3145;
-  --border-strong: #2a3145;
+  --border: oklch(90% 0.01 250); /* Slate 300 */
+  --border-subtle: oklch(93% 0.005 250); /* Slate 200 */
+  --border-strong: oklch(80% 0.015 250); /* Slate 400 */
   --border-focus: oklch(60% 0.18 250); /* Indigo 600 */
 
   --primary: oklch(60% 0.18 250); /* Indigo 600 */

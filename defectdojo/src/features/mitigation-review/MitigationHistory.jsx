@@ -4,7 +4,6 @@ import { DataTable, DataTableCell, DataTablePagination, DataTableRow, DataTableS
 import {
   SearchOptionsCommandBar,
   SearchOptionsPanel,
-  SearchOptionsResultCount,
   SearchOptionsSearch,
 } from '../../shared/ui/SearchOptions/SearchOptions';
 import ModalDetails from './HistoryModalDetails';
@@ -82,7 +81,7 @@ const DEFAULT_SORT_CONFIG = { key: 'foundDate', direction: 'desc' };
 
 const MitigationHistory = ({ historyItems, loading, fetchHistory, config = {} }) => {
   const [historySearchTerm, setHistorySearchTerm] = useState('');
-  const [historyFilterPanelOpen, setHistoryFilterPanelOpen] = useState(true);
+  const [historyFilterPanelOpen, setHistoryFilterPanelOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [selectedHistoryItem, setSelectedHistoryItem] = useState(null);
@@ -132,6 +131,9 @@ const MitigationHistory = ({ historyItems, loading, fetchHistory, config = {} })
         bodyId="mitigation-review-history-filter"
         open={historyFilterPanelOpen}
         onToggle={() => setHistoryFilterPanelOpen(open => !open)}
+        resultCount={`${sortedHistoryItems.length}`}
+        resultIcon={History}
+        resultLabel={`log${sortedHistoryItems.length !== 1 ? 's' : ''}`}
         title="Search Options"
       >
         <SearchOptionsCommandBar>
@@ -143,11 +145,6 @@ const MitigationHistory = ({ historyItems, loading, fetchHistory, config = {} })
             onClear={() => updateSearchTerm('')}
             placeholder="Search reviewer, issue, product, endpoint, CVE..."
             showClear={Boolean(historySearchTerm)}
-          />
-          <SearchOptionsResultCount
-            icon={History}
-            value={`${sortedHistoryItems.length}`}
-            label={`log${sortedHistoryItems.length !== 1 ? 's' : ''}`}
           />
           <div style={{ marginLeft: 'auto' }}>
             <button

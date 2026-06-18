@@ -19,7 +19,7 @@
 .finding-detail-header h2 {
   margin: 0.65rem 0 0;
   color: var(--text-main);
-  font-size: 1.08rem;
+  font-size: var(--text-lg);
   line-height: 1.28;
   font-weight: var(--font-weight-semibold);
   overflow-wrap: anywhere;
@@ -38,7 +38,7 @@
 
 .detail-date {
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-table-sm);
   font-weight: var(--font-weight-semibold);
 }
 
@@ -50,7 +50,7 @@
 .detail-section h3 {
   margin: 0;
   color: var(--text-soft);
-  font-size: 0.75rem;
+  font-size: var(--text-label);
   font-weight: var(--font-weight-uppercase);
   letter-spacing: 0.08em;
   text-transform: var(--text-transform-uppercase);
@@ -59,7 +59,7 @@
 .detail-empty-text {
   margin: 0;
   color: var(--text-muted);
-  font-size: 0.84rem;
+  font-size: var(--text-sm);
 }
 
 .detail-actions {
@@ -78,10 +78,10 @@
 .count-badge {
   display: inline-flex;
   align-items: center;
-  min-height: 1.35rem;
-  padding: 0.15rem 0.5rem;
+  min-height: 1.5rem;
+  padding: 0.16rem 0.56rem;
   border-radius: 999px;
-  font-size: 0.66rem;
+  font-size: var(--text-label-sm);
   line-height: 1;
   font-weight: var(--font-weight-uppercase);
   text-transform: var(--text-transform-uppercase);
@@ -106,14 +106,14 @@
   grid-template-columns: 92px minmax(0, 1fr);
   align-items: start;
   gap: 0.65rem;
-  font-size: 0.8rem;
+  font-size: var(--text-table-sm);
 }
 
 .meta-label {
   color: var(--text-muted);
   font-weight: var(--font-weight-uppercase);
   text-transform: var(--text-transform-uppercase);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   letter-spacing: 0.06em;
   padding-top: 0.18rem;
 }
@@ -149,7 +149,7 @@
 .detail-source-title {
   margin: 0.35rem 0 0.15rem;
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: var(--text-label-sm);
   font-weight: var(--font-weight-uppercase);
   text-transform: var(--text-transform-uppercase);
   letter-spacing: 0.06em;
@@ -163,7 +163,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: 0.45rem;
   color: var(--text-soft);
-  font-size: 0.8rem;
+  font-size: var(--text-table-sm);
   overflow-wrap: anywhere;
 }
 
@@ -176,7 +176,7 @@
   padding: 0.18rem 0.48rem;
   border-radius: 0.4rem;
   font-family: var(--font-mono);
-  font-size: 0.71rem;
+  font-size: var(--text-label-sm);
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
@@ -232,7 +232,7 @@
 .endpoint-detail-target,
 .endpoint-detail-cves {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: var(--text-label-sm);
   overflow-wrap: anywhere;
 }
 

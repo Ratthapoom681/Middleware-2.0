@@ -1,4 +1,4 @@
-import { ChevronDown, Filter, Search, SlidersHorizontal, X } from 'lucide-react';
+import { ChevronDown, Search, SlidersHorizontal, X } from 'lucide-react';
 import './SearchOptions.css';
 
 const joinClassNames = (...classes) => classes.filter(Boolean).join(' ');
@@ -10,9 +10,15 @@ export const SearchOptionsPanel = ({
   icon: Icon = SlidersHorizontal,
   open,
   onToggle,
+  resultCount,
+  resultIcon,
+  resultLabel = 'rows',
   title = 'Search Options',
 }) => (
-  <section className={joinClassNames('search-options-panel', open && 'open', className)} aria-labelledby={`${bodyId}-title`}>
+  <section
+    className={joinClassNames('search-options-panel', open && 'open', resultCount !== undefined && 'has-result-count', className)}
+    aria-labelledby={`${bodyId}-title`}
+  >
     <button
       type="button"
       className="search-options-toggle"
@@ -26,6 +32,13 @@ export const SearchOptionsPanel = ({
       <span className="search-options-toggle-copy">
         <strong id={`${bodyId}-title`}>{title}</strong>
       </span>
+      {resultCount !== undefined && (
+        <SearchOptionsResultCount
+          icon={resultIcon}
+          label={resultLabel}
+          value={resultCount}
+        />
+      )}
       <ChevronDown className="search-options-chevron" size={18} aria-hidden="true" />
     </button>
 
@@ -87,46 +100,42 @@ export const SearchOptionsResultCount = ({ icon: Icon, label = 'rows', value }) 
   </span>
 );
 
-export const SearchOptionsFilterGroup = ({ ariaLabel, children, title, total }) => (
-  <div className="search-options-filter-panel" aria-label={ariaLabel}>
-    <div className="search-options-filter-head">
-      <span>{title}</span>
-      <strong>{total}</strong>
-    </div>
-    <div className="search-options-filter-options">
-      {children}
-    </div>
-  </div>
+const formatFilterOptionLabel = ({ count, label }) => (
+  count === undefined || count === null ? label : `${label} (${count})`
 );
 
-export const SearchOptionsFilterButton = ({
-  active,
-  count,
-  icon: Icon,
-  label,
-  meterPercent,
-  onClick,
-  tone = '',
+export const SearchOptionsFilterGroup = ({
+  ariaLabel,
+  onChange,
+  options = [],
+  title,
+  total,
+  value,
 }) => {
-  const isAll = tone === 'all';
+  const selectLabel = ariaLabel || (title ? `Filter by ${title}` : 'Filter options');
 
   return (
-    <button
-      type="button"
-      className={joinClassNames('search-options-filter-option', tone, active && 'active')}
-      onClick={onClick}
-      aria-pressed={active}
-    >
-      {Icon ? <Icon size={14} /> : <span className="search-options-filter-dot" aria-hidden="true" />}
-      <span className="search-options-filter-label">{label}</span>
-      <strong>{count}</strong>
-      {!isAll && (
-        <span className="search-options-filter-meter" aria-hidden="true">
-          <span style={{ width: `${meterPercent || 0}%` }} />
-        </span>
-      )}
-    </button>
+    <div className="search-options-filter-panel" aria-label={ariaLabel}>
+      <div className="search-options-filter-head">
+        <span>{title}</span>
+        {total && <strong>{total}</strong>}
+      </div>
+      <label className="search-options-filter-select-wrap">
+        <span className="sr-only">{selectLabel}</span>
+        <select
+          className="search-options-filter-select"
+          value={value ?? ''}
+          onChange={(event) => onChange?.(event.target.value)}
+          aria-label={selectLabel}
+        >
+          {options.map(option => (
+            <option key={option.value} value={option.value}>
+              {formatFilterOptionLabel(option)}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="search-options-filter-select-icon" size={16} aria-hidden="true" />
+      </label>
+    </div>
   );
 };
-
-export { Filter };

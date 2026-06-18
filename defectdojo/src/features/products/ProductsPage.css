@@ -40,8 +40,8 @@
 
 .pcard-header {
   width: 100%;
-  min-height: 4.5rem;
-  padding: 1rem 1.1rem;
+  min-height: 4.8rem;
+  padding: 1.08rem 1.2rem;
   border: 0;
   border-bottom: 1px solid var(--border-subtle);
   background: transparent;
@@ -81,7 +81,7 @@
 
 .pcard-info strong {
   color: var(--text-main);
-  font-size: 0.96rem;
+  font-size: var(--text-md);
   font-weight: var(--font-weight-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -90,14 +90,14 @@
 
 .pcard-info small {
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-table-sm);
   font-weight: var(--font-weight-medium);
 }
 
 .pcard-count {
   flex: 0 0 auto;
-  min-width: 2.2rem;
-  height: 2.2rem;
+  min-width: var(--control-height-sm);
+  height: var(--control-height-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -105,7 +105,7 @@
   border: 1px solid var(--border);
   background: var(--bg-subtle);
   color: var(--primary);
-  font-size: 0.92rem;
+  font-size: var(--text-base);
   font-weight: var(--font-weight-bold);
 }
 
@@ -117,8 +117,8 @@
 
 .pcard-engagement-row {
   width: 100%;
-  min-height: 2.65rem;
-  padding: 0.5rem 1.1rem 0.5rem 1.4rem;
+  min-height: 2.85rem;
+  padding: 0.55rem 1.2rem 0.55rem 1.5rem;
   border: 0;
   border-bottom: 1px solid var(--border-subtle);
   background: transparent;
@@ -155,14 +155,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-soft);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   font-weight: var(--font-weight-semibold);
 }
 
 .pcard-engagement-count {
   flex: 0 0 auto;
   color: var(--primary);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   font-weight: var(--font-weight-bold);
 }
 
@@ -209,14 +209,14 @@
 .products-empty h2 {
   margin: 0 0 0.4rem;
   color: var(--text-main);
-  font-size: 1.1rem;
+  font-size: var(--text-lg);
   font-weight: var(--font-weight-semibold);
 }
 
 .products-empty p {
   margin: 0 auto;
   max-width: 28rem;
-  font-size: 0.86rem;
+  font-size: var(--text-sm);
   line-height: 1.55;
 }
 

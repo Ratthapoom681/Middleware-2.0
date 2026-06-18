@@ -22,11 +22,11 @@ graph TB
     DDojo -->|token introspection| Hub
 
     style Gateway fill:#6366f1,color:#fff
-    style Hub fill:#13161e,stroke:#6366f1,color:#f1f4f9
-    style DDojo fill:#13161e,stroke:#f59e0b,color:#f1f4f9
-    style Wazuh fill:#13161e,stroke:#22c55e,color:#f1f4f9
-    style AuthDB fill:#0a0c10,stroke:#6366f1,color:#f1f4f9
-    style DB fill:#0a0c10,stroke:#2a3145,color:#f1f4f9
+    style Hub fill:#172033,stroke:#6366f1,color:#f1f4f9
+    style DDojo fill:#172033,stroke:#f59e0b,color:#f1f4f9
+    style Wazuh fill:#172033,stroke:#22c55e,color:#f1f4f9
+    style AuthDB fill:#0f1624,stroke:#6366f1,color:#f1f4f9
+    style DB fill:#0f1624,stroke:#2d3748,color:#f1f4f9
 ```
 
 ### 1. Nginx Gateway (`gateway` · Port `80`)

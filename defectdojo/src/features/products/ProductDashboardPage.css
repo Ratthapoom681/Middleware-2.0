@@ -23,7 +23,7 @@
 .pd-section-header h2 {
   margin: 0;
   color: var(--text-main);
-  font-size: 1.08rem;
+  font-size: var(--text-lg);
   font-weight: var(--font-weight-semibold);
 }
 
@@ -36,7 +36,7 @@
   border: 1px solid var(--border-subtle);
   background: var(--bg-subtle);
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-table-sm);
   font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
@@ -55,8 +55,8 @@
 .pd-severity-card {
   position: relative;
   overflow: hidden;
-  min-height: 4rem;
-  padding: 0.65rem 0.7rem 0.65rem 0.95rem;
+  min-height: 4.25rem;
+  padding: 0.72rem 0.78rem 0.72rem 1rem;
   border: 1px solid var(--border);
   border-radius: 0.7rem;
   background: var(--bg-subtle);
@@ -85,14 +85,14 @@
 
 .pd-severity-value {
   color: var(--pd-sev-color, var(--text-main));
-  font-size: 1.3rem;
+  font-size: 1.4rem;
   line-height: 1;
   font-weight: var(--font-weight-bold);
 }
 
 .pd-severity-label {
   color: var(--text-muted);
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   font-weight: var(--font-weight-uppercase);
   text-transform: var(--text-transform-uppercase);
   letter-spacing: 0.06em;
@@ -107,8 +107,8 @@
 .pd-engagement-card {
   width: 100%;
   min-width: 0;
-  min-height: 4.5rem;
-  padding: 0.9rem 1.1rem;
+  min-height: 4.8rem;
+  padding: 1rem 1.2rem;
   border: 1px solid var(--border);
   border-radius: 0.75rem;
   background: var(--bg-glass);
@@ -143,7 +143,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text-main);
-  font-size: 0.94rem;
+  font-size: var(--text-md);
   font-weight: var(--font-weight-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -151,7 +151,7 @@
 
 .pd-engagement-main small {
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-table-sm);
   font-weight: var(--font-weight-semibold);
 }
 
@@ -216,7 +216,7 @@
   border-radius: 999px;
   background: var(--bg-subtle);
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: var(--text-label-sm);
   font-weight: var(--font-weight-semibold);
   text-align: center;
   white-space: nowrap;

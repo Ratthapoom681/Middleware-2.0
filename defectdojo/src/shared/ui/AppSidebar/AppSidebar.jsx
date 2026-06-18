@@ -19,7 +19,7 @@ const AppSidebarNavItem = ({ item }) => {
       aria-current={item.active ? 'page' : undefined}
       title={item.badge > 0 ? `${item.label}: ${item.badge} pending` : item.title || item.label}
     >
-      {Icon && <Icon size={18} className={item.iconClassName} />}
+      {Icon && <Icon size={19} className={item.iconClassName} />}
       <span>{item.label}</span>
       {item.badge > 0 && (
         <strong className="sidebar-nav-badge" aria-label={item.badgeLabel || `${item.badge} pending`}>
@@ -40,7 +40,7 @@ const AppSidebar = ({
   <aside className="app-sidebar" aria-label="Primary navigation">
     <div className="sidebar-brand">
       <span className="sidebar-brand-mark">
-        {BrandIcon && <BrandIcon size={20} />}
+        {BrandIcon && <BrandIcon size={21} />}
       </span>
       <span>
         <strong>{brandLabel}</strong>

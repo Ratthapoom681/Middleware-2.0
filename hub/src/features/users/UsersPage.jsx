@@ -34,7 +34,7 @@ const EMPTY_USER = {
   status: 'active',
 };
 
-const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50];
+const PAGE_SIZE_OPTIONS = [10, 20, 30,40, 50];
 
 const TABLE_COLUMNS = [
   { key: 'user', label: 'User', className: 'cell-name' },
@@ -160,6 +160,7 @@ export default function UsersPage({ token, currentUser, onBack }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [presenceFilter, setPresenceFilter] = useState('all');
+  const [accountFilter, setAccountFilter] = useState('all');
   const [accessFilter, setAccessFilter] = useState('all');
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
@@ -202,14 +203,7 @@ export default function UsersPage({ token, currentUser, onBack }) {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, roleFilter, presenceFilter, accessFilter, pageSize]);
-
-  const counts = useMemo(() => ({
-    total: users.length,
-    roles: countValues(users, user => normalize(user.role || 'viewer')),
-    presence: countValues(users, getPresenceStatus),
-    access: countValues(users, getAccessStatus),
-  }), [users]);
+  }, [searchTerm, roleFilter, presenceFilter, accountFilter, accessFilter, pageSize]);
 
   const filteredUsers = useMemo(() => {
     const query = normalize(searchTerm);
@@ -237,10 +231,11 @@ export default function UsersPage({ token, currentUser, onBack }) {
       if (query && !searchableText.includes(query)) return false;
       if (roleFilter !== 'all' && role !== roleFilter) return false;
       if (presenceFilter !== 'all' && presence !== presenceFilter) return false;
+      if (accountFilter !== 'all' && accountStatus !== accountFilter) return false;
       if (accessFilter !== 'all' && accessStatus !== accessFilter) return false;
       return true;
     });
-  }, [accessFilter, presenceFilter, roleFilter, searchTerm, users]);
+  }, [accessFilter, accountFilter, presenceFilter, roleFilter, searchTerm, users]);
 
   const pageCount = Math.max(1, Math.ceil(filteredUsers.length / pageSize));
 
@@ -317,22 +312,6 @@ export default function UsersPage({ token, currentUser, onBack }) {
     }
   }
 
-  const renderFilterButton = (filter, activeValue, setActiveValue, valueCounts) => {
-    const count = getCount(valueCounts, filter.value, counts.total);
-    return (
-      <SearchOptionsFilterButton
-        key={filter.value}
-        active={activeValue === filter.value}
-        count={count}
-        icon={filter.icon}
-        label={filter.label}
-        meterPercent={getMeterPercent(count, counts.total)}
-        onClick={() => setActiveValue(filter.value)}
-        tone={filter.tone}
-      />
-    );
-  };
-
   return (
     <div className="users-page">
       <div className="users-container">
@@ -383,25 +362,49 @@ export default function UsersPage({ token, currentUser, onBack }) {
                     onChange={event => setRoleFilter(event.target.value)}
                     aria-label="Role filter"
                   >
-                    <option value="all">All roles</option>
-                    <option value="admin">Admin</option>
-                    <option value="viewer">Viewer</option>
+                    {ROLE_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="users-filter-select">
+                  <span className="sr-only">Presence filter</span>
+                  <select
+                    value={presenceFilter}
+                    onChange={event => setPresenceFilter(event.target.value)}
+                    aria-label="Presence filter"
+                  >
+                    {PRESENCE_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="users-filter-select">
+                  <span className="sr-only">Account filter</span>
+                  <select
+                    value={accountFilter}
+                    onChange={event => setAccountFilter(event.target.value)}
+                    aria-label="Account filter"
+                  >
+                    {ACCOUNT_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="users-filter-select">
+                  <span className="sr-only">Access filter</span>
+                  <select
+                    value={accessFilter}
+                    onChange={event => setAccessFilter(event.target.value)}
+                    aria-label="Access filter"
+                  >
+                    {ACCESS_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                   </select>
                 </label>
                 <SearchOptionsResultCount icon={Users} value={filteredUsers.length} label="users" />
               </SearchOptionsCommandBar>
-
-              <SearchOptionsFilterGroup ariaLabel="Role filters" title="Roles" total={counts.total}>
-                {ROLE_FILTERS.map(filter => renderFilterButton(filter, roleFilter, setRoleFilter, counts.roles))}
-              </SearchOptionsFilterGroup>
-
-              <SearchOptionsFilterGroup ariaLabel="Presence filters" title="Presence" total={counts.total}>
-                {PRESENCE_FILTERS.map(filter => renderFilterButton(filter, presenceFilter, setPresenceFilter, counts.presence))}
-              </SearchOptionsFilterGroup>
-
-              <SearchOptionsFilterGroup ariaLabel="Access filters" title="Access" total={counts.total}>
-                {ACCESS_FILTERS.map(filter => renderFilterButton(filter, accessFilter, setAccessFilter, counts.access))}
-              </SearchOptionsFilterGroup>
             </SearchOptionsPanel>
           </div>
 

@@ -15,7 +15,7 @@ const Topbar = ({
     <div className="topbar-inner">
       {Icon && (
         <div className="topbar-icon" aria-hidden="true">
-          <Icon size={22} />
+          <Icon size={23} />
         </div>
       )}
 

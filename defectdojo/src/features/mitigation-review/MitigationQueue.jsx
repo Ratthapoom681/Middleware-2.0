@@ -5,7 +5,6 @@ import { DataTable, DataTableCell, DataTablePagination, DataTableRow, DataTableS
 import {
   SearchOptionsCommandBar,
   SearchOptionsPanel,
-  SearchOptionsResultCount,
   SearchOptionsSearch,
 } from '../../shared/ui/SearchOptions/SearchOptions';
 import DetailModal from './QueueModalDetails';
@@ -128,7 +127,7 @@ const MitigationQueue = ({ items, loading, fetchQueue, onActionSuccess, config =
   const [pageSize, setPageSize] = useState(25);
   const [pendingAction, setPendingAction] = useState(null);
   const [actionReason, setActionReason] = useState('');
-  const [filterPanelOpen, setFilterPanelOpen] = useState(true);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [busyKey, setBusyKey] = useState('');
 
   const redmineIssueUrl = (item) => item.issueUrl || (item.issueId ? buildUrl(config.redmineUrl, `/issues/${encodeURIComponent(item.issueId)}`) : '');
@@ -234,6 +233,9 @@ const MitigationQueue = ({ items, loading, fetchQueue, onActionSuccess, config =
         bodyId="mitigation-review-queue-filter"
         open={filterPanelOpen}
         onToggle={() => setFilterPanelOpen(open => !open)}
+        resultCount={`${sortedItems.length}`}
+        resultIcon={Search}
+        resultLabel={`item${sortedItems.length !== 1 ? 's' : ''}`}
         title="Search Options"
       >
         <SearchOptionsCommandBar>
@@ -245,11 +247,6 @@ const MitigationQueue = ({ items, loading, fetchQueue, onActionSuccess, config =
             onClear={() => updateSearchTerm('')}
             placeholder="Search issue, finding, product, CVE..."
             showClear={Boolean(searchTerm)}
-          />
-          <SearchOptionsResultCount
-            icon={Search}
-            value={`${sortedItems.length}`}
-            label={`item${sortedItems.length !== 1 ? 's' : ''}`}
           />
           <div style={{ marginLeft: 'auto' }}>
             <button

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   BellRing,
   Check,
-  Filter,
   Layers,
   Pencil,
   Plus,
@@ -25,10 +24,8 @@ import Topbar from '../../../shared/ui/Topbar/Topbar';
 import { DataTable, DataTableCell, DataTablePagination, DataTableRow, DataTableSection } from '../../../shared/ui/DataTable/DataTable';
 import {
   SearchOptionsCommandBar,
-  SearchOptionsFilterButton,
   SearchOptionsFilterGroup,
   SearchOptionsPanel,
-  SearchOptionsResultCount,
   SearchOptionsSearch,
 } from '../../../shared/ui/SearchOptions/SearchOptions';
 import './MappedAssetsPage.css';
@@ -253,7 +250,7 @@ const MappedAssetsPage = ({
   // Redesign state additions
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSeverityFilter, setSelectedSeverityFilter] = useState('ALL');
-  const [filterPanelOpen, setFilterPanelOpen] = useState(true);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [configTab, setConfigTab] = useState('manual'); // 'manual' | 'import'
@@ -347,6 +344,14 @@ const MappedAssetsPage = ({
     });
     return counts;
   }, [mappedRows]);
+  const severityFilterOptions = useMemo(() => [
+    { value: 'ALL', label: 'All', count: severityCounts.ALL },
+    ...['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'MAPPED'].map(severity => ({
+      value: severity,
+      label: severity === 'MAPPED' ? 'Mapped' : severity,
+      count: severityCounts[severity] || 0,
+    })),
+  ], [severityCounts]);
   // Dynamically filter rows based on search input & severity filter state
   const filteredRows = useMemo(() => {
     return mappedRows.filter(row => {
@@ -370,9 +375,6 @@ const MappedAssetsPage = ({
   const totalRows = filteredRows.length;
   const filterActive = Boolean(searchQuery.trim()) || selectedSeverityFilter !== 'ALL';
   const resultCountText = filterActive ? `${filteredRows.length} of ${mappedRows.length}` : `${filteredRows.length}`;
-  const getNotifyFilterPercent = (count) => (
-    mappedRows.length > 0 ? Math.max(4, Math.round((count / mappedRows.length) * 100)) : 0
-  );
   const pageCount = Math.max(1, Math.ceil(totalRows / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pageStartIndex = (currentPage - 1) * pageSize;
@@ -647,6 +649,9 @@ const MappedAssetsPage = ({
           className="notify-search-options"
           open={filterPanelOpen}
           onToggle={() => setFilterPanelOpen(open => !open)}
+          resultCount={resultCountText}
+          resultIcon={Layers}
+          resultLabel={`row${filteredRows.length !== 1 ? 's' : ''}`}
         >
           <SearchOptionsCommandBar className="notify-search-command-bar">
             <SearchOptionsSearch
@@ -664,44 +669,19 @@ const MappedAssetsPage = ({
               placeholder="Search label, domain, host IP, or port..."
               showClear={Boolean(searchQuery)}
             />
-
-            <SearchOptionsResultCount
-              icon={Layers}
-              value={resultCountText}
-              label={`row${filteredRows.length !== 1 ? 's' : ''}`}
-            />
           </SearchOptionsCommandBar>
 
-          <SearchOptionsFilterGroup ariaLabel="Filter notify assets by severity" title="Severity" total={`${mappedRows.length} total`}>
-            <SearchOptionsFilterButton
-              active={selectedSeverityFilter === 'ALL'}
-              count={severityCounts.ALL}
-              icon={Filter}
-              label="All"
-              onClick={() => {
-                setSelectedSeverityFilter('ALL');
-                setPage(1);
-              }}
-              tone="all"
-            />
-            {['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'MAPPED'].map((sev) => {
-              const count = severityCounts[sev];
-              return (
-                <SearchOptionsFilterButton
-                  key={sev}
-                  active={selectedSeverityFilter === sev}
-                  count={count}
-                  label={sev === 'MAPPED' ? 'Mapped' : sev}
-                  meterPercent={getNotifyFilterPercent(count)}
-                  onClick={() => {
-                    setSelectedSeverityFilter(sev);
-                    setPage(1);
-                  }}
-                  tone={sev.toLowerCase()}
-                />
-              );
-            })}
-          </SearchOptionsFilterGroup>
+          <SearchOptionsFilterGroup
+            ariaLabel="Filter notify assets by severity"
+            title="Severity"
+            total={`${mappedRows.length} total`}
+            value={selectedSeverityFilter}
+            options={severityFilterOptions}
+            onChange={(nextFilter) => {
+              setSelectedSeverityFilter(nextFilter);
+              setPage(1);
+            }}
+          />
         </SearchOptionsPanel>
       )}
 

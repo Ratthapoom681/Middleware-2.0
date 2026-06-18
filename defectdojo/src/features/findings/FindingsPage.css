@@ -66,21 +66,21 @@
 .findings-empty h2 {
   margin: 0 0 0.4rem;
   color: var(--text-main);
-  font-size: 1.1rem;
+  font-size: var(--text-lg);
   font-weight: var(--font-weight-semibold);
 }
 
 .findings-empty p {
   margin: 0 auto;
   max-width: 28rem;
-  font-size: 0.86rem;
+  font-size: var(--text-sm);
   line-height: 1.55;
 }
 
 /* DataTable cell content */
 .data-table-cell.cell-id {
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: var(--text-table-sm);
   font-weight: var(--font-weight-medium);
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
@@ -90,14 +90,14 @@
 }
 
 .data-table-cell.cell-id.has-id {
-  color: var(--primary);
+  color: var(--tbl-accent);
   opacity: 0.85;
 }
 
 /* Company Cell */
 .data-table-cell.cell-company {
   color: var(--text-main);
-  font-size: 0.78rem;
+  font-size: var(--text-table-sm);
   font-weight: var(--font-weight-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -112,12 +112,12 @@
 
 .data-table-cell.cell-severity .severity-badge {
   position: relative;
-  min-width: 5.75rem;
+  min-width: 6.15rem;
   justify-content: flex-start;
   gap: 0.35rem;
   padding-left: 0.55rem;
-  border-radius: 0.35rem;
-  font-size: 0.68rem;
+  border-radius: 20px;
+  font-size: var(--text-label-sm);
 }
 
 .data-table-cell.cell-severity .severity-badge::before {
@@ -133,6 +133,7 @@
   background: var(--critical-bg);
   color: var(--critical-text);
   border-color: var(--critical-border);
+  box-shadow: 0 0 10px rgba(255, 46, 99, 0.15);
 }
 
 .data-table-cell.cell-severity .badge-high {
@@ -153,6 +154,12 @@
   border-color: var(--low-border);
 }
 
+.data-table-cell.cell-severity .badge-info {
+  background: var(--info-bg);
+  color: var(--info-text);
+  border-color: var(--info-border);
+}
+
 /* Name Cell */
 .data-table-cell.cell-name {
   display: flex;
@@ -163,7 +170,7 @@
 
 .cell-name-title {
   color: var(--text-main);
-  font-size: 0.88rem;
+  font-size: var(--text-base);
   font-weight: var(--font-weight-semibold);
   line-height: 1.3;
   overflow: hidden;
@@ -173,7 +180,7 @@
 
 .cell-name-subtitle {
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: var(--text-label-sm);
   font-weight: var(--font-weight-medium);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -186,7 +193,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   font-weight: var(--font-weight-semibold);
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
@@ -211,10 +218,10 @@
 .cve-cwe-tag {
   display: inline-flex;
   align-items: center;
-  padding: 0.1rem 0.38rem;
-  border-radius: 0.3rem;
-  font-size: 0.65rem;
-  font-weight: var(--font-weight-uppercase);
+  padding: 0.15rem 0.45rem;
+  border-radius: 5px;
+  font-size: 0.7rem;
+  font-weight: 700;
   text-transform: var(--text-transform-uppercase);
   letter-spacing: 0.03em;
   white-space: nowrap;
@@ -235,19 +242,19 @@
 
 .cve-cwe-separator {
   color: var(--text-muted);
-  font-size: 0.6rem;
+  font-size: 0.66rem;
   opacity: 0.5;
 }
 
 .cell-empty {
   color: var(--text-muted);
   opacity: 0.4;
-  font-size: 0.78rem;
+  font-size: var(--text-table-sm);
 }
 
 /* Date Cell */
 .data-table-cell.cell-date {
-  font-size: 0.78rem;
+  font-size: var(--text-table-sm);
   font-weight: var(--font-weight-medium);
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
@@ -267,52 +274,80 @@
 
 .data-table-cell.cell-status .redmine-sync-badge,
 .data-table-cell.cell-status .status-pill {
-  min-width: 0;
-  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  min-height: 1.8rem;
   width: 100%;
+  box-sizing: border-box;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  justify-content: center;
 }
 
 .data-table-cell.cell-status .redmine-action {
   flex: 0 0 auto;
-  width: 2rem;
-  height: 2rem;
+  width: var(--control-height-xs);
+  height: var(--control-height-xs);
 }
 
-/* Status pill for non-redmine fallback */
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 1.35rem;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.66rem;
-  line-height: 1;
-  font-weight: var(--font-weight-uppercase);
-  text-transform: var(--text-transform-uppercase);
-  letter-spacing: 0.05em;
-  white-space: nowrap;
+/* Status: New / Active (Blue) */
+.data-table-cell.cell-status .status-new,
+.data-table-cell.cell-status .status-active {
+  background: var(--workflow-new-bg) !important;
+  color: var(--workflow-new-text) !important;
+  border: 1px solid var(--workflow-new-border) !important;
+  box-shadow: 0 0 10px rgba(47, 125, 222, 0.15) !important;
 }
 
-.status-pill.status-active {
-  color: var(--critical-text);
-  background: var(--critical-bg);
-  border: 1px solid var(--critical-border);
+/* Status: In Progress (Yellow) */
+.data-table-cell.cell-status .status-in-progress,
+.data-table-cell.cell-status .status-inprogress {
+  background: var(--workflow-progress-bg) !important;
+  color: var(--workflow-progress-text) !important;
+  border: 1px solid var(--workflow-progress-border) !important;
+  box-shadow: 0 0 10px rgba(226, 163, 59, 0.15) !important;
 }
 
-.status-pill.status-mitigated {
-  color: var(--success-text);
-  background: var(--success-bg);
-  border: 1px solid var(--success-border);
+/* Status: Resolved / Mitigated (Green) */
+.data-table-cell.cell-status .status-resolve,
+.data-table-cell.cell-status .status-resolved,
+.data-table-cell.cell-status .status-mitigated {
+  background: var(--workflow-resolved-bg) !important;
+  color: var(--workflow-resolved-text) !important;
+  border: 1px solid var(--workflow-resolved-border) !important;
+  box-shadow: 0 0 10px rgba(63, 174, 118, 0.15) !important;
 }
 
-.status-pill.status-mixed {
-  color: var(--warning-text);
-  background: var(--warning-bg);
-  border: 1px solid var(--warning-border);
+/* Status: Feedback (Pink) */
+.data-table-cell.cell-status .status-feedback {
+  background: var(--workflow-feedback-bg) !important;
+  color: var(--workflow-feedback-text) !important;
+  border: 1px solid var(--workflow-feedback-border) !important;
+  box-shadow: 0 0 10px rgba(226, 68, 127, 0.15) !important;
+}
+
+/* Status: Closed (Grey) */
+.data-table-cell.cell-status .status-closed {
+  background: var(--workflow-closed-bg) !important;
+  color: var(--workflow-closed-text) !important;
+  border: 1px solid var(--workflow-closed-border) !important;
+  box-shadow: none !important;
+}
+
+/* Status: Mixed (Orange) */
+.data-table-cell.cell-status .status-mixed {
+  background: var(--warning-bg) !important;
+  color: var(--warning-text) !important;
+  border: 1px solid var(--warning-border) !important;
+  box-shadow: 0 0 10px rgba(226, 163, 59, 0.15) !important;
 }
 
 /* ============================================================
@@ -327,8 +362,8 @@
 
 @media (max-width: 1080px) {
   .findings-data-table {
-    --data-table-min-width: 1120px !important;
-    --data-table-grid: 84px 148px 100px minmax(220px, 1.8fr) 0fr 108px 144px 112px 164px !important;
+    --data-table-min-width: 1180px !important;
+    --data-table-grid: 88px 156px 108px minmax(240px, 1.8fr) 0fr 116px 152px 120px 176px !important;
   }
 
   /* Hide Finding column on medium screens */

@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Filter, History, Layers } from 'lucide-react';
+import { History, Layers } from 'lucide-react';
 import { apiFetch } from '../../shared/api/api';
 import { PageMain } from '../../shared/ui/Page';
 import Topbar from '../../shared/ui/Topbar/Topbar';
 import { DataTable, DataTableCell, DataTablePagination, DataTableRow, DataTableSection } from '../../shared/ui/DataTable/DataTable';
 import {
   SearchOptionsCommandBar,
-  SearchOptionsFilterButton,
   SearchOptionsFilterGroup,
   SearchOptionsPanel,
-  SearchOptionsResultCount,
   SearchOptionsSearch,
 } from '../../shared/ui/SearchOptions/SearchOptions';
 import ModalPopupDetails from './ModalPopupDetails';
@@ -145,7 +143,7 @@ const SyncHistory = () => {
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [filterPanelOpen, setFilterPanelOpen] = useState(true);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [selectedFindingRow, setSelectedFindingRow] = useState(null);
@@ -219,6 +217,11 @@ const SyncHistory = () => {
     });
     return counts;
   }, [visibleRowsWithFindingDelta]);
+  const statusFilterOptions = useMemo(() => STATUS_FILTERS.map(filter => ({
+    value: filter.id,
+    label: filter.label,
+    count: statusCounts[filter.id] || 0,
+  })), [statusCounts]);
 
   const filteredRows = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -231,9 +234,6 @@ const SyncHistory = () => {
 
   const filterActive = Boolean(searchQuery.trim()) || statusFilter !== 'all';
   const resultCountText = filterActive ? `${filteredRows.length} of ${visibleRowsWithFindingDelta.length}` : `${filteredRows.length}`;
-  const getFilterPercent = (count) => (
-    visibleRowsWithFindingDelta.length > 0 ? Math.max(4, Math.round((count / visibleRowsWithFindingDelta.length) * 100)) : 0
-  );
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pageStartIndex = (currentPage - 1) * pageSize;
@@ -260,6 +260,9 @@ const SyncHistory = () => {
           bodyId="sync-history-filter-body"
           open={filterPanelOpen}
           onToggle={() => setFilterPanelOpen(open => !open)}
+          resultCount={resultCountText}
+          resultIcon={Layers}
+          resultLabel={`row${filteredRows.length !== 1 ? 's' : ''}`}
         >
           <SearchOptionsCommandBar className="sync-history-command-bar">
             <SearchOptionsSearch
@@ -278,12 +281,6 @@ const SyncHistory = () => {
               showClear={Boolean(searchQuery)}
             />
 
-            <SearchOptionsResultCount
-              icon={Layers}
-              value={resultCountText}
-              label={`row${filteredRows.length !== 1 ? 's' : ''}`}
-            />
-
             {hiddenIncompleteCount > 0 && (
               <span className="sync-history-hidden-warning" role="status">
                 {hiddenIncompleteCount} incomplete history row{hiddenIncompleteCount === 1 ? '' : 's'} hidden
@@ -291,23 +288,17 @@ const SyncHistory = () => {
             )}
           </SearchOptionsCommandBar>
 
-          <SearchOptionsFilterGroup ariaLabel="Filter sync history by status" title="Status" total={`${visibleRowsWithFindingDelta.length} total`}>
-            {STATUS_FILTERS.map(filter => (
-              <SearchOptionsFilterButton
-                key={filter.id}
-                active={statusFilter === filter.id}
-                count={statusCounts[filter.id] || 0}
-                icon={filter.id === 'all' ? Filter : undefined}
-                label={filter.label}
-                meterPercent={getFilterPercent(statusCounts[filter.id] || 0)}
-                onClick={() => {
-                  setStatusFilter(filter.id);
-                  setPage(1);
-                }}
-                tone={filter.tone}
-              />
-            ))}
-          </SearchOptionsFilterGroup>
+          <SearchOptionsFilterGroup
+            ariaLabel="Filter sync history by status"
+            title="Status"
+            total={`${visibleRowsWithFindingDelta.length} total`}
+            value={statusFilter}
+            options={statusFilterOptions}
+            onChange={(nextFilter) => {
+              setStatusFilter(nextFilter);
+              setPage(1);
+            }}
+          />
         </SearchOptionsPanel>
 
         {error && (
