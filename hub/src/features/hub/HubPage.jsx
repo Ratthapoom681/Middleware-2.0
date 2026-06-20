@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ShieldAlert, Radar, Users, LogOut, Shield } from 'lucide-react';
+import { BookOpen, ShieldAlert, Radar, Users, LogOut, Shield } from 'lucide-react';
 import './HubPage.css';
 
 const APPS = [
@@ -21,7 +21,7 @@ const APPS = [
   },
 ];
 
-export default function HubPage({ user, onLogout }) {
+export default function HubPage({ user, onOpenDocs, onLogout }) {
   const isAdmin = user?.role === 'admin';
   const [appStatuses, setAppStatuses] = useState({
     defectdojo: 'healthy',
@@ -60,6 +60,10 @@ export default function HubPage({ user, onLogout }) {
           <span className="brand-text">Internal Security Middleware Hub</span>
         </div>
         <div className="topbar-user">
+          <button className="btn-docs" onClick={onOpenDocs} title="Documentation">
+            <BookOpen size={16} />
+            <span>Documentation</span>
+          </button>
           <span className="user-name">{user?.username}</span>
           <span className={`role-badge ${user?.role}`}>{user?.role}</span>
           <button className="btn-logout" onClick={onLogout} title="Sign Out">

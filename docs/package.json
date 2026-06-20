@@ -1,12 +1,12 @@
 {
-  "name": "middleware-hub",
+  "name": "docs",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "echo \"No tests specified for hub\" && exit 0",
+    "test": "node --test backend/docs-service.test.cjs src/features/docs/docsUtils.test.js",
     "start": "node backend/server.cjs",
     "preview": "vite preview"
   },
@@ -14,9 +14,11 @@
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "lucide-react": "^1.14.0",
-    "pg": "^8.20.0",
+    "mermaid": "^11.15.0",
     "react": "^19.2.5",
-    "react-dom": "^19.2.5"
+    "react-dom": "^19.2.5",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^6.0.1",

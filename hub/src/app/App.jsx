@@ -60,9 +60,20 @@ export default function App() {
   }
 
   /* Authenticated → route by hash */
+  if (hash.startsWith('#docs')) {
+    window.location.href = `/docs/${hash}`;
+    return null;
+  }
+
   if (hash === '#users' && user.role === 'admin') {
     return <UsersPage token={token} currentUser={user} onBack={() => { window.location.hash = ''; }} />;
   }
 
-  return <HubPage user={user} onLogout={handleLogout} />;
+  return (
+    <HubPage
+      user={user}
+      onOpenDocs={() => { window.location.href = '/docs/'; }}
+      onLogout={handleLogout}
+    />
+  );
 }

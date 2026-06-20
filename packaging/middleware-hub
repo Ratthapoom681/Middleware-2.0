@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+INSTALL_DIR="${MIDDLEWARE_HUB_HOME:-/opt/middleware-hub}"
+COMPOSE_FILE="${INSTALL_DIR}/compose.yaml"
+ENV_FILE="${INSTALL_DIR}/.env"
+INSTALLER="${INSTALL_DIR}/middleware-install.sh"
+
+compose() {
+  docker compose --project-directory "${INSTALL_DIR}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "$@"
+}
+
+require_installation() {
+  if [[ ! -f "${COMPOSE_FILE}" || ! -f "${ENV_FILE}" ]]; then
+    echo "Middleware Hub is not installed in ${INSTALL_DIR}." >&2
+    exit 1
+  fi
+}
+
+show_help() {
+  cat <<'EOF'
+Usage: middleware-hub <command>
+
+Commands:
+  status              Show container status
+  logs [service]      Follow logs for all containers or one service
+  start               Start the stack
+  stop                Stop the stack
+  restart             Restart the stack
+  backup              Dump both PostgreSQL databases
+  upgrade [version]   Upgrade to the latest or specified release
+  uninstall           Remove containers but preserve data
+  uninstall --purge   Remove containers and all application data
+  version             Show the installed version
+EOF
+}
+
+command_name="${1:-help}"
+shift || true
+
+case "${command_name}" in
+  status)
+    require_installation
+    compose ps
+    ;;
+  logs)
+    require_installation
+    compose logs --follow --tail=200 "$@"
+    ;;
+  start)
+    require_installation
+    compose up -d
+    ;;
+  stop)
+    require_installation
+    compose stop
+    ;;
+  restart)
+    require_installation
+    compose restart
+    ;;
+  backup)
+    require_installation
+    backup_dir="${INSTALL_DIR}/backups/$(date -u +%Y%m%dT%H%M%SZ)"
+    install -d -m 0700 "${backup_dir}"
+    compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "${backup_dir}/application.sql"
+    compose exec -T auth-db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "${backup_dir}/authentication.sql"
+    echo "Backup created at ${backup_dir}"
+    ;;
+  upgrade)
+    require_installation
+    version="${1:-latest}"
+    exec bash "${INSTALLER}" --all-in-one --upgrade --version "${version}"
+    ;;
+  uninstall)
+    require_installation
+    if [[ "${1:-}" == "--purge" ]]; then
+      read -r -p "Delete all Middleware Hub containers and data volumes? [y/N] " answer
+      [[ "${answer}" =~ ^[Yy]$ ]] || exit 0
+      compose down --volumes --remove-orphans
+      echo "Middleware Hub containers and data were removed."
+    else
+      compose down --remove-orphans
+      echo "Middleware Hub containers were removed. Persistent data was preserved."
+    fi
+    ;;
+  version)
+    require_installation
+    cat "${INSTALL_DIR}/VERSION"
+    ;;
+  help|-h|--help)
+    show_help
+    ;;
+  *)
+    echo "Unknown command: ${command_name}" >&2
+    show_help >&2
+    exit 2
+    ;;
+esac

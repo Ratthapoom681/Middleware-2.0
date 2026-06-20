@@ -70,6 +70,7 @@
   border-color: rgba(156, 168, 188, 0.2);
 }
 
+.btn-docs,
 .btn-logout {
   display: flex;
   align-items: center;
@@ -85,12 +86,14 @@
   transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
 }
 
+.btn-docs:hover,
 .btn-logout:hover {
   background-color: var(--bg-card);
   border-color: var(--border-strong);
   color: var(--text-main);
 }
 
+.btn-docs:focus-visible,
 .btn-logout:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 1px;
@@ -269,5 +272,19 @@
   
   .hub-content {
     padding: 2rem 1rem;
+  }
+
+  .btn-docs span,
+  .btn-logout span,
+  .topbar-user .user-name {
+    display: none;
+  }
+
+  .btn-docs,
+  .btn-logout {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    justify-content: center;
   }
 }

@@ -8,8 +8,8 @@ node_modules/
 dist/
 hub/node_modules/
 hub/dist/
-defectdojo/node_modules/
-defectdojo/dist/
+Vulnerability/node_modules/
+Vulnerability/dist/
 wazuh/node_modules/
 wazuh/dist/
 
