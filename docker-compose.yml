@@ -30,8 +30,6 @@ services:
       LEGACY_DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:-change-me}@db:5432/${PG_DB:-defectdojo_viewer}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-me-in-production}
       AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:-dev-internal-auth-service-token}
-      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
-      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-admin}
     depends_on:
       auth-db:
         condition: service_healthy

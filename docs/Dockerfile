@@ -22,7 +22,6 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=build /app/backend ./backend
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/docs ./docs
 
 RUN mkdir -p /app/data && chown -R node:node /app
 USER node

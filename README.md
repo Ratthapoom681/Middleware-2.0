@@ -73,45 +73,6 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
 
 ## Getting Started
 
-### Install a release from GitHub
-
-For an Ubuntu/Debian/RHEL-compatible Linux server with Docker Engine and Docker Compose v2 already installed, download the installer from the latest GitHub Release:
-
-```bash
-curl -fsSLO https://github.com/Ratthapoom681/Middleware-2.0/releases/latest/download/middleware-install.sh && sudo bash ./middleware-install.sh -a
-```
-
-The installer downloads and verifies the release bundle, generates unique database and application secrets, pulls the published images from GitHub Container Registry, and starts the stack. It installs into `/opt/middleware-hub` and writes the one-time administrator credential to `/opt/middleware-hub/initial-credentials.txt` with root-only permissions.
-
-Use a different host port or a specific release when needed:
-
-```bash
-sudo bash ./middleware-install.sh -a --port 8080 --version 1.0.0
-```
-
-After installation, use the management command:
-
-```bash
-sudo middleware-hub status
-sudo middleware-hub logs
-sudo middleware-hub backup
-sudo middleware-hub upgrade
-```
-
-> [!IMPORTANT]
-> The GitHub repository and its five `ghcr.io/ratthapoom681/middleware-2.0-*` container packages must be public for installation without a GitHub login.
-
-### Create a release
-
-Push a semantic version tag to build multi-architecture images and publish the installer automatically:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-The release workflow publishes the images to GHCR and attaches `middleware-install.sh`, `middleware-hub-bundle.tar.gz`, and `SHA256SUMS` to the corresponding GitHub Release.
-
 ### Prerequisites
 - Docker and Docker Compose installed.
 
@@ -195,8 +156,5 @@ User administration is centralized:
 
 - `/gateway` — Nginx gateway configuration file.
 - `/hub` — Express + React code for the authentication and portal switcher app.
-- `/Vulnerability` — Express + React code for vulnerability management.
+- `/defectdojo` — Express + React code for vulnerability management.
 - `/wazuh` — Static React code for the SIEM mockup.
-- `/docs` — Authenticated product and operations documentation.
-- `/deploy` — Production Compose bundle consumed by the installer.
-- `/packaging` — GitHub Release installer and management command.

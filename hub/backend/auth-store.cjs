@@ -116,15 +116,9 @@ const readUsersFromDisk = (usersPath) => {
 };
 
 const createDefaultAdminUser = (hashPassword) => {
-  const configuredPassword = normalizeText(process.env.BOOTSTRAP_ADMIN_PASSWORD);
-  const password = configuredPassword || (process.env.NODE_ENV === 'production' ? '' : 'admin');
-  if (!password) {
-    throw new Error('BOOTSTRAP_ADMIN_PASSWORD is required when initializing production auth storage');
-  }
-  const username = normalizeText(process.env.BOOTSTRAP_ADMIN_USERNAME) || 'admin';
-  const { salt, hash, algorithm } = hashPassword(password);
+  const { salt, hash, algorithm } = hashPassword('admin');
   return {
-    username,
+    username: 'admin',
     salt,
     hash,
     passwordAlgorithm: algorithm,
@@ -447,7 +441,7 @@ function createAuthStore({ dataDir, hashPassword }) {
     if (users.length === 0) {
       users = [createDefaultAdminUser(hashPassword)];
       fs.writeFileSync(usersPath, JSON.stringify(users, null, 2), 'utf8');
-      console.log('Hub Auth: Created bootstrap administrator');
+      console.log('Hub Auth: Created default admin user (password: admin)');
     }
   };
 
