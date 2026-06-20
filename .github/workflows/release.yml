@@ -56,6 +56,11 @@ jobs:
           tags: |
             ghcr.io/${{ steps.release.outputs.owner }}/middleware-2.0-${{ matrix.image }}:${{ steps.release.outputs.version }}
             ghcr.io/${{ steps.release.outputs.owner }}/middleware-2.0-${{ matrix.image }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+          provenance: mode=max
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
