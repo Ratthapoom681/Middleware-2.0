@@ -35,7 +35,7 @@ defectdojo -------------> db (findings, config, sync and review state)
 wazuh ------------------> static mock data only
 ```
 
-The Compose service is still named `defectdojo`, but its build context is the `Vulnerability/` directory.
+The Compose service is still named `defectdojo`, but its build context is the `vulnerability-service/` directory.
 
 Public URLs through the gateway are:
 
@@ -50,17 +50,17 @@ Public URLs through the gateway are:
 ## 3. Repository Layout
 
 ```text
-gateway/                 Nginx gateway and path routing
-hub/                     Hub React frontend and Express auth/docs backend
-Vulnerability/           DefectDojo Viewer React frontend and Express backend
-wazuh/                   Static React Wazuh mockup and its Nginx image
-docs/                    Markdown shown by the Hub documentation reader
+gateway-service/         Nginx gateway and path routing
+hub-service/             Hub React frontend and Express auth backend
+vulnerability-service/   DefectDojo Viewer React frontend and Express backend
+wazuh-service/           Static React Wazuh mockup and its Nginx image
+docs-service/            Documentation reader and Markdown content
 docker-compose.yml       Integrated six-service deployment
 .env.example             Gateway, database, JWT, and service-token settings
 README.md                Operator-oriented repository overview
 ```
 
-There is no root `package.json`. Run npm commands with `hub`, `Vulnerability`, or `wazuh` as the package prefix.
+There is no root `package.json`. Run npm commands with `hub-service`, `vulnerability-service`, `wazuh-service`, or `docs-service` as the package prefix.
 
 ## 4. Technology Stack
 
@@ -87,7 +87,7 @@ DefectDojo Viewer:
 
 Wazuh Viewer:
 
-- React frontend using fixture data under `wazuh/src/mock/`.
+- React frontend using fixture data under `wazuh-service/src/mock/`.
 - Production assets served by Nginx; it has no backend or database.
 
 ## 5. Setup and Common Commands
@@ -116,14 +116,14 @@ docker compose up -d --build wazuh
 ### Package checks
 
 ```powershell
-npm --prefix hub run build
-npm --prefix hub test
+npm --prefix hub-service run build
+npm --prefix hub-service test
 
-npm --prefix Vulnerability run build
-npm --prefix Vulnerability test
-npm --prefix Vulnerability run lint
+npm --prefix vulnerability-service run build
+npm --prefix vulnerability-service test
+npm --prefix vulnerability-service run lint
 
-npm --prefix wazuh run build
+npm --prefix wazuh-service run build
 ```
 
 The Hub and DefectDojo Viewer also expose `npm run dev`, `npm run start`, and related package scripts. For complete login, shared-origin navigation, database wiring, and gateway path behavior, use Docker Compose. The current Hub Vite development proxy sends `/api` to `localhost:3001`, so it is not by itself an equivalent replacement for the integrated gateway/auth runtime.
@@ -151,7 +151,7 @@ Important Hub runtime variables:
 - `LEGACY_DATABASE_URL`: optional source for first-start import from `defectdojo_viewer_users`.
 - `DATA_DIR`: Hub file-storage directory when PostgreSQL is not configured.
 - `CLIENT_DIST_DIR`: built Hub frontend directory.
-- `DOCS_DIR`: Markdown documentation directory; Compose mounts `docs/` at `/app/docs` read-only.
+- `DOCS_DIR`: Markdown documentation directory; Compose mounts `docs-service/docs/` at `/app/docs` read-only.
 - `JWT_ISSUER`: defaults to `middleware-hub`.
 
 Important DefectDojo runtime variables:
@@ -159,8 +159,8 @@ Important DefectDojo runtime variables:
 - `PORT`: defaults to `3001`.
 - `DATABASE_URL` or PostgreSQL `PG*` variables: enable PostgreSQL persistence.
 - `PGSSLMODE`: enables PostgreSQL SSL; `no-verify` disables certificate verification.
-- `DATA_DIR`: JSON fallback directory; defaults to `Vulnerability/` locally and `/app/data` in Compose.
-- `CLIENT_DIST_DIR`: built frontend directory; defaults to `Vulnerability/dist`.
+- `DATA_DIR`: JSON fallback directory; defaults to `vulnerability-service/` locally and `/app/data` in Compose.
+- `CLIENT_DIST_DIR`: built frontend directory; defaults to `vulnerability-service/dist`.
 - `AUTH_INTROSPECTION_URL`: Hub session validation endpoint.
 - `AUTH_REQUIRED_APP`: required app membership, `defectdojo` in Compose.
 - `ENABLE_LEGACY_LOCAL_AUTH`: disabled in Compose; enable only as a temporary rollback path.
@@ -184,7 +184,7 @@ Hub is the identity owner:
 The roles are `admin` and `viewer`:
 
 - Hub user management and technical documentation require `admin`.
-- DefectDojo routes declare admin-only pages in `Vulnerability/src/app/routes.js`, and mutating/sensitive APIs use backend `requireAdmin` middleware.
+- DefectDojo routes declare admin-only pages in `vulnerability-service/src/app/routes.js`, and mutating/sensitive APIs use backend `requireAdmin` middleware.
 - A viewer's `products` claim limits the findings returned by the backend. Admins are unrestricted.
 
 If auth storage contains no users and no legacy users can be imported, Hub creates `admin` / `admin`. Change that password immediately outside local development.
@@ -194,7 +194,7 @@ DefectDojo's own `/api/login` and local user APIs return `410 Gone` unless `ENAB
 ## 8. Hub Architecture
 
 ```text
-hub/
+hub-service/
   backend/
     server.cjs           Auth API, JWTs, sessions, users, health, static serving
     auth-store.cjs       PostgreSQL/file auth adapter and legacy import
@@ -214,14 +214,14 @@ Hub hash routes are intentionally small:
 - `#users`: user administration for admins.
 - `#docs`: documentation reader. The technical documents are hidden from viewers by the backend, not only by the UI.
 
-`hub/backend/docs-service.cjs` has the allowlist for documents exposed in the reader. At present it serves `user-guide.md` to all authenticated users and also serves `project-guide.md` and `00-overview.md` to admins.
+`docs-service/backend/docs-service.cjs` has the allowlist for documents exposed in the reader. At present it serves the user guides to all authenticated users and also serves `project-guide.md` to admins.
 
 ## 9. DefectDojo Viewer Architecture
 
 ### Frontend
 
 ```text
-Vulnerability/src/
+vulnerability-service/src/
   app/                   App composition, shell, and hash route resolver
   domain/findings/       Finding normalization and compaction logic
   domain/redmine/        Redmine ticket formatting
@@ -239,7 +239,7 @@ Use `apiFetch` for DefectDojo calls and `authFetch` for Hub-owned user calls. A 
 ### Backend
 
 ```text
-Vulnerability/backend/
+vulnerability-service/backend/
   server.cjs             Bootstrap, storage loading, and sync orchestration
   routes/                Auth, config, findings, Redmine, sync, mitigation, system
   data/database.cjs      PostgreSQL adapter and automatic migrations
@@ -326,10 +326,10 @@ Do not add Hub identity writes to the DefectDojo database or DefectDojo workflow
 
 - Keep feature-specific CSS next to the owning component.
 - Use shared page, table, search, sidebar, and topbar components instead of rebuilding common controls.
-- In DefectDojo Viewer, use tokens from `Vulnerability/src/styles/theme.css` for colors and status tones.
-- Keep route IDs and permission metadata in `Vulnerability/src/app/routes.js`.
+- In DefectDojo Viewer, use tokens from `vulnerability-service/src/styles/theme.css` for colors and status tones.
+- Keep route IDs and permission metadata in `vulnerability-service/src/app/routes.js`.
 - Keep the interfaces dense and scan-friendly; this is operational software, not a marketing site.
-- Wazuh data under `wazuh/src/mock/` is demonstrative and should not be described as live SIEM ingestion.
+- Wazuh data under `wazuh-service/src/mock/` is demonstrative and should not be described as live SIEM ingestion.
 
 ## 14. Testing and Verification
 
@@ -341,14 +341,14 @@ Current automated coverage is package-specific:
 
 For a documentation-only change, run at least the Hub tests because the Hub is the delivery path for these Markdown files. For code changes, run the build and tests for every touched package and DefectDojo lint when that package changes.
 
-`Vulnerability/smoke-test.cjs` exercises live APIs and expects running Hub and DefectDojo services. Its defaults target the services directly. Through the gateway, use:
+`vulnerability-service/smoke-test.cjs` exercises live APIs and expects running Hub and DefectDojo services. Its defaults target the services directly. Through the gateway, use:
 
 ```powershell
 $env:SMOKE_API_BASE = 'http://localhost:8080'
 $env:SMOKE_API_PREFIX = '/defectdojo/api'
 $env:SMOKE_AUTH_BASE = 'http://localhost:8080'
 $env:SMOKE_AUTH_PREFIX = '/api'
-node Vulnerability/smoke-test.cjs
+node vulnerability-service/smoke-test.cjs
 ```
 
 The smoke test logs in and exercises operational endpoints, so use it only against a disposable or intentionally selected environment.
@@ -357,7 +357,7 @@ The smoke test logs in and exercises operational endpoints, so use it only again
 
 For gateway or deployment changes:
 
-1. Update `docker-compose.yml`, `gateway/nginx.conf`, and `.env.example` together when their contract changes.
+1. Update `docker-compose.yml`, `gateway-service/nginx.conf`, and `.env.example` together when their contract changes.
 2. Preserve the same-origin paths used by the frontend API defaults.
 3. Validate with `docker compose config`, rebuild affected images, and check all three public health URLs.
 
@@ -370,23 +370,23 @@ For Hub/auth changes:
 
 For DefectDojo frontend changes:
 
-1. Work in the owning folder under `Vulnerability/src/features/`.
+1. Work in the owning folder under `vulnerability-service/src/features/`.
 2. Reuse `shared/ui`, `shared/api`, and domain helpers.
 3. Keep hash routing and admin metadata centralized.
 4. Run targeted lint while iterating, then the package build and tests.
 
 For DefectDojo backend or database changes:
 
-1. Add routes to the appropriate module in `Vulnerability/backend/routes/`.
+1. Add routes to the appropriate module in `vulnerability-service/backend/routes/`.
 2. Put integration calls, business rules, and persistence in their existing layers.
-3. Add an ordered migration under `Vulnerability/backend/migrations/` for schema changes.
+3. Add an ordered migration under `vulnerability-service/backend/migrations/` for schema changes.
 4. Preserve JSON fallback only where the feature already supports it.
 5. Test PostgreSQL behavior and add focused unit coverage for compaction, ticket identity, sync history, or mitigation decisions.
 
 For documentation changes:
 
-1. Edit the source Markdown in `docs/`.
-2. If adding or removing a document, update the allowlist in `hub/backend/docs-service.cjs`.
+1. Edit the source Markdown in `docs-service/docs/`.
+2. If adding or removing a document, update the allowlist in `docs-service/backend/docs-service.cjs`.
 3. Verify role visibility, headings, links, tables, code fences, and Mermaid rendering in the Hub reader.
 
 ## 16. Release Checklist
@@ -408,7 +408,7 @@ For documentation changes:
 
 ## 17. Current Maintenance Notes
 
-- `Vulnerability/backend/server.cjs` still owns substantial sync and Redmine orchestration. Prefer extracting bounded services during related backend work.
-- `Vulnerability/src/app/App.jsx` coordinates a large amount of cross-feature state. Keep new state local unless it truly affects routing, authentication, the global shell, or shared sync state.
-- The source folder name `Vulnerability/`, Compose service name `defectdojo`, and public path `/defectdojo/` are intentionally different; check all three layers when moving files or changing routes.
+- `vulnerability-service/backend/server.cjs` still owns substantial sync and Redmine orchestration. Prefer extracting bounded services during related backend work.
+- `vulnerability-service/src/app/App.jsx` coordinates a large amount of cross-feature state. Keep new state local unless it truly affects routing, authentication, the global shell, or shared sync state.
+- The source folder name `vulnerability-service/`, Compose service name `defectdojo`, and public path `/defectdojo/` are intentionally different; check all three layers when moving files or changing routes.
 - The Hub documentation reader serves these Markdown files directly. Documentation accuracy is therefore a user-visible application behavior, not only a repository concern.

@@ -6,12 +6,12 @@ npm-debug.log*
 # Dependencies and Builds
 node_modules/
 dist/
-hub/node_modules/
-hub/dist/
-Vulnerability/node_modules/
-Vulnerability/dist/
-wazuh/node_modules/
-wazuh/dist/
+hub-service/node_modules/
+hub-service/dist/
+vulnerability-service/node_modules/
+vulnerability-service/dist/
+wazuh-service/node_modules/
+wazuh-service/dist/
 
 # Environment files
 .env

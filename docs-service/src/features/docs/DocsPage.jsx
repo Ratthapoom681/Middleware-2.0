@@ -30,8 +30,7 @@ import {
 import './DocsPage.css';
 
 const DOC_FILE_IDS = {
-  'user-guide/prerequisites.md': 'prerequisites-guide',
-  'prerequisites.md': 'prerequisites-guide',
+  'quick-start.md': 'quick-start',
   'user-guide/hub.md': 'hub-guide',
   'hub.md': 'hub-guide',
   'user-guide/vulnerability.md': 'vulnerability-guide',
@@ -238,7 +237,7 @@ export default function DocsPage({ token, user, routeHash, onBack, onLogout, onU
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [openGroups, setOpenGroups] = useState({ 'user-guide': true });
+  const [openGroups, setOpenGroups] = useState({ 'getting-started': true, 'user-guide': true });
   const [retryKey, setRetryKey] = useState(0);
   const route = useMemo(() => parseDocsRoute(routeHash), [routeHash]);
 

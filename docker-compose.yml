@@ -4,7 +4,7 @@ services:
     ports:
       - "${GATEWAY_PORT:-80}:80"
     volumes:
-      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./gateway-service/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       hub:
         condition: service_healthy
@@ -22,7 +22,7 @@ services:
     restart: unless-stopped
 
   hub:
-    build: ./hub
+    build: ./hub-service
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -48,7 +48,7 @@ services:
     restart: unless-stopped
 
   defectdojo:
-    build: ./Vulnerability
+    build: ./vulnerability-service
     environment:
       NODE_ENV: production
       PORT: 3001
@@ -80,7 +80,7 @@ services:
 
   # Wazuh — static frontend only (no backend, no DB)
   wazuh:
-    build: ./wazuh
+    build: ./wazuh-service
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3002/"]
       interval: 15s
@@ -94,7 +94,7 @@ services:
     restart: unless-stopped
 
   docs:
-    build: ./docs
+    build: ./docs-service
     environment:
       NODE_ENV: production
       PORT: 3003
@@ -102,7 +102,7 @@ services:
       AUTH_INTROSPECTION_URL: http://hub:3000/api/auth/introspect
       AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:-dev-internal-auth-service-token}
     volumes:
-      - ./docs/docs:/app/docs:ro
+      - ./docs-service/docs:/app/docs:ro
     depends_on:
       hub:
         condition: service_healthy
@@ -160,5 +160,8 @@ services:
 
 volumes:
   defectdojo-data:
+    name: defectdojo-viewer_defectdojo-data
   postgres-data:
+    name: defectdojo-viewer_postgres-data
   auth-data:
+    name: defectdojo-viewer_auth-data

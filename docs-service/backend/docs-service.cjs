@@ -4,13 +4,13 @@ const path = require('path');
 
 const DOCUMENTS = Object.freeze([
   Object.freeze({
-    id: 'prerequisites-guide',
-    fileName: 'user-guide/prerequisites.md',
-    title: 'Prerequisites',
-    description: 'System requirements, DefectDojo API tokens, Redmine API keys, and status ID configuration.',
+    id: 'quick-start',
+    fileName: 'quick-start.md',
+    title: 'Quick Start',
+    description: 'Step-by-step guide to prepare DefectDojo, Redmine, configure the middleware, and run your first sync.',
     kind: 'user',
-    groupId: 'user-guide',
-    groupTitle: 'User Guide',
+    groupId: 'getting-started',
+    groupTitle: 'Getting Started',
     adminOnly: false,
   }),
   Object.freeze({

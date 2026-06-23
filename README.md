@@ -119,7 +119,7 @@ curl -I http://127.0.0.1/
 
 ## Documentation
 
-For a comprehensive, step-by-step walkthrough of all features, settings, user permissions, and sync operations, refer to the [Step-by-Step User Guide](docs/user-guide.md).
+For a comprehensive, step-by-step walkthrough of all features, settings, user permissions, and sync operations, refer to the [Step-by-Step User Guide](docs-service/docs/user-guide.md).
 
 ---
 
@@ -154,7 +154,8 @@ User administration is centralized:
 
 ## Directory Layout
 
-- `/gateway` — Nginx gateway configuration file.
-- `/hub` — Express + React code for the authentication and portal switcher app.
-- `/defectdojo` — Express + React code for vulnerability management.
-- `/wazuh` — Static React code for the SIEM mockup.
+- `/gateway-service` — Nginx gateway configuration file.
+- `/hub-service` — Express + React code for the authentication and portal switcher app.
+- `/vulnerability-service` — Express + React code for vulnerability management.
+- `/wazuh-service` — Static React code for the SIEM mockup.
+- `/docs-service` — React + Express documentation reader and Markdown content.

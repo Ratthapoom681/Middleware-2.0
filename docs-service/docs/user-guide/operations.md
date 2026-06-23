@@ -14,7 +14,7 @@ Use this guide for recurring security workflows, first-time setup verification, 
 Follow this workflow to set up the system for the first time and verify that all integrations are working correctly.
 
 ### 1. Complete Prerequisites
-Before starting, ensure you have completed all steps in the [Prerequisites and External Setup](prerequisites.md) guide. You need:
+Before starting, ensure you have completed all steps in the [Quick Start Guide](../quick-start.md). You need:
 - DefectDojo API v2 Token
 - Redmine API Key
 - Redmine Project Identifier

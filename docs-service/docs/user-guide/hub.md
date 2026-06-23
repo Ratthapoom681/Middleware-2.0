@@ -16,7 +16,7 @@ Use this guide to prepare the environment, start the system, understand access r
 
 ## Prerequisites
 
-Before starting the system, complete the external setup outlined in the [Prerequisites and External Setup](prerequisites.md) guide.
+Before starting the system, complete the external setup outlined in the [Quick Start Guide](../quick-start.md) guide.
 
 You will need:
 - Docker Desktop (Windows/Mac) or Docker Engine with Compose V2 (Linux)

@@ -13,7 +13,7 @@ async function createDocsDirectory() {
   const docsDir = await fs.mkdtemp(path.join(os.tmpdir(), 'hub-docs-'));
   await fs.mkdir(path.join(docsDir, 'user-guide'));
   await Promise.all([
-    fs.writeFile(path.join(docsDir, 'user-guide', 'prerequisites.md'), '# Prerequisites\n\nSetup.'),
+    fs.writeFile(path.join(docsDir, 'quick-start.md'), '# Quick Start\n\nGet started.'),
     fs.writeFile(path.join(docsDir, 'user-guide', 'hub.md'), '# Hub Guide\n\nWelcome.'),
     fs.writeFile(path.join(docsDir, 'user-guide', 'vulnerability.md'), '# Vulnerability Guide\n\nFindings.'),
     fs.writeFile(path.join(docsDir, 'user-guide', 'wazuh.md'), '# Wazuh Guide\n\nAlerts.'),
@@ -27,14 +27,14 @@ async function createDocsDirectory() {
 test('viewer definitions include the five user guide documents', () => {
   assert.deepEqual(
     getDocumentDefinitions('viewer').map(document => document.id),
-    ['prerequisites-guide', 'hub-guide', 'vulnerability-guide', 'wazuh-guide', 'operations-guide'],
+    ['quick-start', 'hub-guide', 'vulnerability-guide', 'wazuh-guide', 'operations-guide'],
   );
 });
 
 test('admin definitions include user and technical documents', () => {
   assert.deepEqual(
     getDocumentDefinitions('admin').map(document => document.id),
-    ['prerequisites-guide', 'hub-guide', 'vulnerability-guide', 'wazuh-guide', 'operations-guide', 'project-guide', 'architecture-overview'],
+    ['quick-start', 'hub-guide', 'vulnerability-guide', 'wazuh-guide', 'operations-guide', 'project-guide', 'architecture-overview'],
   );
 });
 
