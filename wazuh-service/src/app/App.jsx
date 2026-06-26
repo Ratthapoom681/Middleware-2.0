@@ -29,9 +29,29 @@ import { MOCK_AGENTS } from '../mock/agents';
 // ── AUTH CHECK ──
 const TOKEN_KEY = 'middleware_token';
 const USER_KEY = 'middleware_user';
+const LOGIN_URL = '/login/?returnTo=%2Fwazuh%2F';
+
+function decodeValidToken(token) {
+  try {
+    const parts = String(token || '').split('.');
+    if (parts.length !== 3) return null;
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(parts[1].length / 4) * 4, '=');
+    const payload = JSON.parse(atob(base64));
+    if (payload.iss !== 'middleware-hub' || payload.aud !== 'internal-security-middleware') return null;
+    if (!payload.exp || Date.now() / 1000 >= payload.exp || !payload.sid || !payload.sub || !payload.username) return null;
+    if (payload.status && payload.status !== 'active') return null;
+    if (payload.role !== 'admin' && (!Array.isArray(payload.apps) || !payload.apps.includes('wazuh'))) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
 
 export default function App() {
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
+  const [token, setToken] = useState(() => {
+    const stored = localStorage.getItem(TOKEN_KEY);
+    return decodeValidToken(stored) ? stored : null;
+  });
   const [user, setUser] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(USER_KEY) || 'null');
@@ -59,25 +79,33 @@ export default function App() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  // Redirect to Hub if not authenticated
+  // Wazuh is a static mockup; validate JWT claims/expiry before rendering.
   useEffect(() => {
-    if (!token || !user) {
-      window.location.href = '/';
+    if (!token || !user || !decodeValidToken(token)) {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+      window.location.href = LOGIN_URL;
     }
   }, [token, user]);
 
   if (!token || !user) {
     return (
       <div style={{ backgroundColor: '#0f1624', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <p style={{ color: '#9ca8bc', fontFamily: 'sans-serif' }}>Redirecting to security hub...</p>
+        <p style={{ color: '#9ca8bc', fontFamily: 'sans-serif' }}>Redirecting to sign in...</p>
       </div>
     );
   }
 
   const handleLogout = () => {
+    fetch('/api/logout', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }).catch(() => {});
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
-    window.location.href = '/';
+    setToken(null);
+    setUser(null);
+    window.location.href = LOGIN_URL;
   };
 
   // ── ROUTING LOGIC ──

@@ -8,6 +8,9 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Download,
+  Eye,
+  EyeOff,
   ExternalLink,
   FileText,
   FolderOpen,
@@ -15,9 +18,12 @@ import {
   List,
   LoaderCircle,
   LogOut,
+  Pencil,
   RefreshCw,
   Search,
   Shield,
+  Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import {
@@ -27,6 +33,8 @@ import {
   remarkHeadingIds,
   searchDocuments,
 } from './docsUtils.js';
+import DocsEditor from './DocsEditor.jsx';
+import DocsImport from './DocsImport.jsx';
 import './DocsPage.css';
 
 const DOC_FILE_IDS = {
@@ -184,7 +192,12 @@ function resolveMarkdownHref(href, documents, currentDocumentId) {
   if (value.startsWith('#')) return { href: buildDocsHash(currentDocumentId, value.slice(1)), external: false };
 
   const [fileName, section = ''] = value.split('#');
-  const documentId = DOC_FILE_IDS[fileName.replace(/^\.\//, '')];
+  const cleanName = fileName.replace(/^\.\//, '');
+  let documentId = DOC_FILE_IDS[cleanName];
+  if (!documentId && cleanName.startsWith('custom/') && cleanName.endsWith('.md')) {
+    documentId = cleanName.slice(7, -3);
+  }
+
   if (documentId && documents.some(document => document.id === documentId)) {
     return { href: buildDocsHash(documentId, section), external: false };
   }
@@ -240,6 +253,91 @@ export default function DocsPage({ token, user, routeHash, onBack, onLogout, onU
   const [openGroups, setOpenGroups] = useState({ 'getting-started': true, 'user-guide': true });
   const [retryKey, setRetryKey] = useState(0);
   const route = useMemo(() => parseDocsRoute(routeHash), [routeHash]);
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+
+  // Authenticated file download helper
+  const downloadAuthenticatedFile = async (url, filename) => {
+    try {
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to download file');
+      }
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (err) {
+      alert('Download failed: ' + err.message);
+    }
+  };
+
+  // Toggle document visibility (hiding/unhiding)
+  const handleToggleVisibility = async (docId, currentHidden) => {
+    try {
+      const response = await fetch(`/docs/api/docs/${docId}/hidden`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ hidden: !currentHidden }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to update visibility');
+      }
+      setRetryKey(k => k + 1);
+    } catch (err) {
+      alert('Visibility toggle failed: ' + err.message);
+    }
+  };
+
+  // Delete custom document
+  const handleDeleteDocument = async (docId, title) => {
+    if (!window.confirm(`Are you sure you want to permanently delete "${title}"? This cannot be undone.`)) {
+      return;
+    }
+    try {
+      const response = await fetch(`/docs/api/docs/${docId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to delete document');
+      }
+      setRetryKey(k => k + 1);
+      if (route.documentId === docId) {
+        window.location.hash = '#docs';
+      }
+    } catch (err) {
+      alert('Delete failed: ' + err.message);
+    }
+  };
+
+  // Editor save handler
+  const handleEditorSave = (newContent, updatedAt, forceReload) => {
+    setIsEditing(false);
+    setRetryKey(k => k + 1);
+    if (forceReload) {
+      window.location.hash = buildDocsHash(selectedDocument.id);
+    }
+  };
+
+  // Reset editor on document change
+  useEffect(() => {
+    setIsEditing(false);
+  }, [route.documentId]);
 
   useEffect(() => {
     const cleanPaths = ['/docs/', '/docs'];
@@ -471,6 +569,15 @@ export default function DocsPage({ token, user, routeHash, onBack, onLogout, onU
             <BookOpen size={30} />
             <h2>No documentation available</h2>
           </div>
+        ) : isEditing && selectedDocument ? (
+          <DocsEditor
+            token={token}
+            documentId={selectedDocument.id}
+            initialContent={selectedDocument.content}
+            title={selectedDocument.title}
+            onSave={handleEditorSave}
+            onCancel={() => setIsEditing(false)}
+          />
         ) : (
           <>
             {!searchQuery.trim() && selectedDocument && (
@@ -509,6 +616,26 @@ export default function DocsPage({ token, user, routeHash, onBack, onLogout, onU
                 <div className="docs-aside-heading">
                   <FileText size={16} />
                   <span>Documents</span>
+                  <div className="aside-heading-actions">
+                    {user?.role === 'admin' && (
+                      <button
+                        type="button"
+                        onClick={() => setIsImporting(true)}
+                        className="aside-action-btn"
+                        title="Import Document (.md/.docx)"
+                      >
+                        <Upload size={14} />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => downloadAuthenticatedFile('/docs/api/docs/export', 'documentation-export.zip')}
+                      className="aside-action-btn"
+                      title="Export All (ZIP)"
+                    >
+                      <Download size={14} />
+                    </button>
+                  </div>
                 </div>
                 <nav>
                   {documentGroups.map(group => {
@@ -529,15 +656,44 @@ export default function DocsPage({ token, user, routeHash, onBack, onLogout, onU
                         {isOpen && (
                           <div className="docs-document-group-items">
                             {group.documents.map(document => (
-                              <a
+                              <div
                                 key={document.id}
-                                href={buildDocsHash(document.id)}
-                                className={selectedDocument?.id === document.id && !searchQuery.trim() ? 'active' : ''}
-                                aria-current={selectedDocument?.id === document.id && !searchQuery.trim() ? 'page' : undefined}
+                                className={`sidebar-document-row ${selectedDocument?.id === document.id && !searchQuery.trim() ? 'active' : ''}`}
                               >
-                                <span>{document.title}</span>
-                                {document.kind === 'technical' && <small>Admin</small>}
-                              </a>
+                                <a
+                                  href={buildDocsHash(document.id)}
+                                  className="sidebar-document-link"
+                                  aria-current={selectedDocument?.id === document.id && !searchQuery.trim() ? 'page' : undefined}
+                                >
+                                  <span className={document.hidden ? 'text-hidden-doc' : ''}>
+                                    {document.title}
+                                    {document.hidden && <span className="hidden-tag">(Hidden)</span>}
+                                  </span>
+                                  {document.kind === 'technical' && <small>Admin</small>}
+                                </a>
+                                {user?.role === 'admin' && (
+                                  <div className="sidebar-document-actions">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleToggleVisibility(document.id, document.hidden); }}
+                                      className={`sidebar-action-btn visibility ${document.hidden ? 'hidden' : ''}`}
+                                      title={document.hidden ? 'Unhide document' : 'Hide document'}
+                                    >
+                                      {document.hidden ? <EyeOff size={13} /> : <Eye size={13} />}
+                                    </button>
+                                    {document.isCustom && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteDocument(document.id, document.title); }}
+                                        className="sidebar-action-btn delete"
+                                        title="Delete document"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
                             ))}
                           </div>
                         )}
@@ -559,10 +715,47 @@ export default function DocsPage({ token, user, routeHash, onBack, onLogout, onU
                     <strong>{getSectionLabel(selectedSection)}</strong>
                   </nav>
                   <header className="docs-document-header">
-                    <div className="document-kind"><BookOpen size={15} /> {selectedDocument.kind === 'technical' ? 'Technical reference' : 'User documentation'}</div>
-                    <h1>{selectedDocument.title}</h1>
-                    <p>{selectedDocument.description}</p>
-                    <span>Updated {formatUpdatedAt(selectedDocument.updatedAt)}</span>
+                    <div className="document-header-left">
+                      <div className="document-kind">
+                        <BookOpen size={15} />{' '}
+                        {selectedDocument.kind === 'technical'
+                          ? 'Technical reference'
+                          : 'User documentation'}
+                        {selectedDocument.hidden && (
+                          <span className="hidden-badge">Hidden from viewers</span>
+                        )}
+                      </div>
+                      <h1>{selectedDocument.title}</h1>
+                      <p>{selectedDocument.description}</p>
+                      <span className="updated-time">Updated {formatUpdatedAt(selectedDocument.updatedAt)}</span>
+                    </div>
+                    <div className="document-header-right">
+                      {user?.role === 'admin' && (
+                        <button
+                          type="button"
+                          className="docs-header-action-btn primary"
+                          onClick={() => setIsEditing(true)}
+                          title="Edit markdown"
+                        >
+                          <Pencil size={15} />
+                          <span>Edit</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="docs-header-action-btn secondary"
+                        onClick={() =>
+                          downloadAuthenticatedFile(
+                            `/docs/api/docs/${selectedDocument.id}/export`,
+                            `${selectedDocument.id}.md`
+                          )
+                        }
+                        title="Download Markdown"
+                      >
+                        <Download size={15} />
+                        <span>Export</span>
+                      </button>
+                    </div>
                   </header>
                   <section id={selectedSection.slug} className="docs-section-reader">
                     <header className="docs-section-reader-header">
@@ -621,6 +814,16 @@ export default function DocsPage({ token, user, routeHash, onBack, onLogout, onU
           </>
         )}
       </main>
+      {isImporting && (
+        <DocsImport
+          token={token}
+          documents={documents}
+          onImportSuccess={(newDoc) => {
+            setRetryKey(k => k + 1);
+          }}
+          onClose={() => setIsImporting(false)}
+        />
+      )}
     </div>
   );
 }

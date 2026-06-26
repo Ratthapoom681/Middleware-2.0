@@ -110,7 +110,7 @@ const readUsersFromDisk = (usersPath) => {
       ? data.map(normalizeUserRecord).filter(user => user.username)
       : [];
   } catch (err) {
-    console.error('Hub Auth: Error reading users from disk:', err);
+      console.error('Auth Service: Error reading users from disk:', err);
     return [];
   }
 };
@@ -433,7 +433,7 @@ function createAuthStore({ dataDir, hashPassword }) {
       for (const user of seedUsers) {
         await upsertUserToDb(user);
       }
-      console.log(`Hub Auth: Seeded ${seedUsers.length} user(s) into auth storage`);
+      console.log(`Auth Service: Seeded ${seedUsers.length} user(s) into auth storage`);
       return;
     }
 
@@ -441,7 +441,7 @@ function createAuthStore({ dataDir, hashPassword }) {
     if (users.length === 0) {
       users = [createDefaultAdminUser(hashPassword)];
       fs.writeFileSync(usersPath, JSON.stringify(users, null, 2), 'utf8');
-      console.log('Hub Auth: Created default admin user (password: admin)');
+      console.log('Auth Service: Created default admin user (password: admin)');
     }
   };
 
@@ -498,12 +498,26 @@ function createAuthStore({ dataDir, hashPassword }) {
     if (dbConfigured) {
       pool = new Pool(buildPoolConfig(authConnectionString));
       await pool.query('SELECT 1');
-      await initializeSchema();
-      console.log('Hub Auth: Auth database connection initialized');
+      const lockClient = await pool.connect();
+      try {
+        await lockClient.query('SELECT pg_advisory_lock($1)', [732024061]);
+        await initializeSchema();
+        await ensureSeedUsers();
+      } finally {
+        await lockClient.query('SELECT pg_advisory_unlock($1)', [732024061]).catch(() => {});
+        lockClient.release();
+      }
+      console.log('Auth Service: Auth database connection initialized');
     } else {
-      console.log('Hub Auth: Running in file-storage mode');
+      console.log('Auth Service: Running in file-storage mode');
+      await ensureSeedUsers();
     }
-    await ensureSeedUsers();
+  };
+
+  const checkHealth = async () => {
+    if (!pool) return { ok: true, storage: 'json' };
+    await pool.query('SELECT 1');
+    return { ok: true, storage: 'auth-postgresql' };
   };
 
   const listUsers = async (appKey = DEFAULT_APP_KEY) => (
@@ -604,6 +618,7 @@ function createAuthStore({ dataDir, hashPassword }) {
     initialize,
     close,
     isDbEnabled,
+    checkHealth,
     listUsers,
     getUserByUsername,
     upsertUser,

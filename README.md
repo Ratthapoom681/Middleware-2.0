@@ -6,20 +6,23 @@ A high-performance, containerized microservices suite that serves as a centraliz
 
 ## System Architecture
 
-The suite consists of six containers orchestrated via Docker Compose:
+The suite consists of independently deployable portal, authentication, application, gateway, and database containers orchestrated via Docker Compose:
 
 ```mermaid
 graph TB
     User["Browser (http://localhost or cloud host)"] --> Gateway["Nginx Gateway\n(Port :80)"]
     
-    Gateway -->|"/"| Hub["Hub Service\n(Port :3000)\nExpress + React"]
+    Gateway -->|"/"| Hub["Hub Portal\n(Port :3000)\nStatic React"]
+    Gateway -->|"/login + /api/auth"| Auth1["Auth Primary\n(Port :3004)"]
+    Gateway -->|retry/failover| Auth2["Auth Secondary\n(Port :3004)"]
     Gateway -->|"/defectdojo/*"| DDojo["DefectDojo Service\n(Port :3001)\nExpress + React"]
     Gateway -->|"/wazuh/*"| Wazuh["Wazuh Service\n(Port :3002)\nStatic React + Nginx"]
+    Gateway -->|"/docs/*"| Docs["Docs Service\n(Port :3003)\nExpress + React"]
     
-    Hub --> AuthDB[(Auth PostgreSQL 16)]
-    Hub -. first-start import .-> DB[(App PostgreSQL 16)]
+    Auth1 & Auth2 --> AuthDB[(Auth PostgreSQL 16)]
+    Auth1 -. first-start import .-> DB[(App PostgreSQL 16)]
     DDojo --> DB
-    DDojo -->|token introspection| Hub
+    DDojo & Docs -->|load-balanced introspection| Gateway
 
     style Gateway fill:#6366f1,color:#fff
     style Hub fill:#172033,stroke:#6366f1,color:#f1f4f9
@@ -36,23 +39,27 @@ The main gateway of the system. It handles:
 - **SSE Buffering**: Disables proxy buffering for Server-Sent Events (SSE) stream endpoints (`/defectdojo/api/sync/events`) to enable real-time synchronization.
 - **Security Headers**: Injects headers (`X-Frame-Options`, `X-Content-Type-Options`, `X-XSS-Protection`, `Referrer-Policy`) and enforces rate limiting (5r/s) on `/api/login` to prevent brute force attacks.
 
-### 2. SSO Hub Service (`hub` · Port `3000`)
-The entry point switcher portal:
-- **Backend (Express)**: Owns authentication, initializes the `auth_*` schema in the separate auth database, manages sessions, and issues HMAC-SHA256 JWT access tokens valid for 1 hour.
-- **Frontend (React)**: Split-screen brand layout login page, landing portal switcher card grid, and central user-management screen. Dynamically checks client-side health by querying endpoints (`/defectdojo/api/health` and `/wazuh/`) and displaying status badges (Healthy/Offline).
+### 2. Authentication Service (`auth-primary`, `auth-secondary` · Port `3004`)
+- Two interchangeable Express replicas share `auth-db`, manage sessions/users, and issue one-hour HMAC-SHA256 JWTs.
+- The independent `/login/` React app and existing auth APIs stay available when the Hub portal is down.
+- Startup schema/seed work is serialized with a PostgreSQL advisory lock.
+
+### 3. Hub Portal (`hub` · Port `3000`)
+- Static React workspace switcher and user-management frontend. It contains no authentication backend or database dependency.
+- If unavailable, the Gateway displays a degraded service directory with direct links.
 
 ### 3. DefectDojo Viewer (`defectdojo` · Port `3001`)
 Vulnerability workflow management tool:
-- **Backend (Express)**: Validates Hub-issued JWTs, optionally introspects active sessions with the Hub, and connects only to the app database for findings/configuration/sync state.
+- **Backend (Express)**: Validates auth-service JWTs locally, uses live introspection when available, and falls back to valid unexpired claims only during an auth transport outage.
 - **Frontend (React)**: Displays pulled vulnerability findings, CVE compactions, and coordinates ticket workflows with Redmine. A "Back to Hub" nav item is integrated to return to the portal switcher.
 
 ### 4. Wazuh Viewer (`wazuh` · Port `3002`)
 A frontend-only static mockup representing the SIEM & incident management dashboard:
 - **Frontend (React)**: Interactive dashboard, filterable alerts feed, incident creation form, OS agent grid, and investigation timelines built from realistic mockup datasets.
-- **Runtime (Nginx)**: Serves static compiled React assets. Validates auth token presence in `localStorage` on the frontend before loading.
+- **Runtime (Nginx)**: Serves static compiled React assets. Validates JWT claims and expiry in the frontend before loading mock data.
 
 ### 5. Auth Database (`auth-db` · Port `5432` internally)
-A PostgreSQL 16 database used only by the Hub for users, credentials, app memberships, sessions, and audit events.
+A PostgreSQL 16 database used by the auth replicas for users, credentials, app memberships, sessions, and audit events.
 
 ### 6. App Database (`db` · Port `5432` internally)
 A PostgreSQL 16 database used by DefectDojo Viewer for configuration, findings, Redmine sync state, sync history, mitigation reviews, and mapped product/engagement data. On first start, Hub can import legacy users from this database through `LEGACY_DATABASE_URL`, then identity is managed from `auth-db`.
@@ -63,11 +70,11 @@ A PostgreSQL 16 database used by DefectDojo Viewer for configuration, findings, 
 
 Because all containers are served behind the Nginx Gateway on port 80 under the same domain host (`http://localhost` locally, or `http://<server-ip-or-domain>` on a cloud server), they share a **single origin**. 
 
-1. When the user logs in at the gateway root URL, the Hub backend checks `auth-db`, creates an active session, and issues a JWT token.
-2. The Hub frontend saves this token in `localStorage` under `middleware_token` and the user profile under `middleware_user`.
+1. The browser signs in at `/login/`; either auth replica checks `auth-db`, creates a session, and issues a JWT.
+2. The login frontend saves the token in `localStorage` under `middleware_token` and the profile under `middleware_user`, then returns to the requested service.
 3. When the user clicks on **DefectDojo Viewer** (`/defectdojo/`) or **Wazuh Viewer** (`/wazuh/`), the browser retains the shared `localStorage` state.
 4. Each service extracts `middleware_token` from `localStorage` and appends it to requests as `Authorization: Bearer <token>`.
-5. DefectDojo validates issuer/audience/app claims and, in Docker, calls Hub introspection so logout, suspension, and role changes take effect before token expiry.
+5. DefectDojo and Docs validate signature/issuer/audience/app claims locally and normally introspect through the replicated auth pool. If both replicas are unreachable, locally valid tokens continue until expiry; revocation, suspension, and role changes can therefore be delayed by at most one hour.
 
 ---
 
@@ -140,11 +147,45 @@ docker compose start defectdojo
 docker compose up -d --build wazuh
 ```
 
+### Authentication and Hub outage checks
+
+```powershell
+# Hub outage: login and direct services remain available; / shows a degraded directory.
+docker compose stop hub
+
+# One auth replica can fail without interrupting login.
+docker compose stop auth-primary
+
+# With both auth replicas stopped, existing unexpired tokens use local validation.
+docker compose stop auth-secondary
+```
+
+### Concurrent login and service capacity test
+
+The zero-dependency runner separates login throttling from actual DefectDojo capacity and stops each scenario at its first unhealthy stage:
+
+```powershell
+# Small verification run
+$env:LOAD_LEVELS="1,2"
+$env:LOAD_REQUESTS_PER_WORKER="2"
+node scripts/concurrency-load-test.cjs --scenario=all
+
+# Ramped capacity search with container CPU/memory snapshots
+$env:LOAD_LEVELS="1,5,10,25,50,100"
+$env:LOAD_REQUESTS_PER_WORKER="10"
+$env:LOAD_DOCKER_STATS="true"
+node scripts/concurrency-load-test.cjs --scenario=all
+```
+
+Scenarios are `login`, `service` (one shared session), `end-to-end` (login → repeated service use → logout), or `all`. Configure credentials with `LOAD_USERNAME` and `LOAD_PASSWORD`, or set `LOAD_USERS_FILE` to a JSON array of `{ "username", "password" }` objects. Results include RPS, error rate, p50/p95/p99 latency, health attribution, the last healthy concurrency, and the first degraded concurrency under `load-results/`.
+
+The Gateway deliberately limits login to 5 requests/second plus a burst of 10 and reports that boundary as `429 rate-limited`; this is not a server outage. The runner refuses non-local targets unless `LOAD_ALLOW_REMOTE=true` is explicitly set.
+
 ### User Management
 User administration is centralized:
 - Log in as the `admin` user.
 - Click **User Management** in the administration section of the Hub.
-- The Hub API writes to `auth-db`. DefectDojo Viewer reads the current user identity from Hub-issued tokens and Hub introspection rather than storing password hashes locally.
+- The auth-service API writes to `auth-db`. DefectDojo reads auth-service tokens and live introspection rather than storing password hashes locally.
 
 ### Database Credentials Note
 > [!WARNING]
@@ -154,8 +195,9 @@ User administration is centralized:
 
 ## Directory Layout
 
-- `/gateway-service` — Nginx gateway configuration file.
-- `/hub-service` — Express + React code for the authentication and portal switcher app.
+- `/gateway-service` — Nginx gateway, auth load balancing, and degraded Hub page.
+- `/auth-service` — Replicated Express authentication API and standalone login app.
+- `/hub-service` — Static React portal switcher and user-management frontend.
 - `/vulnerability-service` — Express + React code for vulnerability management.
 - `/wazuh-service` — Static React code for the SIEM mockup.
 - `/docs-service` — React + Express documentation reader and Markdown content.

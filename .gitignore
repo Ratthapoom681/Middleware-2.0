@@ -6,6 +6,7 @@ npm-debug.log*
 # Dependencies and Builds
 node_modules/
 dist/
+load-results/
 hub-service/node_modules/
 hub-service/dist/
 vulnerability-service/node_modules/

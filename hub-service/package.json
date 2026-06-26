@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "test": "echo \"No tests specified for hub\" && exit 0",
-    "start": "node backend/server.cjs",
+    "start": "vite preview --host 0.0.0.0 --port 3000",
     "preview": "vite preview"
   },
   "dependencies": {

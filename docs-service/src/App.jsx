@@ -3,6 +3,7 @@ import DocsPage from './features/docs/DocsPage';
 
 const TOKEN_KEY = 'middleware_token';
 const USER_KEY = 'middleware_user';
+const LOGIN_URL = '/login/?returnTo=%2Fdocs%2F';
 
 function getStoredUser() {
   try {
@@ -68,8 +69,7 @@ export default function App() {
     localStorage.removeItem(USER_KEY);
     setToken(null);
     setUser(null);
-    // Redirect to Hub root (login page)
-    window.location.href = '/';
+    window.location.href = LOGIN_URL;
   }, [token]);
 
   const handleUnauthorized = useCallback(() => {
@@ -77,7 +77,7 @@ export default function App() {
     localStorage.removeItem(USER_KEY);
     setToken(null);
     setUser(null);
-    window.location.href = '/';
+    window.location.href = LOGIN_URL;
   }, []);
 
   const handleBack = useCallback(() => {
@@ -88,7 +88,7 @@ export default function App() {
     // If not authenticated, redirect to Hub home (login)
     // Wait for a tick to ensure state is settled before redirecting
     setTimeout(() => {
-      window.location.href = '/';
+      window.location.href = LOGIN_URL;
     }, 100);
     return (
       <div style={{ display: 'grid', placeItems: 'center', height: '100vh', color: '#787f99' }}>

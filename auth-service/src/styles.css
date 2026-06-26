@@ -1,0 +1,13 @@
+@import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&family=Prompt:wght@300;400;500;600;700&display=swap');
+
+:root {
+  font-family: 'Kanit', 'Prompt', system-ui, sans-serif;
+  color: #f1f4f9;
+  background: #0f1624;
+  font-synthesis: none;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { min-height: 100%; margin: 0; }
+button, input { font: inherit; }

@@ -18,21 +18,6 @@ Use this guide to start the Internal Security Middleware Hub, connect DefectDojo
 - [ ] 9. Run the first sync
 - [ ] 10. Verify the result
 
-Keep these values nearby as you work:
-
-| Value | Your value |
-|---|---|
-| DefectDojo base URL | `____________________________` |
-| DefectDojo API key | `____________________________` |
-| Redmine base URL | `____________________________` |
-| Redmine API key | `____________________________` |
-| Critical priority ID | `_____` |
-| High priority ID | `_____` |
-| Medium priority ID | `_____` |
-| Low priority ID | `_____` |
-| Info priority ID | `_____` |
-| Default priority ID | `_____` |
-
 ---
 
 ## 1. What You Need Before Starting
@@ -73,7 +58,7 @@ You need a DefectDojo API v2 key with read access to the findings you want to sy
 2. Select your username in the top-right corner.
 3. Select **API v2 Key**, or open `/api/key-v2` directly.
 4. Copy the displayed key. If necessary, select **Regenerate** first.
-5. Record the base URL and API key in the worksheet above.
+5. Keep the base URL and API key available for Step 6.
 
 Use the base URL only:
 
@@ -135,7 +120,7 @@ Using a dedicated administrator account is the simplest initial setup. You can r
 2. Go to **My account**.
 3. Find **API access key** in the right sidebar.
 4. Select **Show**, or select **Reset** to create a new key.
-5. Copy the key and record it in the worksheet.
+5. Copy the key and keep it available for Step 7.
 
 Use the Redmine base URL without a trailing slash:
 

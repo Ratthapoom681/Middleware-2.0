@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import LoginPage from '../features/auth/LoginPage';
 import HubPage from '../features/hub/HubPage';
 import UsersPage from '../features/users/UsersPage';
 
@@ -33,13 +32,6 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
-  function handleLoginSuccess(userData, jwt) {
-    localStorage.setItem(TOKEN_KEY, jwt);
-    localStorage.setItem(USER_KEY, JSON.stringify(userData));
-    setToken(jwt);
-    setUser(userData);
-  }
-
   async function handleLogout() {
     if (token) {
       fetch('/api/logout', {
@@ -54,9 +46,10 @@ export default function App() {
     window.location.hash = '';
   }
 
-  /* Not authenticated → Login */
+  /* Authentication is served independently so Hub can fail without blocking login. */
   if (!token || !user) {
-    return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+    window.location.replace('/login/?returnTo=%2F');
+    return null;
   }
 
   /* Authenticated → route by hash */

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Security Services — Degraded Mode</title>
+  <style>
+    :root { color-scheme: dark; font-family: Prompt, system-ui, sans-serif; background:#0f1624; color:#f1f4f9 }
+    * { box-sizing:border-box } body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px }
+    main { width:min(760px,100%); background:#172033; border:1px solid #2d3748; border-radius:12px; padding:28px }
+    .status { color:#fbbf24; font-weight:700; letter-spacing:.04em; text-transform:uppercase; font-size:.78rem }
+    h1 { margin:.5rem 0; font-size:clamp(1.7rem,4vw,2.4rem) } p { color:#aab4c7; line-height:1.6 }
+    nav { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-top:24px }
+    a { color:#f1f4f9; text-decoration:none; border:1px solid #36445d; border-radius:8px; padding:15px; background:#131a2a }
+    a:hover,a:focus-visible { border-color:#6366f1; outline:none } a strong { display:block; margin-bottom:4px }
+    a span { color:#9ca8bc; font-size:.86rem }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="status">Degraded mode</div>
+    <h1>The Hub portal is temporarily unavailable</h1>
+    <p>Authentication and security services operate independently. Sign in or open a service directly while the portal recovers.</p>
+    <nav>
+      <a href="/login/?returnTo=%2F"><strong>Sign in</strong><span>Use the independent login service</span></a>
+      <a href="/defectdojo/"><strong>DefectDojo</strong><span>Vulnerability workflows</span></a>
+      <a href="/wazuh/"><strong>Wazuh</strong><span>Security monitoring</span></a>
+      <a href="/docs/"><strong>Documentation</strong><span>Internal service guides</span></a>
+    </nav>
+  </main>
+</body>
+</html>

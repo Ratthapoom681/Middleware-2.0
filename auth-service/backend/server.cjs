@@ -37,8 +37,9 @@ function base64UrlDecode(str) {
 
 function signJwt(payload, secret, expiresInSeconds = 3600) {
   const header = { alg: 'HS256', typ: 'JWT' };
-  const exp = Math.floor(Date.now() / 1000) + expiresInSeconds;
-  const fullPayload = { ...payload, exp };
+  const iat = Math.floor(Date.now() / 1000);
+  const exp = iat + expiresInSeconds;
+  const fullPayload = { ...payload, iat, exp };
   
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
   const encodedPayload = base64UrlEncode(JSON.stringify(fullPayload));
@@ -60,6 +61,8 @@ function verifyJwt(token, secret) {
     if (parts.length !== 3) return null;
     
     const [encodedHeader, encodedPayload, signature] = parts;
+    const header = JSON.parse(base64UrlDecode(encodedHeader));
+    if (header.alg !== 'HS256' || header.typ !== 'JWT') return null;
     
     const expectedSignature = crypto
       .createHmac('sha256', secret)
@@ -69,10 +72,12 @@ function verifyJwt(token, secret) {
       .replace(/\+/g, '-')
       .replace(/\//g, '_');
       
-    if (signature !== expectedSignature) return null;
+    const actualBuffer = Buffer.from(signature);
+    const expectedBuffer = Buffer.from(expectedSignature);
+    if (actualBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return null;
     
     const payload = JSON.parse(base64UrlDecode(encodedPayload));
-    if (payload.exp && Date.now() / 1000 > payload.exp) {
+    if (!payload.exp || Date.now() / 1000 >= payload.exp) {
       return null; // Expired
     }
     
@@ -119,7 +124,7 @@ function buildTokenPayload(user, sid) {
     role: user.role,
     products: user.products,
     status: user.status,
-    apps: ['hub', DEFAULT_APP_KEY, 'wazuh']
+    apps: ['hub', DEFAULT_APP_KEY, 'wazuh', 'docs']
   };
 }
 
@@ -396,20 +401,30 @@ app.delete('/api/users/:username', authenticateJwt, requireAdmin, async (req, re
   }
 });
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
+// Health checks: liveness only checks the process; readiness checks auth storage.
+app.get(['/api/health', '/api/auth/health/live'], (_req, res) => {
   res.json({
     ok: true,
     storage: authStore.isDbEnabled() ? 'auth-postgresql' : 'json'
   });
 });
 
-// ── SERVE STATIC REACT FILES ──
-app.use(express.static(CLIENT_DIST_DIR));
+app.get('/api/auth/health/ready', async (_req, res) => {
+  try {
+    res.json(await authStore.checkHealth());
+  } catch (err) {
+    console.error('Auth readiness check failed:', err.message);
+    res.status(503).json({ ok: false, error: 'Authentication storage unavailable' });
+  }
+});
+
+// ── SERVE STANDALONE LOGIN UI ──
+app.use('/login', express.static(CLIENT_DIST_DIR));
 
 // Fallback to React app index.html for frontend routing
 app.use((req, res, next) => {
   if (req.method !== 'GET') return next();
+  if (req.path !== '/login' && !req.path.startsWith('/login/')) return next();
   const indexPath = path.join(CLIENT_DIST_DIR, 'index.html');
   if (fs.existsSync(indexPath)) {
     res.sendFile(indexPath);
@@ -418,16 +433,18 @@ app.use((req, res, next) => {
   }
 });
 
+app.use((_req, res) => res.status(404).json({ error: 'Not Found' }));
+
 
 // Start Server
 async function start() {
   await authStore.initialize();
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Hub Service backend listening on 0.0.0.0:${PORT}`);
+    console.log(`Auth Service listening on 0.0.0.0:${PORT}`);
   });
 }
 
 start().catch((err) => {
-  console.error('Hub Service failed to start:', err);
+  console.error('Auth Service failed to start:', err);
   process.exit(1);
 });

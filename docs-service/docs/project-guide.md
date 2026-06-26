@@ -40,7 +40,8 @@ The Compose service is still named `defectdojo`, but its build context is the `v
 Public URLs through the gateway are:
 
 - Hub: `/`
-- Hub API: `/api`
+- Login: `/login/`
+- Authentication APIs: `/api/login`, `/api/logout`, `/api/users`, `/api/auth/*`
 - DefectDojo Viewer: `/defectdojo/`
 - DefectDojo API: `/defectdojo/api`
 - Wazuh Viewer: `/wazuh/`
@@ -51,7 +52,8 @@ Public URLs through the gateway are:
 
 ```text
 gateway-service/         Nginx gateway and path routing
-hub-service/             Hub React frontend and Express auth backend
+auth-service/            Replicated login, identity, session, and introspection service
+hub-service/             Static Hub portal frontend
 vulnerability-service/   DefectDojo Viewer React frontend and Express backend
 wazuh-service/           Static React Wazuh mockup and its Nginx image
 docs-service/            Documentation reader and Markdown content
@@ -60,7 +62,7 @@ docker-compose.yml       Integrated six-service deployment
 README.md                Operator-oriented repository overview
 ```
 
-There is no root `package.json`. Run npm commands with `hub-service`, `vulnerability-service`, `wazuh-service`, or `docs-service` as the package prefix.
+There is no root `package.json`. Run npm commands with `auth-service`, `hub-service`, `vulnerability-service`, `wazuh-service`, or `docs-service` as the package prefix.
 
 ## 4. Technology Stack
 
@@ -119,6 +121,9 @@ docker compose up -d --build wazuh
 npm --prefix hub-service run build
 npm --prefix hub-service test
 
+npm --prefix auth-service run build
+npm --prefix auth-service test
+
 npm --prefix vulnerability-service run build
 npm --prefix vulnerability-service test
 npm --prefix vulnerability-service run lint
@@ -126,11 +131,14 @@ npm --prefix vulnerability-service run lint
 npm --prefix wazuh-service run build
 ```
 
-The Hub and DefectDojo Viewer also expose `npm run dev`, `npm run start`, and related package scripts. For complete login, shared-origin navigation, database wiring, and gateway path behavior, use Docker Compose. The current Hub Vite development proxy sends `/api` to `localhost:3001`, so it is not by itself an equivalent replacement for the integrated gateway/auth runtime.
+For bounded concurrency testing, run `node scripts/concurrency-load-test.cjs --scenario=all` from the repository root. Use `LOAD_LEVELS`, `LOAD_REQUESTS_PER_WORKER`, and the latency/error thresholds documented in the root README; reports are written to ignored `load-results/` files.
+
+Auth, Hub, and DefectDojo Viewer expose `npm run dev`, `npm run start`, and related package scripts. For replicated login, shared-origin navigation, database wiring, and gateway path behavior, use Docker Compose.
 
 Local service defaults in the checked-in configuration are:
 
-- Hub backend: `3000`; Hub Vite: `5174`.
+- Hub static preview: `3000`; Hub Vite: `5174`.
+- Auth backend: `3004`; Auth Vite: `5175`.
 - DefectDojo backend: `3001`; DefectDojo Vite: Vite's default port.
 - Wazuh Vite: `5175`.
 
@@ -140,18 +148,17 @@ Compose-level variables:
 
 - `GATEWAY_PORT`: published gateway port.
 - `PG_DB`, `PG_USER`, `PG_PASSWORD`: DefectDojo application database.
-- `AUTH_PG_DB`, `AUTH_PG_USER`, `AUTH_PG_PASSWORD`: Hub authentication database.
-- `JWT_SECRET`: shared JWT signing secret used by Hub and DefectDojo Viewer.
-- `AUTH_SERVICE_TOKEN`: shared secret for Hub token introspection.
+- `AUTH_PG_DB`, `AUTH_PG_USER`, `AUTH_PG_PASSWORD`: authentication database.
+- `JWT_SECRET`: shared JWT signing secret used by auth-service, DefectDojo Viewer, and Docs.
+- `AUTH_SERVICE_TOKEN`: shared secret for internal token introspection.
 
-Important Hub runtime variables:
+Important auth-service runtime variables:
 
-- `PORT`: defaults to `3000`.
+- `PORT`: defaults to `3004`.
 - `AUTH_DATABASE_URL`: primary authentication store.
 - `LEGACY_DATABASE_URL`: optional source for first-start import from `defectdojo_viewer_users`.
-- `DATA_DIR`: Hub file-storage directory when PostgreSQL is not configured.
-- `CLIENT_DIST_DIR`: built Hub frontend directory.
-- `DOCS_DIR`: Markdown documentation directory; Compose mounts `docs-service/docs/` at `/app/docs` read-only.
+- `DATA_DIR`: auth file-storage directory when PostgreSQL is not configured.
+- `CLIENT_DIST_DIR`: built login frontend directory.
 - `JWT_ISSUER`: defaults to `middleware-hub`.
 
 Important DefectDojo runtime variables:
@@ -161,25 +168,25 @@ Important DefectDojo runtime variables:
 - `PGSSLMODE`: enables PostgreSQL SSL; `no-verify` disables certificate verification.
 - `DATA_DIR`: JSON fallback directory; defaults to `vulnerability-service/` locally and `/app/data` in Compose.
 - `CLIENT_DIST_DIR`: built frontend directory; defaults to `vulnerability-service/dist`.
-- `AUTH_INTROSPECTION_URL`: Hub session validation endpoint.
+- `AUTH_INTROSPECTION_URL`: replicated auth session-validation endpoint.
 - `AUTH_REQUIRED_APP`: required app membership, `defectdojo` in Compose.
 - `ENABLE_LEGACY_LOCAL_AUTH`: disabled in Compose; enable only as a temporary rollback path.
 - `DEFECTDOJO_ENDPOINT_INDIVIDUAL_FALLBACK_LIMIT`: optional endpoint-fetch fallback limit.
 - `VITE_API_BASE`: frontend DefectDojo API base; defaults to `/defectdojo/api`.
-- `VITE_AUTH_API_BASE`: frontend Hub API base; defaults to `/api`.
+- `VITE_AUTH_API_BASE`: frontend authentication API base; defaults to `/api`.
 
 DefectDojo and Redmine connection details are operational configuration saved through the DefectDojo Viewer settings UI, not Compose secrets.
 
 ## 7. Authentication and Authorization
 
-Hub is the identity owner:
+Auth-service is the identity owner:
 
-1. `POST /api/login` validates the user against `auth-db` (or Hub file storage when no auth database is configured).
-2. Hub creates a session and returns a one-hour JWT containing issuer, audience, session, role, membership, and product-scope claims.
+1. `POST /api/login` validates the user against `auth-db` (or auth file storage when no database is configured).
+2. Auth-service creates a session and returns a one-hour JWT containing issuer, audience, session, role, membership, and product-scope claims.
 3. The frontend stores the token as `middleware_token` and the public user as `middleware_user`.
 4. The shared gateway origin makes those values available at `/`, `/defectdojo/`, and `/wazuh/`.
-5. DefectDojo requests attach `Authorization: Bearer <token>`.
-6. DefectDojo validates the signature and claims, then calls Hub introspection when `AUTH_INTROSPECTION_URL` is configured. Revoked sessions, suspended users, and changed permissions therefore take effect before JWT expiry.
+5. DefectDojo and Docs requests attach `Authorization: Bearer <token>`.
+6. Each backend validates the signature and claims locally, then calls the replicated auth service. Explicit inactive/forbidden responses fail closed; transport and `502–504` failures temporarily use the unexpired local claims.
 
 The roles are `admin` and `viewer`:
 
@@ -187,24 +194,25 @@ The roles are `admin` and `viewer`:
 - DefectDojo routes declare admin-only pages in `vulnerability-service/src/app/routes.js`, and mutating/sensitive APIs use backend `requireAdmin` middleware.
 - A viewer's `products` claim limits the findings returned by the backend. Admins are unrestricted.
 
-If auth storage contains no users and no legacy users can be imported, Hub creates `admin` / `admin`. Change that password immediately outside local development.
+If auth storage contains no users and no legacy users can be imported, auth-service creates `admin` / `admin`. Change that password immediately outside local development.
 
 DefectDojo's own `/api/login` and local user APIs return `410 Gone` unless `ENABLE_LEGACY_LOCAL_AUTH=true`. User administration in the normal runtime belongs to Hub.
 
-## 8. Hub Architecture
+## 8. Authentication and Hub Architecture
 
 ```text
-hub-service/
+auth-service/
   backend/
     server.cjs           Auth API, JWTs, sessions, users, health, static serving
     auth-store.cjs       PostgreSQL/file auth adapter and legacy import
-    docs-service.cjs     Safe, role-filtered reads from docs/
   src/
-    app/App.jsx          Login state and hash route selection
     features/auth/       Login screen
+
+hub-service/
+  src/
+    app/App.jsx          Portal state and hash route selection
     features/hub/        Workspace switcher and health badges
     features/users/      Central user administration
-    features/docs/       Markdown/Mermaid documentation reader
     shared/ui/           Shared Hub UI components
 ```
 

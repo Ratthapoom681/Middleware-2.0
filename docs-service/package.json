@@ -6,14 +6,17 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test backend/docs-service.test.cjs src/features/docs/docsUtils.test.js",
+    "test": "node --test backend/*.test.cjs src/features/docs/docsUtils.test.js",
     "start": "node backend/server.cjs",
     "preview": "vite preview"
   },
   "dependencies": {
+    "archiver": "^8.0.0",
+    "busboy": "^1.6.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "lucide-react": "^1.14.0",
+    "mammoth": "^1.12.0",
     "mermaid": "^11.15.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",

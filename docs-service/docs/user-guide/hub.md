@@ -81,8 +81,8 @@ Open `.env` in a text editor and set values for each variable:
 | `AUTH_PG_DB` | Database name for authentication data | Login and user management fails | `middleware_auth` |
 | `AUTH_PG_USER` | Database username for authentication data | Login and user management fails | `middleware_auth` |
 | `AUTH_PG_PASSWORD` | Database password for authentication data | Login and user management fails | Use a strong random password |
-| `JWT_SECRET` | Secret key for signing authentication tokens. Must be the same across Hub and DefectDojo Viewer. | Authentication between services breaks — users may be logged out randomly or unable to access workspaces | Use a random string of at least 32 characters |
-| `AUTH_SERVICE_TOKEN` | Internal service-to-service authentication token. Used by DefectDojo Viewer to validate sessions with Hub. | DefectDojo Viewer cannot verify user sessions, resulting in 401 errors | Use a random string |
+| `JWT_SECRET` | Secret key for signing authentication tokens. Must be the same across auth-service, DefectDojo Viewer, and Docs. | Authentication between services breaks — users may be logged out or unable to access workspaces | Use a random string of at least 32 characters |
+| `AUTH_SERVICE_TOKEN` | Internal token used by DefectDojo Viewer and Docs for live session introspection. | Live revocation checks fail closed unless the auth replicas are unreachable, when valid JWTs enter bounded fallback | Use a random string |
 
 > [!CAUTION]
 > PostgreSQL stores credentials in Docker volumes on first startup. If you change `PG_PASSWORD`, `AUTH_PG_PASSWORD`, `PG_USER`, or `AUTH_PG_USER` AFTER the system has already run once, the old credentials remain active in the volumes. To apply new credentials, you must delete the volumes:
