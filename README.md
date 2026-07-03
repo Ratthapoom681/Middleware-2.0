@@ -181,6 +181,22 @@ Scenarios are `login`, `service` (one shared session), `end-to-end` (login → r
 
 The Gateway deliberately limits login to 5 requests/second plus a burst of 10 and reports that boundary as `429 rate-limited`; this is not a server outage. The runner refuses non-local targets unless `LOAD_ALLOW_REMOTE=true` is explicitly set.
 
+### Lightweight project monitoring
+
+The Compose stack includes a Glances monitor container for whole-project resource visibility across the host and all Docker services:
+
+```powershell
+docker compose up -d monitor
+```
+
+The dashboard is bound to localhost only at `127.0.0.1:${MONITOR_PORT:-61208}`. On a remote Linux server, access it with an SSH tunnel:
+
+```powershell
+ssh -L 61208:127.0.0.1:61208 user@<server-public-ip>
+```
+
+Then open `http://localhost:61208`. Watch `defectdojo`, `db`, and `auth-db` during large Sync Findings runs.
+
 ### User Management
 User administration is centralized:
 - Log in as the `admin` user.

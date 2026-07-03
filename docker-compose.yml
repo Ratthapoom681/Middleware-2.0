@@ -21,7 +21,7 @@ services:
       resources:
         limits:
           memory: 256M
-          cpus: "0.5"
+          cpus: "0.25"
     restart: unless-stopped
 
   auth-primary: &auth-service
@@ -46,7 +46,7 @@ services:
       resources:
         limits:
           memory: 256M
-          cpus: "0.5"
+          cpus: "0.25"
     restart: unless-stopped
 
   auth-secondary:
@@ -79,8 +79,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
-          cpus: "1.0"
+          memory: 1536M
+          cpus: "1.5"
     restart: unless-stopped
 
   # Wazuh — static frontend only (no backend, no DB)
@@ -95,7 +95,7 @@ services:
       resources:
         limits:
           memory: 128M
-          cpus: "0.25"
+          cpus: "0.10"
     restart: unless-stopped
 
   docs:
@@ -120,7 +120,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: 256M
           cpus: "0.25"
     restart: unless-stopped
 
@@ -140,7 +140,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 1536M
           cpus: "1.0"
     restart: unless-stopped
 
@@ -160,8 +160,25 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 512M
           cpus: "0.5"
+    restart: unless-stopped
+
+  monitor:
+    image: nicolargo/glances:latest-full
+    pid: host
+    ports:
+      - "127.0.0.1:${MONITOR_PORT:-61208}:61208"
+    environment:
+      GLANCES_OPT: "-w"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/os-release:/etc/os-release:ro
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.15"
     restart: unless-stopped
 
 volumes:
