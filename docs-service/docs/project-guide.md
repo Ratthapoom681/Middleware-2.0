@@ -36,8 +36,10 @@ auth-primary -----------> auth-db (users, memberships, sessions, audit)
 
 defectdojo -------------> db (findings, config, sync and review state)
   `---- introspection --> auth
+  `---- access logs ----> linux-log-collector
 
 wazuh ------------------> static mock data only
+linux-log-collector ----> /host/var/log/secure or host journald
 ```
 
 The Compose service is still named `defectdojo`, but its build context is the `vulnerability-service/` directory.
@@ -60,6 +62,7 @@ gateway-service/         Nginx gateway and path routing
 auth-service/            Login, identity, session, and introspection service
 hub-service/             Static Hub portal frontend
 vulnerability-service/   DefectDojo Viewer React frontend and Express backend
+  linux-log-collector/   Read-only host auth log collector for Log Monitor access rows
 wazuh-service/           Static React Wazuh mockup and its Nginx image
 docs-service/            Documentation reader and Markdown content
 docker-compose.yml       Integrated six-service deployment
@@ -181,6 +184,14 @@ Important DefectDojo runtime variables:
 - `VITE_AUTH_API_BASE`: frontend authentication API base; defaults to `/api`.
 
 DefectDojo and Redmine connection details are operational configuration saved through the DefectDojo Viewer settings UI, not Compose secrets.
+
+Important Linux Log Collector runtime variables:
+
+- `AUTH_LOG_SOURCE_MODE`: `auto`, `files`, or `journal`; defaults to `auto`.
+- `AUTH_LOG_PATHS`: comma-separated read-only host auth log paths; Compose checks Amazon Linux `/host/var/log/secure` before Debian-style `/host/var/log/auth.log`.
+- `AUTH_JOURNAL_DIRS`: comma-separated mounted host journal directories used when file logs are unavailable.
+- `AUTH_JOURNAL_UNITS`: comma-separated systemd units queried with `journalctl -o json`.
+- `LINUX_AUTH_LOG_COLLECTOR_URL`: DefectDojo backend URL for the collector; defaults to `http://linux-log-collector:3011` in Compose.
 
 ## 7. Authentication and Authorization
 

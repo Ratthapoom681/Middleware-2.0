@@ -157,6 +157,20 @@ Before starting, ensure you have completed all steps in the [Quick Start Guide](
 3. Wait for the rebuild to finish.
 4. Return to Dashboard.
 
+### Log Monitor Access Log Is Empty or Unavailable on Amazon Linux 2023
+
+1. Confirm the collector is running:
+   ```powershell
+   docker compose ps linux-log-collector
+   ```
+2. Check collector diagnostics:
+   ```powershell
+   docker compose logs linux-log-collector
+   ```
+3. Amazon Linux 2023 normally uses `/var/log/secure` when rsyslog is present. If it is not present, the collector falls back to host journald through `/var/log/journal` or `/run/log/journal`.
+4. Keep the collector read-only. The Compose defaults mount `/var/log` and `/run/log/journal` as read-only and use `AUTH_LOG_SOURCE_MODE=auto`.
+5. If you want to force one source while debugging, set `AUTH_LOG_SOURCE_MODE=files` or `AUTH_LOG_SOURCE_MODE=journal`, then rebuild `linux-log-collector` and `defectdojo`.
+
 ### Database Password Errors After Editing `.env`
 
 PostgreSQL keeps credentials in persistent Docker volumes after the first startup. If you change database usernames, passwords, or database names after volumes already exist, the old values may still be active.
