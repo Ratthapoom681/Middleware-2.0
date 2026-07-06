@@ -13,16 +13,15 @@ graph TB
     User["Browser (http://localhost or cloud host)"] --> Gateway["Nginx Gateway\n(Port :80)"]
     
     Gateway -->|"/"| Hub["Hub Portal\n(Port :3000)\nStatic React"]
-    Gateway -->|"/login + /api/auth"| Auth1["Auth Primary\n(Port :3004)"]
-    Gateway -->|retry/failover| Auth2["Auth Secondary\n(Port :3004)"]
+    Gateway -->|"/login + /api/auth"| Auth["Auth Service\n(Port :3004)"]
     Gateway -->|"/defectdojo/*"| DDojo["DefectDojo Service\n(Port :3001)\nExpress + React"]
     Gateway -->|"/wazuh/*"| Wazuh["Wazuh Service\n(Port :3002)\nStatic React + Nginx"]
     Gateway -->|"/docs/*"| Docs["Docs Service\n(Port :3003)\nExpress + React"]
     
-    Auth1 & Auth2 --> AuthDB[(Auth PostgreSQL 16)]
-    Auth1 -. first-start import .-> DB[(App PostgreSQL 16)]
+    Auth --> AuthDB[(Auth PostgreSQL 16)]
+    Auth -. first-start import .-> DB[(App PostgreSQL 16)]
     DDojo --> DB
-    DDojo & Docs -->|load-balanced introspection| Gateway
+    DDojo & Docs -->|auth introspection| Gateway
 
     style Gateway fill:#6366f1,color:#fff
     style Hub fill:#172033,stroke:#6366f1,color:#f1f4f9
@@ -39,8 +38,8 @@ The main gateway of the system. It handles:
 - **SSE Buffering**: Disables proxy buffering for Server-Sent Events (SSE) stream endpoints (`/defectdojo/api/sync/events`) to enable real-time synchronization.
 - **Security Headers**: Injects headers (`X-Frame-Options`, `X-Content-Type-Options`, `X-XSS-Protection`, `Referrer-Policy`) and enforces rate limiting (5r/s) on `/api/login` to prevent brute force attacks.
 
-### 2. Authentication Service (`auth-primary`, `auth-secondary` · Port `3004`)
-- Two interchangeable Express replicas share `auth-db`, manage sessions/users, and issue one-hour HMAC-SHA256 JWTs.
+### 2. Authentication Service (`auth` · Port `3004`)
+- A single Express auth service uses `auth-db`, manages sessions/users, and issues one-hour HMAC-SHA256 JWTs.
 - The independent `/login/` React app and existing auth APIs stay available when the Hub portal is down.
 - Startup schema/seed work is serialized with a PostgreSQL advisory lock.
 
@@ -59,7 +58,7 @@ A frontend-only static mockup representing the SIEM & incident management dashbo
 - **Runtime (Nginx)**: Serves static compiled React assets. Validates JWT claims and expiry in the frontend before loading mock data.
 
 ### 5. Auth Database (`auth-db` · Port `5432` internally)
-A PostgreSQL 16 database used by the auth replicas for users, credentials, app memberships, sessions, and audit events.
+A PostgreSQL 16 database used by the auth service for users, credentials, app memberships, sessions, and audit events.
 
 ### 6. App Database (`db` · Port `5432` internally)
 A PostgreSQL 16 database used by DefectDojo Viewer for configuration, findings, Redmine sync state, sync history, mitigation reviews, and mapped product/engagement data. On first start, Hub can import legacy users from this database through `LEGACY_DATABASE_URL`, then identity is managed from `auth-db`.
@@ -70,11 +69,11 @@ A PostgreSQL 16 database used by DefectDojo Viewer for configuration, findings, 
 
 Because all containers are served behind the Nginx Gateway on port 80 under the same domain host (`http://localhost` locally, or `http://<server-ip-or-domain>` on a cloud server), they share a **single origin**. 
 
-1. The browser signs in at `/login/`; either auth replica checks `auth-db`, creates a session, and issues a JWT.
+1. The browser signs in at `/login/`; the auth service checks `auth-db`, creates a session, and issues a JWT.
 2. The login frontend saves the token in `localStorage` under `middleware_token` and the profile under `middleware_user`, then returns to the requested service.
 3. When the user clicks on **DefectDojo Viewer** (`/defectdojo/`) or **Wazuh Viewer** (`/wazuh/`), the browser retains the shared `localStorage` state.
 4. Each service extracts `middleware_token` from `localStorage` and appends it to requests as `Authorization: Bearer <token>`.
-5. DefectDojo and Docs validate signature/issuer/audience/app claims locally and normally introspect through the replicated auth pool. If both replicas are unreachable, locally valid tokens continue until expiry; revocation, suspension, and role changes can therefore be delayed by at most one hour.
+5. DefectDojo and Docs validate signature/issuer/audience/app claims locally and normally introspect through the auth service. If auth is unreachable, locally valid tokens continue until expiry; revocation, suspension, and role changes can therefore be delayed by at most one hour.
 
 ---
 
@@ -153,11 +152,8 @@ docker compose up -d --build wazuh
 # Hub outage: login and direct services remain available; / shows a degraded directory.
 docker compose stop hub
 
-# One auth replica can fail without interrupting login.
-docker compose stop auth-primary
-
-# With both auth replicas stopped, existing unexpired tokens use local validation.
-docker compose stop auth-secondary
+# With auth stopped, existing unexpired tokens use local validation.
+docker compose stop auth
 ```
 
 ### Concurrent login and service capacity test
@@ -211,8 +207,8 @@ User administration is centralized:
 
 ## Directory Layout
 
-- `/gateway-service` — Nginx gateway, auth load balancing, and degraded Hub page.
-- `/auth-service` — Replicated Express authentication API and standalone login app.
+- `/gateway-service` — Nginx gateway, auth routing, and degraded Hub page.
+- `/auth-service` — Express authentication API and standalone login app.
 - `/hub-service` — Static React portal switcher and user-management frontend.
 - `/vulnerability-service` — Express + React code for vulnerability management.
 - `/wazuh-service` — Static React code for the SIEM mockup.

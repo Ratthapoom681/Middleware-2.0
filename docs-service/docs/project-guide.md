@@ -14,7 +14,7 @@ The applications are served from one browser origin so they can share the Hub se
 
 ## 2. Runtime Architecture
 
-Docker Compose is the canonical integrated runtime. It starts six services:
+Docker Compose is the canonical integrated runtime. It starts the gateway, app services, and databases:
 
 ```text
 Browser
@@ -22,15 +22,20 @@ Browser
   v
 gateway (Nginx, published host port)
   |-- /                 -> hub:3000
-  |-- /api/*            -> hub:3000
+  |-- /login/           -> auth:3004
+  |-- /api/login        -> auth:3004
+  |-- /api/logout       -> auth:3004
+  |-- /api/users        -> auth:3004
+  |-- /api/auth/*       -> auth:3004
   |-- /defectdojo/*     -> defectdojo:3001
+  |-- /docs/*           -> docs:3003
   `-- /wazuh/*          -> wazuh:3002
 
-hub --------------------> auth-db (users, memberships, sessions, audit)
+auth -------------------> auth-db (users, memberships, sessions, audit)
   `---- legacy import --> db
 
 defectdojo -------------> db (findings, config, sync and review state)
-  `---- introspection --> hub
+  `---- introspection --> auth
 
 wazuh ------------------> static mock data only
 ```
@@ -52,7 +57,7 @@ Public URLs through the gateway are:
 
 ```text
 gateway-service/         Nginx gateway and path routing
-auth-service/            Replicated login, identity, session, and introspection service
+auth-service/            Login, identity, session, and introspection service
 hub-service/             Static Hub portal frontend
 vulnerability-service/   DefectDojo Viewer React frontend and Express backend
 wazuh-service/           Static React Wazuh mockup and its Nginx image
@@ -133,7 +138,7 @@ npm --prefix wazuh-service run build
 
 For bounded concurrency testing, run `node scripts/concurrency-load-test.cjs --scenario=all` from the repository root. Use `LOAD_LEVELS`, `LOAD_REQUESTS_PER_WORKER`, and the latency/error thresholds documented in the root README; reports are written to ignored `load-results/` files.
 
-Auth, Hub, and DefectDojo Viewer expose `npm run dev`, `npm run start`, and related package scripts. For replicated login, shared-origin navigation, database wiring, and gateway path behavior, use Docker Compose.
+Auth, Hub, and DefectDojo Viewer expose `npm run dev`, `npm run start`, and related package scripts. For shared-origin navigation, database wiring, and gateway path behavior, use Docker Compose.
 
 Local service defaults in the checked-in configuration are:
 
@@ -168,7 +173,7 @@ Important DefectDojo runtime variables:
 - `PGSSLMODE`: enables PostgreSQL SSL; `no-verify` disables certificate verification.
 - `DATA_DIR`: JSON fallback directory; defaults to `vulnerability-service/` locally and `/app/data` in Compose.
 - `CLIENT_DIST_DIR`: built frontend directory; defaults to `vulnerability-service/dist`.
-- `AUTH_INTROSPECTION_URL`: replicated auth session-validation endpoint.
+- `AUTH_INTROSPECTION_URL`: auth session-validation endpoint.
 - `AUTH_REQUIRED_APP`: required app membership, `defectdojo` in Compose.
 - `ENABLE_LEGACY_LOCAL_AUTH`: disabled in Compose; enable only as a temporary rollback path.
 - `DEFECTDOJO_ENDPOINT_INDIVIDUAL_FALLBACK_LIMIT`: optional endpoint-fetch fallback limit.
@@ -186,7 +191,7 @@ Auth-service is the identity owner:
 3. The frontend stores the token as `middleware_token` and the public user as `middleware_user`.
 4. The shared gateway origin makes those values available at `/`, `/defectdojo/`, and `/wazuh/`.
 5. DefectDojo and Docs requests attach `Authorization: Bearer <token>`.
-6. Each backend validates the signature and claims locally, then calls the replicated auth service. Explicit inactive/forbidden responses fail closed; transport and `502–504` failures temporarily use the unexpired local claims.
+6. Each backend validates the signature and claims locally, then calls the auth service. Explicit inactive/forbidden responses fail closed; transport and `502–504` failures temporarily use the unexpired local claims.
 
 The roles are `admin` and `viewer`:
 

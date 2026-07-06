@@ -52,6 +52,33 @@ services:
   auth-secondary:
     <<: *auth-service
 
+  linux-log-collector:
+    build: ./vulnerability-service/linux-log-collector
+    environment:
+      NODE_ENV: production
+      PORT: 3011
+      AUTH_LOG_PATHS: /host/var/log/auth.log,/host/var/log/secure
+      AUTH_LOG_MAX_ROWS: 2000
+      AUTH_LOG_REFRESH_MS: 5000
+    volumes:
+      - /var/log:/host/var/log:ro
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3011/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 96M
+          cpus: "0.10"
+    restart: unless-stopped
+
   defectdojo:
     build: ./vulnerability-service
     environment:
@@ -66,9 +93,13 @@ services:
       AUTH_INTROSPECTION_TIMEOUT_MS: 1000
       AUTH_CIRCUIT_OPEN_MS: 15000
       ENABLE_LEGACY_LOCAL_AUTH: "false"
+      AUTO_SYNC_STATUS_EMBEDDED: "false"
+      LINUX_AUTH_LOG_COLLECTOR_URL: http://linux-log-collector:3011
     volumes:
       - defectdojo-data:/app/data
     depends_on:
+      linux-log-collector:
+        condition: service_healthy
       db:
         condition: service_healthy
     healthcheck:
@@ -81,6 +112,32 @@ services:
         limits:
           memory: 1536M
           cpus: "1.5"
+    restart: unless-stopped
+
+  auto-sync-status:
+    build: ./vulnerability-service
+    command: ["node", "backend/auto-sync-status.cjs"]
+    environment:
+      NODE_ENV: production
+      DATA_DIR: /app/data
+      DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:-change-me}@db:5432/${PG_DB:-defectdojo_viewer}
+      NODE_OPTIONS: --max-old-space-size=80
+      PG_POOL_MAX: 2
+      REDMINE_CHECK_CONCURRENCY: 2
+      UV_THREADPOOL_SIZE: 2
+    volumes:
+      - defectdojo-data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    mem_limit: 128m
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.10"
     restart: unless-stopped
 
   # Wazuh — static frontend only (no backend, no DB)
