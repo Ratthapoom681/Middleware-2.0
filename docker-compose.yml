@@ -24,7 +24,7 @@ services:
           cpus: "0.25"
     restart: unless-stopped
 
-  auth-primary: &auth-service
+  auth-primary:
     image: internal-security-middleware-auth:local
     build: ./auth-service
     environment:
@@ -48,9 +48,6 @@ services:
           memory: 256M
           cpus: "0.25"
     restart: unless-stopped
-
-  auth-secondary:
-    <<: *auth-service
 
   linux-log-collector:
     build: ./vulnerability-service/linux-log-collector

@@ -38,7 +38,7 @@ The main gateway of the system. It handles:
 - **SSE Buffering**: Disables proxy buffering for Server-Sent Events (SSE) stream endpoints (`/defectdojo/api/sync/events`) to enable real-time synchronization.
 - **Security Headers**: Injects headers (`X-Frame-Options`, `X-Content-Type-Options`, `X-XSS-Protection`, `Referrer-Policy`) and enforces rate limiting (5r/s) on `/api/login` to prevent brute force attacks.
 
-### 2. Authentication Service (`auth` · Port `3004`)
+### 2. Authentication Service (`auth-primary` · Port `3004`)
 - A single Express auth service uses `auth-db`, manages sessions/users, and issues one-hour HMAC-SHA256 JWTs.
 - The independent `/login/` React app and existing auth APIs stay available when the Hub portal is down.
 - Startup schema/seed work is serialized with a PostgreSQL advisory lock.

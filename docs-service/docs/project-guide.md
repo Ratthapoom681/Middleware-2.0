@@ -22,16 +22,16 @@ Browser
   v
 gateway (Nginx, published host port)
   |-- /                 -> hub:3000
-  |-- /login/           -> auth:3004
-  |-- /api/login        -> auth:3004
-  |-- /api/logout       -> auth:3004
-  |-- /api/users        -> auth:3004
-  |-- /api/auth/*       -> auth:3004
+  |-- /login/           -> auth-primary:3004
+  |-- /api/login        -> auth-primary:3004
+  |-- /api/logout       -> auth-primary:3004
+  |-- /api/users        -> auth-primary:3004
+  |-- /api/auth/*       -> auth-primary:3004
   |-- /defectdojo/*     -> defectdojo:3001
   |-- /docs/*           -> docs:3003
   `-- /wazuh/*          -> wazuh:3002
 
-auth -------------------> auth-db (users, memberships, sessions, audit)
+auth-primary -----------> auth-db (users, memberships, sessions, audit)
   `---- legacy import --> db
 
 defectdojo -------------> db (findings, config, sync and review state)
