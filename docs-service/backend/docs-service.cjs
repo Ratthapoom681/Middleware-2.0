@@ -2,6 +2,7 @@ const fs = require('fs');
 const fsPromises = require('fs/promises');
 const path = require('path');
 const mammoth = require('mammoth');
+const { formatBangkokDate } = require('./lib/time.cjs');
 
 const DOCUMENTS = Object.freeze([
   Object.freeze({
@@ -75,7 +76,6 @@ const DOCUMENTS = Object.freeze([
     adminOnly: true,
   }),
 ]);
-
 function resolveDocsDir({ env = process.env, backendDir = __dirname } = {}) {
   if (env.DOCS_DIR) return path.resolve(env.DOCS_DIR);
 
@@ -510,7 +510,7 @@ async function importDocument({
       id,
       fileName: targetFileName,
       title: docTitle,
-      description: `Imported from ${originalName} on ${new Date().toLocaleDateString()}`,
+      description: `Imported from ${originalName} on ${formatBangkokDate()}`,
       kind,
       groupId: finalGroupId,
       groupTitle,

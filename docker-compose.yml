@@ -1,6 +1,8 @@
 services:
   gateway:
     build: ./gateway-service
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
     ports:
       - "${GATEWAY_PORT:-80}:80"
     healthcheck:
@@ -12,6 +14,8 @@ services:
 
   hub:
     build: ./hub-service
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
       interval: 15s
@@ -28,6 +32,7 @@ services:
     image: internal-security-middleware-auth:local
     build: ./auth-service
     environment:
+      TZ: ${TZ:-Asia/Bangkok}
       NODE_ENV: production
       PORT: 3004
       AUTH_DATABASE_URL: postgres://${AUTH_PG_USER:-middleware_auth}:${AUTH_PG_PASSWORD:-change-me}@auth-db:5432/${AUTH_PG_DB:-middleware_auth}
@@ -52,6 +57,7 @@ services:
   linux-log-collector:
     build: ./vulnerability-service/linux-log-collector
     environment:
+      TZ: ${TZ:-Asia/Bangkok}
       NODE_ENV: production
       PORT: 3011
       AUTH_LOG_SOURCE_MODE: auto
@@ -83,6 +89,7 @@ services:
   defectdojo:
     build: ./vulnerability-service
     environment:
+      TZ: ${TZ:-Asia/Bangkok}
       NODE_ENV: production
       PORT: 3001
       DATA_DIR: /app/data
@@ -119,6 +126,7 @@ services:
     build: ./vulnerability-service
     command: ["node", "backend/auto-sync-status.cjs"]
     environment:
+      TZ: ${TZ:-Asia/Bangkok}
       NODE_ENV: production
       DATA_DIR: /app/data
       DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:-change-me}@db:5432/${PG_DB:-defectdojo_viewer}
@@ -144,6 +152,8 @@ services:
   # Wazuh — static frontend only (no backend, no DB)
   wazuh:
     build: ./wazuh-service
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3002/"]
       interval: 15s
@@ -159,6 +169,7 @@ services:
   docs:
     build: ./docs-service
     environment:
+      TZ: ${TZ:-Asia/Bangkok}
       NODE_ENV: production
       PORT: 3003
       DOCS_DIR: /app/docs
@@ -184,7 +195,10 @@ services:
 
   db:
     image: postgres:16-alpine
+    command: ["postgres", "-c", "timezone=Asia/Bangkok"]
     environment:
+      TZ: ${TZ:-Asia/Bangkok}
+      PGTZ: ${TZ:-Asia/Bangkok}
       POSTGRES_DB: ${PG_DB:-defectdojo_viewer}
       POSTGRES_USER: ${PG_USER:-defectdojo}
       POSTGRES_PASSWORD: ${PG_PASSWORD:-change-me}
@@ -204,7 +218,10 @@ services:
 
   auth-db:
     image: postgres:16-alpine
+    command: ["postgres", "-c", "timezone=Asia/Bangkok"]
     environment:
+      TZ: ${TZ:-Asia/Bangkok}
+      PGTZ: ${TZ:-Asia/Bangkok}
       POSTGRES_DB: ${AUTH_PG_DB:-middleware_auth}
       POSTGRES_USER: ${AUTH_PG_USER:-middleware_auth}
       POSTGRES_PASSWORD: ${AUTH_PG_PASSWORD:-change-me}
@@ -228,6 +245,7 @@ services:
     ports:
       - "127.0.0.1:${MONITOR_PORT:-61208}:61208"
     environment:
+      TZ: ${TZ:-Asia/Bangkok}
       GLANCES_OPT: "-w"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro

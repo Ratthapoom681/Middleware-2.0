@@ -23,6 +23,7 @@ import {
   SearchOptionsResultCount,
   SearchOptionsSearch,
 } from '../../shared/ui/SearchOptions/SearchOptions.jsx';
+import { formatBangkokIntl } from '../../shared/time.js';
 import './UsersPage.css';
 
 const EMPTY_USER = {
@@ -86,10 +87,10 @@ const formatDate = (value) => {
   if (!value) return 'Never';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Never';
-  return new Intl.DateTimeFormat(undefined, {
+  return formatBangkokIntl(date, {
     dateStyle: 'medium',
     timeStyle: 'short',
-  }).format(date);
+  });
 };
 
 const formatLabel = (value) => {

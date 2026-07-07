@@ -33,6 +33,7 @@ import {
   remarkHeadingIds,
   searchDocuments,
 } from './docsUtils.js';
+import { formatBangkokIntl } from '../../shared/time.js';
 import DocsEditor from './DocsEditor.jsx';
 import DocsImport from './DocsImport.jsx';
 import './DocsPage.css';
@@ -177,7 +178,7 @@ function formatUpdatedAt(value) {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+  return formatBangkokIntl(date, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function getSectionLabel(section) {

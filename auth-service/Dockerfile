@@ -9,10 +9,12 @@ COPY . .
 RUN npm run build
 
 FROM node:22-alpine AS runtime
-ENV NODE_ENV=production PORT=3004 DATA_DIR=/app/data
+ENV NODE_ENV=production PORT=3004 DATA_DIR=/app/data TZ=Asia/Bangkok
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN apk add --no-cache tzdata \
+    && npm ci --omit=dev \
+    && npm cache clean --force
 COPY --from=build /app/backend ./backend
 COPY --from=build /app/dist ./dist
 RUN mkdir -p /app/data && chown -R node:node /app

@@ -19,6 +19,7 @@ import {
   Table,
   X,
 } from 'lucide-react';
+import { formatBangkokDateTime } from '../../shared/time.js';
 
 export default function DocsEditor({
   token,
@@ -113,7 +114,7 @@ export default function DocsEditor({
   };
 
   const handleRevert = async (timestamp, dateStr) => {
-    if (!window.confirm(`Are you sure you want to revert this document to the version from ${new Date(dateStr).toLocaleString()}? This will overwrite the current content on the server.`)) {
+    if (!window.confirm(`Are you sure you want to revert this document to the version from ${formatBangkokDateTime(dateStr)}? This will overwrite the current content on the server.`)) {
       return;
     }
 
@@ -295,7 +296,7 @@ export default function DocsEditor({
                   {history.map((version) => (
                     <div key={version.timestamp} className="history-item">
                       <div className="version-info">
-                        <strong>{new Date(version.date).toLocaleString()}</strong>
+                        <strong>{formatBangkokDateTime(version.date)}</strong>
                         <span className="version-id">ID: {version.timestamp}</span>
                       </div>
                       <button

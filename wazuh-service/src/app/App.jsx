@@ -25,6 +25,7 @@ import { MOCK_STATS } from '../mock/stats';
 import { MOCK_ALERTS } from '../mock/alerts';
 import { MOCK_INCIDENTS } from '../mock/incidents';
 import { MOCK_AGENTS } from '../mock/agents';
+import { formatBangkokDate, formatBangkokDateTime, formatBangkokTime } from '../shared/time';
 
 // ── AUTH CHECK ──
 const TOKEN_KEY = 'middleware_token';
@@ -377,7 +378,7 @@ function DashboardPage({ alerts, incidents, agents, onSelectAlert, onNavigate })
           <tbody>
             {alerts.slice(0, 5).map(alert => (
               <tr key={alert.id} className="clickable" onClick={() => onSelectAlert(alert)}>
-                <td style={{ color: 'var(--text-muted)' }}>{new Date(alert.timestamp).toLocaleTimeString()}</td>
+                <td style={{ color: 'var(--text-muted)' }}>{formatBangkokTime(alert.timestamp)}</td>
                 <td style={{ fontWeight: 500 }}>{alert.agent.name}</td>
                 <td>{alert.rule.description}</td>
                 <td>
@@ -454,7 +455,7 @@ function AlertsPage({ alerts, onSelectAlert }) {
           <tbody>
             {filtered.map(alert => (
               <tr key={alert.id} className="clickable" onClick={() => onSelectAlert(alert)}>
-                <td style={{ color: 'var(--text-muted)' }}>{new Date(alert.timestamp).toLocaleString()}</td>
+                <td style={{ color: 'var(--text-muted)' }}>{formatBangkokDateTime(alert.timestamp)}</td>
                 <td style={{ fontWeight: 500 }}>{alert.agent.name}</td>
                 <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                   {alert.rule.id}
@@ -546,7 +547,7 @@ function IncidentsPage({ incidents, onSelectIncident, onOpenCreate }) {
                   </div>
                 </td>
                 <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{inc.linkedAlerts}</td>
-                <td style={{ color: 'var(--text-muted)' }}>{new Date(inc.createdAt).toLocaleString()}</td>
+                <td style={{ color: 'var(--text-muted)' }}>{formatBangkokDateTime(inc.createdAt)}</td>
               </tr>
             ))}
             {filtered.length === 0 && (
@@ -633,7 +634,7 @@ function IncidentDetailPage({ incidentId, incidents, onBack, onAddTimelineNote, 
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
                     <strong style={{ color: 'var(--text-main)' }}>{event.actor}</strong>
                     <span style={{ color: 'var(--text-muted)' }}>{event.action.replace('_', ' ')}</span>
-                    <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>• {new Date(event.time).toLocaleTimeString()}</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>• {formatBangkokTime(event.time)}</span>
                   </div>
                   <p style={{ fontSize: '0.85rem', color: 'var(--text-main)', marginTop: '0.25rem' }}>{event.message}</p>
                 </div>
@@ -675,7 +676,7 @@ function IncidentDetailPage({ incidentId, incidents, onBack, onAddTimelineNote, 
             <div>
               <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.35rem' }}>Created</label>
               <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                {new Date(incident.createdAt).toLocaleDateString()}
+                {formatBangkokDate(incident.createdAt)}
               </div>
             </div>
 
