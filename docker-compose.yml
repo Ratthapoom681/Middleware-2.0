@@ -65,7 +65,7 @@ services:
       AUTH_JOURNAL_DIRS: /host/var/log/journal,/host/run/log/journal
       AUTH_JOURNAL_UNITS: sshd.service,sudo.service,su.service,systemd-logind.service
       AUTH_LOG_MAX_ROWS: 2000
-      AUTH_LOG_REFRESH_MS: 5000
+      AUTH_LOG_REFRESH_MS: 1000
     volumes:
       - /var/log:/host/var/log:ro
       - /run/log/journal:/host/run/log/journal:ro
@@ -103,6 +103,7 @@ services:
       ENABLE_LEGACY_LOCAL_AUTH: "false"
       AUTO_SYNC_STATUS_EMBEDDED: "false"
       LINUX_AUTH_LOG_COLLECTOR_URL: http://linux-log-collector:3011
+      LINUX_AUTH_LOG_COLLECTOR_TIMEOUT_MS: 2500
     volumes:
       - defectdojo-data:/app/data
     depends_on:
