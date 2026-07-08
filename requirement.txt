@@ -1,43 +1,17 @@
-# Linux requirements for this project
+# Linux host packages for this Docker Compose project.
 #
-# This repository is a Node.js + Docker Compose application. It does not use
-# Python packages, so there are no pip requirements to install.
+# Ubuntu/Debian install:
+#   sudo apt-get update
+#   sudo apt-get install -y $(grep -vE '^\s*(#|$)' requirement.txt)
+#
+# These packages are enough to clone the repo and run:
+#   docker compose up -d --build
+#
+# JavaScript dependencies are installed from each service's package-lock.json
+# during Docker builds, or manually with npm ci inside each service directory.
 
-Required host tools:
-- Docker Engine
-- Docker Compose plugin
-- Git
-
-Recommended for local development outside Docker:
-- Node.js 22.x
-- npm
-
-Ubuntu/Debian host setup:
-1. Install Docker Engine and the Docker Compose plugin:
-   https://docs.docker.com/engine/install/ubuntu/
-
-2. Verify Docker is available:
-   docker --version
-   docker compose version
-
-3. Configure the application:
-   cp .env.example .env
-
-4. Build and start the full stack:
-   docker compose up -d --build
-
-5. Open the app:
-   http://localhost:8080/
-
-Optional local npm dependency install:
-   cd auth-service && npm ci && cd ..
-   cd hub-service && npm ci && cd ..
-   cd vulnerability-service && npm ci && cd ..
-   cd wazuh-service && npm ci && cd ..
-   cd docs-service && npm ci && cd ..
-
-Notes:
-- Use the package-lock.json files in each service for exact npm versions.
-- The database and runtime services are created by docker compose.
-- For production Linux servers, open inbound TCP on the configured gateway port
-  from .env, usually GATEWAY_PORT=8080.
+ca-certificates
+curl
+git
+docker.io
+docker-compose-v2
