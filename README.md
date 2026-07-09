@@ -91,10 +91,19 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
    ```
 
 2. **Boot the Orchestration Stack**:
-   Start all containers in detached mode:
+   Start the portable core stack in detached mode:
    ```powershell
    docker compose up -d --build
    ```
+
+   On the Linux production host, enable the host-log collectors explicitly:
+   ```powershell
+   docker compose --profile host-logs up -d --build
+   ```
+
+   The `host-logs` profile is intentionally disabled during normal Windows
+   development because its collectors require Linux host logs and the Docker
+   socket.
 
 3. **Access the Application**:
    Open **`http://localhost`** in your browser. If `GATEWAY_PORT` is changed,
@@ -187,6 +196,9 @@ The Compose stack includes a Glances monitor container for whole-project resourc
 ```powershell
 docker compose up -d monitor
 ```
+
+The monitor is isolated behind the `monitoring` profile. Starting it explicitly
+activates that profile; it is not part of the normal core startup.
 
 The dashboard is bound to localhost only at `127.0.0.1:${MONITOR_PORT:-61208}`. On a remote Linux server, access it with an SSH tunnel:
 

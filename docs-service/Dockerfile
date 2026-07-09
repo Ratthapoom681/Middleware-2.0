@@ -26,7 +26,7 @@ RUN apk add --no-cache tzdata \
 COPY --from=build /app/backend ./backend
 COPY --from=build /app/dist ./dist
 
-RUN mkdir -p /app/data && chown -R node:node /app
+RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 
 EXPOSE 3003

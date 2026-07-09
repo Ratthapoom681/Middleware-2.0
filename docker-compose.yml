@@ -1,26 +1,22 @@
 services:
   gateway:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/gateway:${IMAGE_TAG:-local}
     build: ./gateway-service
     environment:
       TZ: ${TZ:-Asia/Bangkok}
     ports:
       - "${GATEWAY_PORT:-80}:80"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/gateway-health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
+    networks:
+      - edge
     restart: unless-stopped
 
   hub:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/hub:${IMAGE_TAG:-local}
     build: ./hub-service
     environment:
       TZ: ${TZ:-Asia/Bangkok}
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
+    networks:
+      - edge
     deploy:
       resources:
         limits:
@@ -29,7 +25,7 @@ services:
     restart: unless-stopped
 
   auth-primary:
-    image: internal-security-middleware-auth:local
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/auth:${IMAGE_TAG:-local}
     build: ./auth-service
     environment:
       TZ: ${TZ:-Asia/Bangkok}
@@ -42,11 +38,10 @@ services:
     depends_on:
       auth-db:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3004/api/auth/health/ready"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
+    networks:
+      - edge
+      - app-data
+      - auth-data
     deploy:
       resources:
         limits:
@@ -55,7 +50,10 @@ services:
     restart: unless-stopped
 
   linux-log-collector:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/linux-log-collector:${IMAGE_TAG:-local}
     build: ./vulnerability-service/collectors/linux-auth-log
+    profiles:
+      - host-logs
     environment:
       TZ: ${TZ:-Asia/Bangkok}
       NODE_ENV: production
@@ -76,11 +74,8 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3011/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
+    networks:
+      - observability
     deploy:
       resources:
         limits:
@@ -89,7 +84,10 @@ services:
     restart: unless-stopped
 
   docker-log-collector:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/docker-log-collector:${IMAGE_TAG:-local}
     build: ./vulnerability-service/collectors/docker-log
+    profiles:
+      - host-logs
     environment:
       TZ: ${TZ:-Asia/Bangkok}
       NODE_ENV: production
@@ -106,11 +104,8 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3012/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
+    networks:
+      - observability
     deploy:
       resources:
         limits:
@@ -119,6 +114,7 @@ services:
     restart: unless-stopped
 
   defectdojo:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/vulnerability:${IMAGE_TAG:-local}
     build: ./vulnerability-service
     environment:
       TZ: ${TZ:-Asia/Bangkok}
@@ -127,7 +123,7 @@ services:
       DATA_DIR: /app/data
       DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:-change-me}@db:5432/${PG_DB:-defectdojo_viewer}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-me-in-production}
-      AUTH_INTROSPECTION_URL: http://gateway/api/auth/introspect
+      AUTH_INTROSPECTION_URL: http://auth-primary:3004/api/auth/introspect
       AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:-dev-internal-auth-service-token}
       AUTH_REQUIRED_APP: defectdojo
       AUTH_INTROSPECTION_TIMEOUT_MS: 1000
@@ -141,17 +137,12 @@ services:
     volumes:
       - defectdojo-data:/app/data
     depends_on:
-      docker-log-collector:
-        condition: service_started
-      linux-log-collector:
-        condition: service_healthy
       db:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/api/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
+    networks:
+      - edge
+      - app-data
+      - observability
     deploy:
       resources:
         limits:
@@ -160,7 +151,7 @@ services:
     restart: unless-stopped
 
   auto-sync-status:
-    build: ./vulnerability-service
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/vulnerability:${IMAGE_TAG:-local}
     command: ["node", "backend/auto-sync-status.cjs"]
     environment:
       TZ: ${TZ:-Asia/Bangkok}
@@ -176,6 +167,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - edge
+      - app-data
     healthcheck:
       disable: true
     mem_limit: 128m
@@ -188,14 +182,12 @@ services:
 
   # Wazuh — static frontend only (no backend, no DB)
   wazuh:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/wazuh:${IMAGE_TAG:-local}
     build: ./wazuh-service
     environment:
       TZ: ${TZ:-Asia/Bangkok}
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3002/"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
+    networks:
+      - edge
     deploy:
       resources:
         limits:
@@ -204,6 +196,7 @@ services:
     restart: unless-stopped
 
   docs:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/docs:${IMAGE_TAG:-local}
     build: ./docs-service
     environment:
       TZ: ${TZ:-Asia/Bangkok}
@@ -211,18 +204,15 @@ services:
       PORT: 3003
       DOCS_DIR: /app/docs
       JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-me-in-production}
-      AUTH_INTROSPECTION_URL: http://gateway/api/auth/introspect
+      AUTH_INTROSPECTION_URL: http://auth-primary:3004/api/auth/introspect
       AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:-dev-internal-auth-service-token}
       AUTH_REQUIRED_APP: docs
       AUTH_INTROSPECTION_TIMEOUT_MS: 1000
       AUTH_CIRCUIT_OPEN_MS: 15000
     volumes:
       - ./docs-service/docs:/app/docs
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3003/api/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
+    networks:
+      - edge
     deploy:
       resources:
         limits:
@@ -231,7 +221,7 @@ services:
     restart: unless-stopped
 
   db:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:4e6e670bb069649261c9c18031f0aded7bb249a5b6664ddec29c013a89310d50
     command: ["postgres", "-c", "timezone=Asia/Bangkok"]
     environment:
       TZ: ${TZ:-Asia/Bangkok}
@@ -246,6 +236,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - app-data
     deploy:
       resources:
         limits:
@@ -254,7 +246,7 @@ services:
     restart: unless-stopped
 
   auth-db:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:4e6e670bb069649261c9c18031f0aded7bb249a5b6664ddec29c013a89310d50
     command: ["postgres", "-c", "timezone=Asia/Bangkok"]
     environment:
       TZ: ${TZ:-Asia/Bangkok}
@@ -269,6 +261,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - auth-data
     deploy:
       resources:
         limits:
@@ -277,7 +271,9 @@ services:
     restart: unless-stopped
 
   monitor:
-    image: nicolargo/glances:latest-full
+    image: nicolargo/glances:latest-full@sha256:58651aabedf62db8bfc1d252f8d3889675dfcdb5d0ad1c177ae5879c21626f3a
+    profiles:
+      - monitoring
     pid: host
     ports:
       - "127.0.0.1:${MONITOR_PORT:-61208}:61208"
@@ -287,6 +283,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /etc/os-release:/etc/os-release:ro
+    networks:
+      - edge
     deploy:
       resources:
         limits:
@@ -296,8 +294,17 @@ services:
 
 volumes:
   defectdojo-data:
-    name: defectdojo-viewer_defectdojo-data
+    name: ${VOLUME_NAMESPACE:-defectdojo-viewer}_defectdojo-data
   postgres-data:
-    name: defectdojo-viewer_postgres-data
+    name: ${VOLUME_NAMESPACE:-defectdojo-viewer}_postgres-data
   auth-data:
-    name: defectdojo-viewer_auth-data
+    name: ${VOLUME_NAMESPACE:-defectdojo-viewer}_auth-data
+
+networks:
+  edge:
+  app-data:
+    internal: true
+  auth-data:
+    internal: true
+  observability:
+    internal: true

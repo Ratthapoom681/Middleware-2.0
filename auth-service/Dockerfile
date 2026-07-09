@@ -17,7 +17,7 @@ RUN apk add --no-cache tzdata \
     && npm cache clean --force
 COPY --from=build /app/backend ./backend
 COPY --from=build /app/dist ./dist
-RUN mkdir -p /app/data && chown -R node:node /app
+RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 3004
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
