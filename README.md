@@ -232,6 +232,9 @@ Production startup rejects missing or documented placeholder secrets. On a
 brand-new auth database, `AUTH_BOOTSTRAP_ADMIN_PASSWORD` supplies the initial
 administrator password; existing users and passwords are never rewritten.
 
+For production backups, Docs bind migration, volume-namespace cutover, and
+rollback, follow the [persistent volume migration runbook](docs/operations/volume-migration.md).
+
 ---
 
 ## Directory Layout

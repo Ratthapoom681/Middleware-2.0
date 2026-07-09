@@ -28,5 +28,6 @@ Thumbs.db
 .agents/
 .impeccable/
 config-backups/
+backups/
 
 .understand-anything/

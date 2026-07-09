@@ -66,3 +66,5 @@ jobs:
         run: docker compose --profile host-logs build
       - name: Test repository operations scripts
         run: node --test scripts/*.test.cjs
+      - name: Validate Linux operations scripts
+        run: bash -n scripts/ops/*.sh
