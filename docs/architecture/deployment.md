@@ -2,7 +2,8 @@
 
 ## Supported Modes
 
-- Windows development: `docker compose up -d --build`
+- Windows development:
+  `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build`
 - Linux production with host logs:
   `docker compose --profile host-logs up -d --build`
 - Optional monitoring:
@@ -36,3 +37,9 @@ Persistent volumes use `VOLUME_NAMESPACE`. Existing environments that omit the
 variable retain the legacy `defectdojo-viewer_*` names. New environments should
 set `VOLUME_NAMESPACE=internal-security-middleware`. Changing this variable does
 not migrate data; use the documented volume migration procedure first.
+
+Production Docs content uses the namespaced `docs-data` volume. The image keeps
+shipped defaults under `/app/docs-default`; startup seeding copies missing
+files, updates files that still match the previous shipped hash, and preserves
+administrator-edited files. Windows development replaces that volume with the
+repository bind mount through `docker-compose.dev.yml`.

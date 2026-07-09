@@ -19,6 +19,7 @@ const {
   resolveDocsDir,
   resolveDocumentPath
 } = require('./docs-service.cjs');
+const { seedDocsDirectory } = require('./docs-seed.cjs');
 const { authenticateJwt } = require('./auth.cjs');
 
 const PORT = process.env.PORT || 3003;
@@ -304,6 +305,23 @@ app.use((req, res, next) => {
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Docs Service backend listening on 0.0.0.0:${PORT}`);
+const start = async () => {
+  const seedResult = await seedDocsDirectory({
+    sourceDir: process.env.DOCS_DEFAULT_DIR,
+    targetDir: resolveDocsDir()
+  });
+  if (!seedResult.skipped) {
+    console.log(
+      `Docs seed complete: copied=${seedResult.copied.length}, `
+      + `updated=${seedResult.updated.length}, preserved=${seedResult.preserved.length}`
+    );
+  }
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Docs Service backend listening on 0.0.0.0:${PORT}`);
+  });
+};
+
+start().catch(error => {
+  console.error('Docs Service failed to start:', error);
+  process.exit(1);
 });

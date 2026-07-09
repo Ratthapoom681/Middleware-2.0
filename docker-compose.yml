@@ -211,7 +211,7 @@ services:
       AUTH_INTROSPECTION_TIMEOUT_MS: 1000
       AUTH_CIRCUIT_OPEN_MS: 15000
     volumes:
-      - ./docs-service/docs:/app/docs
+      - docs-data:/app/docs
     networks:
       - edge
     deploy:
@@ -300,6 +300,8 @@ volumes:
     name: ${VOLUME_NAMESPACE:-defectdojo-viewer}_postgres-data
   auth-data:
     name: ${VOLUME_NAMESPACE:-defectdojo-viewer}_auth-data
+  docs-data:
+    name: ${VOLUME_NAMESPACE:-defectdojo-viewer}_docs-data
 
 networks:
   edge:

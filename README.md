@@ -96,9 +96,10 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
    secret before starting Compose.
 
 2. **Boot the Orchestration Stack**:
-   Start the portable core stack in detached mode:
+   On Windows development, start the portable core stack with the Docs source
+   bind overlay:
    ```powershell
-   docker compose up -d --build
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
    ```
 
    On the Linux production host, enable the host-log collectors explicitly:
@@ -109,6 +110,10 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
    The `host-logs` profile is intentionally disabled during normal Windows
    development because its collectors require Linux host logs and the Docker
    socket.
+
+   Production stores administrator-edited Docs content and history in the
+   namespaced `docs-data` volume. The image seeds missing or unchanged shipped
+   documents without overwriting administrator edits.
 
 3. **Access the Application**:
    Open **`http://localhost`** in your browser. If `GATEWAY_PORT` is changed,

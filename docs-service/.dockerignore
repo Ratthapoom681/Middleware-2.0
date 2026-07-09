@@ -8,3 +8,5 @@ dist
 *.log
 backend/*.test.cjs
 src/**/*.test.js
+docs/.backups
+docs/.seed-manifest.json

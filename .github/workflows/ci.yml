@@ -60,6 +60,8 @@ jobs:
         run: docker compose --profile host-logs config --quiet
       - name: Validate monitoring profile
         run: docker compose --profile monitoring config --quiet
+      - name: Validate Windows development overlay
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
       - name: Build project images
         run: docker compose --profile host-logs build
       - name: Test repository operations scripts
