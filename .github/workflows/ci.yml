@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "V*"
+
+permissions:
+  contents: read
+
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - auth-service
+          - hub-service
+          - vulnerability-service
+          - wazuh-service
+          - docs-service
+    defaults:
+      run:
+        working-directory: ${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.service }}/package-lock.json
+      - run: npm ci
+      - if: matrix.service == 'auth-service' || matrix.service == 'docs-service' || matrix.service == 'vulnerability-service'
+        run: npm test
+      - if: matrix.service == 'vulnerability-service'
+        run: npm run lint
+      - run: npm run build
+
+  containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create CI environment
+        run: cp .env.example .env
+      - name: Validate core Compose model
+        run: docker compose config --quiet
+      - name: Validate host logging profile
+        run: docker compose --profile host-logs config --quiet
+      - name: Validate monitoring profile
+        run: docker compose --profile monitoring config --quiet
+      - name: Build project images
+        run: docker compose --profile host-logs build

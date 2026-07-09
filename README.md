@@ -97,7 +97,8 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
    ```
 
 3. **Access the Application**:
-   Open **`http://localhost:8080`** in your browser.
+   Open **`http://localhost`** in your browser. If `GATEWAY_PORT` is changed,
+   include that port explicitly.
    - **Default Credentials**: 
      - **Username**: `admin`
      - **Password**: `admin`
@@ -107,9 +108,9 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
 On a cloud VM, access the app through the gateway port only:
 
 ```powershell
-http://<server-public-ip>:8080/
-http://<server-public-ip>:8080/defectdojo/
-http://<server-public-ip>:8080/wazuh/
+http://<server-public-ip>/
+http://<server-public-ip>/defectdojo/
+http://<server-public-ip>/wazuh/
 ```
 
 The `hub`, `defectdojo`, `wazuh`, and database ports are intentionally internal Docker ports. If containers are healthy but the browser says the site cannot be reached, verify the host is publishing the gateway and the cloud firewall allows inbound TCP traffic on the chosen gateway port:
@@ -119,7 +120,9 @@ docker compose ps
 curl -I http://127.0.0.1/
 ```
 
-`docker compose ps` should show `gateway` with `0.0.0.0:${GATEWAY_PORT:-8080}->80/tcp`. Open inbound TCP `8080`, then browse to `http://<server-public-ip>:8080/`.
+`docker compose ps` should show `gateway` with
+`0.0.0.0:${GATEWAY_PORT:-80}->80/tcp`. Open inbound TCP `80` (or the configured
+gateway port), then browse to `http://<server-public-ip>/`.
 
 ---
 
@@ -213,3 +216,6 @@ User administration is centralized:
 - `/vulnerability-service` — Express + React code for vulnerability management.
 - `/wazuh-service` — Static React code for the SIEM mockup.
 - `/docs-service` — React + Express documentation reader and Markdown content.
+
+The stable Compose names, source directories, and public routes are listed in
+the [service catalog](docs/architecture/service-catalog.md).
