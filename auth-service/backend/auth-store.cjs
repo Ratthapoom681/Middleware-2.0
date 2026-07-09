@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { Pool } = require('pg');
+const { runMigrations } = require('./migration-runner.cjs');
 
 const DEFAULT_APP_KEY = 'defectdojo';
 const HUB_APP_KEY = 'hub';
@@ -168,61 +169,6 @@ function createAuthStore({ dataDir, hashPassword }) {
     } finally {
       client.release();
     }
-  };
-
-  const initializeSchema = async () => {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS ${TABLES.users} (
-        id text PRIMARY KEY,
-        username text UNIQUE NOT NULL CHECK (length(trim(username)) > 0),
-        email text NOT NULL DEFAULT '',
-        status text NOT NULL DEFAULT 'active',
-        last_login_at timestamptz,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now()
-      )
-    `);
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS ${TABLES.credentials} (
-        user_id text PRIMARY KEY REFERENCES ${TABLES.users}(id) ON DELETE CASCADE,
-        salt text NOT NULL,
-        password_hash text NOT NULL,
-        password_algorithm text NOT NULL DEFAULT 'pbkdf2-sha512:310000',
-        updated_at timestamptz NOT NULL DEFAULT now()
-      )
-    `);
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS ${TABLES.memberships} (
-        user_id text NOT NULL REFERENCES ${TABLES.users}(id) ON DELETE CASCADE,
-        app_key text NOT NULL,
-        role text NOT NULL DEFAULT 'viewer',
-        products jsonb NOT NULL DEFAULT '[]'::jsonb,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        PRIMARY KEY (user_id, app_key)
-      )
-    `);
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS ${TABLES.sessions} (
-        id text PRIMARY KEY,
-        user_id text NOT NULL REFERENCES ${TABLES.users}(id) ON DELETE CASCADE,
-        issued_at timestamptz NOT NULL DEFAULT now(),
-        expires_at timestamptz NOT NULL,
-        revoked_at timestamptz,
-        user_agent text NOT NULL DEFAULT '',
-        ip_address text NOT NULL DEFAULT ''
-      )
-    `);
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS ${TABLES.auditEvents} (
-        id bigserial PRIMARY KEY,
-        actor_username text NOT NULL DEFAULT '',
-        target_username text NOT NULL DEFAULT '',
-        action text NOT NULL,
-        metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
-        created_at timestamptz NOT NULL DEFAULT now()
-      )
-    `);
   };
 
   const mapUserRows = (rows) => rows.map(row => normalizeUserRecord({
@@ -518,7 +464,7 @@ function createAuthStore({ dataDir, hashPassword }) {
       const lockClient = await pool.connect();
       try {
         await lockClient.query('SELECT pg_advisory_lock($1)', [732024061]);
-        await initializeSchema();
+        await runMigrations({ pool });
         await ensureSeedUsers();
       } finally {
         await lockClient.query('SELECT pg_advisory_unlock($1)', [732024061]).catch(() => {});
