@@ -115,8 +115,8 @@ const readUsersFromDisk = (usersPath) => {
   }
 };
 
-const createDefaultAdminUser = (hashPassword) => {
-  const { salt, hash, algorithm } = hashPassword('admin');
+const createDefaultAdminUser = (hashPassword, password = 'admin') => {
+  const { salt, hash, algorithm } = hashPassword(password);
   return {
     username: 'admin',
     salt,
@@ -137,6 +137,21 @@ function createAuthStore({ dataDir, hashPassword }) {
   const legacyConnectionString = getLegacyConnectionString();
   let pool = null;
   const fileSessions = new Map();
+  const production = normalizeText(process.env.NODE_ENV).toLowerCase() === 'production';
+
+  const createBootstrapAdminUser = () => {
+    const configuredPassword = String(process.env.AUTH_BOOTSTRAP_ADMIN_PASSWORD || '');
+    if (production && !configuredPassword) {
+      throw new Error(
+        'AUTH_BOOTSTRAP_ADMIN_PASSWORD is required when production auth storage has no users'
+      );
+    }
+    const password = configuredPassword || 'admin';
+    if (production) {
+      console.log('Auth Service: Creating the initial administrator from AUTH_BOOTSTRAP_ADMIN_PASSWORD');
+    }
+    return createDefaultAdminUser(hashPassword, password);
+  };
 
   const isDbEnabled = () => Boolean(pool);
 
@@ -429,7 +444,7 @@ function createAuthStore({ dataDir, hashPassword }) {
       if (rows[0]?.count > 0) return;
       let seedUsers = await readLegacyUsersFromDatabase();
       if (seedUsers.length === 0) seedUsers = readUsersFromDisk(usersPath);
-      if (seedUsers.length === 0) seedUsers = [createDefaultAdminUser(hashPassword)];
+      if (seedUsers.length === 0) seedUsers = [createBootstrapAdminUser()];
       for (const user of seedUsers) {
         await upsertUserToDb(user);
       }
@@ -439,9 +454,11 @@ function createAuthStore({ dataDir, hashPassword }) {
 
     let users = readUsersFromDisk(usersPath);
     if (users.length === 0) {
-      users = [createDefaultAdminUser(hashPassword)];
+      users = [createBootstrapAdminUser()];
       fs.writeFileSync(usersPath, JSON.stringify(users, null, 2), 'utf8');
-      console.log('Auth Service: Created default admin user (password: admin)');
+      console.log(production
+        ? 'Auth Service: Created initial administrator'
+        : 'Auth Service: Created default admin user (password: admin)');
     }
   };
 

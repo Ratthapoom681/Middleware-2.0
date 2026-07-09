@@ -31,10 +31,11 @@ services:
       TZ: ${TZ:-Asia/Bangkok}
       NODE_ENV: production
       PORT: 3004
-      AUTH_DATABASE_URL: postgres://${AUTH_PG_USER:-middleware_auth}:${AUTH_PG_PASSWORD:-change-me}@auth-db:5432/${AUTH_PG_DB:-middleware_auth}
-      LEGACY_DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:-change-me}@db:5432/${PG_DB:-defectdojo_viewer}
-      JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-me-in-production}
-      AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:-dev-internal-auth-service-token}
+      AUTH_DATABASE_URL: postgres://${AUTH_PG_USER:-middleware_auth}:${AUTH_PG_PASSWORD:?Set AUTH_PG_PASSWORD in .env}@auth-db:5432/${AUTH_PG_DB:-middleware_auth}
+      LEGACY_DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:?Set PG_PASSWORD in .env}@db:5432/${PG_DB:-defectdojo_viewer}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:?Set AUTH_SERVICE_TOKEN in .env}
+      AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${AUTH_BOOTSTRAP_ADMIN_PASSWORD:-}
     depends_on:
       auth-db:
         condition: service_healthy
@@ -121,10 +122,10 @@ services:
       NODE_ENV: production
       PORT: 3001
       DATA_DIR: /app/data
-      DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:-change-me}@db:5432/${PG_DB:-defectdojo_viewer}
-      JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-me-in-production}
+      DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:?Set PG_PASSWORD in .env}@db:5432/${PG_DB:-defectdojo_viewer}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       AUTH_INTROSPECTION_URL: http://auth-primary:3004/api/auth/introspect
-      AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:-dev-internal-auth-service-token}
+      AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:?Set AUTH_SERVICE_TOKEN in .env}
       AUTH_REQUIRED_APP: defectdojo
       AUTH_INTROSPECTION_TIMEOUT_MS: 1000
       AUTH_CIRCUIT_OPEN_MS: 15000
@@ -157,7 +158,7 @@ services:
       TZ: ${TZ:-Asia/Bangkok}
       NODE_ENV: production
       DATA_DIR: /app/data
-      DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:-change-me}@db:5432/${PG_DB:-defectdojo_viewer}
+      DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:?Set PG_PASSWORD in .env}@db:5432/${PG_DB:-defectdojo_viewer}
       NODE_OPTIONS: --max-old-space-size=80
       PG_POOL_MAX: 2
       REDMINE_CHECK_CONCURRENCY: 2
@@ -203,9 +204,9 @@ services:
       NODE_ENV: production
       PORT: 3003
       DOCS_DIR: /app/docs
-      JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       AUTH_INTROSPECTION_URL: http://auth-primary:3004/api/auth/introspect
-      AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:-dev-internal-auth-service-token}
+      AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:?Set AUTH_SERVICE_TOKEN in .env}
       AUTH_REQUIRED_APP: docs
       AUTH_INTROSPECTION_TIMEOUT_MS: 1000
       AUTH_CIRCUIT_OPEN_MS: 15000
@@ -228,7 +229,7 @@ services:
       PGTZ: ${TZ:-Asia/Bangkok}
       POSTGRES_DB: ${PG_DB:-defectdojo_viewer}
       POSTGRES_USER: ${PG_USER:-defectdojo}
-      POSTGRES_PASSWORD: ${PG_PASSWORD:-change-me}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?Set PG_PASSWORD in .env}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -253,7 +254,7 @@ services:
       PGTZ: ${TZ:-Asia/Bangkok}
       POSTGRES_DB: ${AUTH_PG_DB:-middleware_auth}
       POSTGRES_USER: ${AUTH_PG_USER:-middleware_auth}
-      POSTGRES_PASSWORD: ${AUTH_PG_PASSWORD:-change-me}
+      POSTGRES_PASSWORD: ${AUTH_PG_PASSWORD:?Set AUTH_PG_PASSWORD in .env}
     volumes:
       - auth-data:/var/lib/postgresql/data
     healthcheck:

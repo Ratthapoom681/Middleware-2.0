@@ -85,10 +85,15 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
 ### Setup and Start
 
 1. **Configure Environment Variables**:
-   Copy `.env.example` to `.env` and configure your settings:
+   Generate a new `.env` with random database passwords, JWT signing material,
+   an internal service token, and a bootstrap administrator password:
    ```powershell
-   Copy-Item .env.example .env
+   node scripts/generate-env.cjs
    ```
+
+   The generator refuses to overwrite an existing `.env`. If Node.js is not
+   installed on the host, copy `.env.example` manually and fill every blank
+   secret before starting Compose.
 
 2. **Boot the Orchestration Stack**:
    Start the portable core stack in detached mode:
@@ -217,6 +222,10 @@ User administration is centralized:
 ### Database Credentials Note
 > [!WARNING]
 > Database volumes persist in Docker. If you update the app DB credentials (`PG_USER`, `PG_PASSWORD`, or `PG_DB`) or auth DB credentials (`AUTH_PG_USER`, `AUTH_PG_PASSWORD`, or `AUTH_PG_DB`) in `.env`, you must delete the relevant old database volume (`docker compose down -v`) for PostgreSQL to apply new credentials on initialization, otherwise you will encounter `FATAL: password authentication failed` errors.
+
+Production startup rejects missing or documented placeholder secrets. On a
+brand-new auth database, `AUTH_BOOTSTRAP_ADMIN_PASSWORD` supplies the initial
+administrator password; existing users and passwords are never rewritten.
 
 ---
 

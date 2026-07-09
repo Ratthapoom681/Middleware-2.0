@@ -1,11 +1,14 @@
 const crypto = require('crypto');
+const { loadRuntimeSecrets } = require('./runtime-config.cjs');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key-change-me-in-production';
+const {
+  jwtSecret: JWT_SECRET,
+  authServiceToken: AUTH_SERVICE_TOKEN
+} = loadRuntimeSecrets();
 const TOKEN_ISSUER = process.env.JWT_ISSUER || 'middleware-hub';
 const TOKEN_AUDIENCE = process.env.JWT_AUDIENCE || 'internal-security-middleware';
 const REQUIRED_APP = process.env.AUTH_REQUIRED_APP || 'docs';
 const AUTH_INTROSPECTION_URL = process.env.AUTH_INTROSPECTION_URL || '';
-const AUTH_SERVICE_TOKEN = process.env.AUTH_SERVICE_TOKEN || '';
 const AUTH_INTROSPECTION_TIMEOUT_MS = Number(process.env.AUTH_INTROSPECTION_TIMEOUT_MS || 1000);
 const AUTH_CIRCUIT_OPEN_MS = Number(process.env.AUTH_CIRCUIT_OPEN_MS || 15000);
 

@@ -4,12 +4,15 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { createAuthStore, DEFAULT_APP_KEY } = require('./auth-store.cjs');
+const { loadRuntimeSecrets } = require('./runtime-config.cjs');
 
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key-change-me-in-production';
+const {
+  jwtSecret: JWT_SECRET,
+  authServiceToken: AUTH_SERVICE_TOKEN
+} = loadRuntimeSecrets();
 const TOKEN_ISSUER = process.env.JWT_ISSUER || 'middleware-hub';
 const TOKEN_AUDIENCE = 'internal-security-middleware';
-const AUTH_SERVICE_TOKEN = process.env.AUTH_SERVICE_TOKEN || '';
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.resolve(__dirname, '..');
 const CLIENT_DIST_DIR = process.env.CLIENT_DIST_DIR ? path.resolve(process.env.CLIENT_DIST_DIR) : path.resolve(__dirname, '..', 'dist');
 
@@ -439,6 +442,12 @@ app.use((_req, res) => res.status(404).json({ error: 'Not Found' }));
 // Start Server
 async function start() {
   await authStore.initialize();
+  if (String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
+    const admin = await authStore.getUserByUsername('admin');
+    if (admin && verifyPassword('admin', admin)) {
+      console.warn('Auth Service: The existing admin account still uses the default password; change it immediately');
+    }
+  }
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Auth Service listening on 0.0.0.0:${PORT}`);
   });

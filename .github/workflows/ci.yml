@@ -43,10 +43,17 @@ jobs:
   containers:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      PG_PASSWORD: ci-app-database-password
+      AUTH_PG_PASSWORD: ci-auth-database-password
+      JWT_SECRET: ci-jwt-signing-value
+      AUTH_SERVICE_TOKEN: ci-internal-service-token
+      AUTH_BOOTSTRAP_ADMIN_PASSWORD: ci-bootstrap-password
     steps:
       - uses: actions/checkout@v4
-      - name: Create CI environment
-        run: cp .env.example .env
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Validate core Compose model
         run: docker compose config --quiet
       - name: Validate host logging profile
@@ -55,3 +62,5 @@ jobs:
         run: docker compose --profile monitoring config --quiet
       - name: Build project images
         run: docker compose --profile host-logs build
+      - name: Test repository operations scripts
+        run: node --test scripts/*.test.cjs
