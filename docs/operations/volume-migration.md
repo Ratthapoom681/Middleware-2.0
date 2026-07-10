@@ -52,7 +52,7 @@ Start production and verify login, dashboard counts, configuration, Docs
 history, Sync History, and health endpoints:
 
 ```bash
-docker compose --profile host-logs up -d --build
+docker compose up -d --build
 docker compose ps
 ```
 

@@ -56,12 +56,10 @@ jobs:
           node-version: 22
       - name: Validate Compose model
         run: docker compose config --quiet
-      - name: Validate host logging profile
-        run: docker compose --profile host-logs config --quiet
       - name: Validate monitoring profile
         run: docker compose --profile monitoring config --quiet
       - name: Build project images
-        run: docker compose --profile host-logs build
+        run: docker compose build
       - name: Test repository operations scripts
         run: node --test scripts/*.test.cjs
       - name: Validate Linux operations scripts

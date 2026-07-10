@@ -4,14 +4,14 @@
 
 - Windows development:
   `docker compose up -d --build`
-- Linux production with host logs:
-  `docker compose --profile host-logs up -d --build`
+- Linux production:
+  `docker compose up -d --build`
 - Optional monitoring:
   `docker compose --profile monitoring up -d monitor`
 
-The core stack does not require either optional profile. If a collector is not
-running, the vulnerability service remains healthy and the corresponding Log
-Monitor endpoint reports that source as unavailable.
+The core stack starts the Linux auth-log and Docker log collectors by default.
+If a collector cannot read a source, the vulnerability service remains healthy
+and the corresponding Log Monitor endpoint reports that source as unavailable.
 
 ## Network Boundaries
 

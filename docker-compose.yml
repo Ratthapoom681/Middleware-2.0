@@ -175,7 +175,6 @@ services:
     image: ${IMAGE_NAMESPACE:-internal-security-middleware}/linux-log-collector:${IMAGE_TAG:-local}
     build:
       context: apps/vulnerability/collectors/linux-auth-log
-    profiles: [host-logs]
     environment:
       TZ: ${TZ:-Asia/Bangkok}
       NODE_ENV: production
@@ -206,7 +205,6 @@ services:
     image: ${IMAGE_NAMESPACE:-internal-security-middleware}/docker-log-collector:${IMAGE_TAG:-local}
     build:
       context: apps/vulnerability/collectors/docker-log
-    profiles: [host-logs]
     environment:
       TZ: ${TZ:-Asia/Bangkok}
       NODE_ENV: production

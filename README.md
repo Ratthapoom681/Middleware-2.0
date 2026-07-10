@@ -103,14 +103,9 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
    docker compose up -d --build
    ```
 
-   On a Linux host, enable the host-log collectors explicitly when needed:
-   ```powershell
-   docker compose --profile host-logs up -d --build
-   ```
-
-   The `host-logs` profile is intentionally disabled during normal Windows
-   development because its collectors require Linux host logs and the Docker
-   socket.
+   The Linux auth-log and Docker log collectors are part of the default stack.
+   They start with the same command and report unavailable sources through Log
+   Monitor if a host log source is not present.
 
    Production stores administrator-edited Docs content and history in the
    namespaced `docs-data` volume. The image seeds missing or unchanged shipped
@@ -242,7 +237,7 @@ rollback, follow the [persistent volume migration runbook](docs/operations/volum
 
 - `/apps` — independently buildable gateway, Auth, Hub, vulnerability, Wazuh, and Docs applications.
 - `/packages` — shared UI primitives, authentication helpers, time formatting, and test utilities.
-- `/docker-compose.yml` — the single Compose model, including optional `host-logs` and `monitoring` profiles.
+- `/docker-compose.yml` — the single Compose model, including the default collectors and optional `monitoring` profile.
 - `/scripts` — environment generation, operations, and load-testing tools.
 - `/docs/architecture` — deployment contracts and repository design.
 
