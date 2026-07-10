@@ -323,12 +323,16 @@ If you haven't already, get the project files onto your Docker host.
 ### Step 4.2 — Create the Environment File
 
 ```powershell
-Copy-Item .env.example .env
+node scripts/generate-env.cjs
 ```
 
-### Step 4.3 — Edit the `.env` File
+The generator creates `.env` when missing and fills only blank or missing
+managed secrets in an existing `.env`. It does not replace non-empty values
+unless you explicitly pass `--force`.
 
-Open `.env` in a text editor and set **secure, random values** for the following:
+### Step 4.3 — Review the `.env` File
+
+Open `.env` in a text editor and verify the generated values:
 
 ```ini
 # Gateway port (the port you'll access in the browser)
@@ -349,10 +353,14 @@ JWT_SECRET=<set-a-long-random-string-here>
 
 # Internal service token for Hub ↔ DefectDojo communication
 AUTH_SERVICE_TOKEN=<set-another-random-string-here>
+
+# First-start administrator password
+AUTH_BOOTSTRAP_ADMIN_PASSWORD=<set-a-strong-bootstrap-password-here>
 ```
 
 > [!WARNING]
-> Do **not** use the default `change-me` values in any shared or deployed environment. Generate strong random values for all password and secret fields.
+> Keep `.env` private. Regenerate with `--force` only before the first startup
+> or after you intentionally rotate matching database/auth state.
 
 ### Step 4.4 — Start All Containers
 

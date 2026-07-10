@@ -91,8 +91,10 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
    node scripts/generate-env.cjs
    ```
 
-   The generator refuses to overwrite an existing `.env`. If Node.js is not
-   installed on the host, copy `.env.example` manually and fill every blank
+   The generator is safe to rerun: it creates `.env` when missing and fills
+   only blank or missing managed secrets in an existing `.env`. It does not
+   replace non-empty values unless you explicitly pass `--force`. If Node.js is
+   not installed on the host, copy `.env.example` manually and fill every blank
    secret before starting Compose.
 
 2. **Boot the Orchestration Stack**:

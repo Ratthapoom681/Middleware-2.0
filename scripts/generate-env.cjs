@@ -10,6 +10,44 @@ const GENERATED_VALUES = {
   AUTH_BOOTSTRAP_ADMIN_PASSWORD: () => crypto.randomBytes(24).toString('base64url')
 };
 
+const parseEnvLine = (line) => {
+  const match = line.match(/^([A-Z][A-Z0-9_]*)=(.*)$/);
+  if (!match) return null;
+  return { key: match[1], value: match[2] };
+};
+
+const hasUsableValue = (value) => String(value || '').trim().length > 0;
+
+const replaceManagedValues = (content, { fillOnly = false } = {}) => {
+  const generated = {};
+  const seenKeys = new Set();
+  const lines = content.split(/\r?\n/).map(line => {
+    const parsed = parseEnvLine(line);
+    if (!parsed || !GENERATED_VALUES[parsed.key]) return line;
+    seenKeys.add(parsed.key);
+    if (fillOnly && hasUsableValue(parsed.value)) return line;
+    generated[parsed.key] = GENERATED_VALUES[parsed.key]();
+    return `${parsed.key}=${generated[parsed.key]}`;
+  });
+
+  if (fillOnly) {
+    const missingKeys = Object.keys(GENERATED_VALUES).filter(key => !seenKeys.has(key));
+    if (missingKeys.length) {
+      if (lines.length && lines[lines.length - 1] !== '') lines.push('');
+      lines.push('# Generated required local secrets');
+      for (const key of missingKeys) {
+        generated[key] = GENERATED_VALUES[key]();
+        lines.push(`${key}=${generated[key]}`);
+      }
+    }
+  }
+
+  return {
+    content: lines.join('\n'),
+    generatedKeys: Object.keys(generated)
+  };
+};
+
 const generateEnvironment = ({
   templatePath = path.resolve('.env.example'),
   outputPath = path.resolve('.env'),
@@ -18,24 +56,14 @@ const generateEnvironment = ({
   if (!fs.existsSync(templatePath)) {
     throw new Error(`Environment template not found: ${templatePath}`);
   }
-  if (fs.existsSync(outputPath) && !overwrite) {
-    throw new Error(`Refusing to overwrite existing environment file: ${outputPath}`);
-  }
 
-  const generated = Object.fromEntries(
-    Object.entries(GENERATED_VALUES).map(([key, factory]) => [key, factory()])
-  );
-  const content = fs.readFileSync(templatePath, 'utf8')
-    .split(/\r?\n/)
-    .map(line => {
-      const match = line.match(/^([A-Z][A-Z0-9_]*)=/);
-      if (!match || !generated[match[1]]) return line;
-      return `${match[1]}=${generated[match[1]]}`;
-    })
-    .join('\n');
+  const outputExists = fs.existsSync(outputPath);
+  const sourcePath = outputExists && !overwrite ? outputPath : templatePath;
+  const source = fs.readFileSync(sourcePath, 'utf8');
+  const { content, generatedKeys } = replaceManagedValues(source, { fillOnly: outputExists && !overwrite });
 
   fs.writeFileSync(outputPath, content, { encoding: 'utf8', mode: 0o600 });
-  return { outputPath, generatedKeys: Object.keys(generated) };
+  return { outputPath, generatedKeys, created: !outputExists || overwrite };
 };
 
 const parseArguments = (argv) => {
@@ -51,11 +79,16 @@ const parseArguments = (argv) => {
 if (require.main === module) {
   try {
     const result = generateEnvironment(parseArguments(process.argv.slice(2)));
-    console.log(`Created ${result.outputPath} with generated values for ${result.generatedKeys.join(', ')}`);
+    if (result.generatedKeys.length) {
+      const action = result.created ? 'Created' : 'Updated';
+      console.log(`${action} ${result.outputPath} with generated values for ${result.generatedKeys.join(', ')}`);
+    } else {
+      console.log(`No missing generated values found in ${result.outputPath}`);
+    }
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;
   }
 }
 
-module.exports = { generateEnvironment };
+module.exports = { generateEnvironment, replaceManagedValues };

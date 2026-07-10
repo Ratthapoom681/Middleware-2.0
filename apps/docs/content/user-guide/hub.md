@@ -63,14 +63,16 @@ Viewer accounts can be restricted to specific product names. Admin accounts have
 
 Use these steps to configure and run the application locally with Docker Compose.
 
-### Step 1: Copy the Environment File
-Open a terminal in the project root and copy the example environment file:
+### Step 1: Generate the Environment File
+Open a terminal in the project root and generate the environment file:
 ```powershell
-Copy-Item .env.example .env
+node scripts/generate-env.cjs
 ```
 
 ### Step 2: Configure Environment Variables
-Open `.env` in a text editor and set values for each variable:
+The generator creates `.env` when missing and fills only blank or missing
+managed secrets in an existing `.env`. Open `.env` in a text editor and review
+the values:
 
 | Variable | Purpose | What Happens If Wrong | Example |
 |---|---|---|---|

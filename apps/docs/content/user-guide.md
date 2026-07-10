@@ -103,15 +103,17 @@ Viewer accounts can be restricted to specific product names. Admin accounts have
 
 ## 4. Start the System
 
-1. Copy the example environment file:
+1. Generate a safe local environment file:
    ```powershell
-   Copy-Item .env.example .env
+   node scripts/generate-env.cjs
    ```
-2. Edit `.env` and set secure random values for:
+2. Review `.env`. The generator creates or fills blank values for:
    - `PG_PASSWORD`
    - `AUTH_PG_PASSWORD`
    - `JWT_SECRET` (at least 32 characters)
    - `AUTH_SERVICE_TOKEN`
+   - `AUTH_BOOTSTRAP_ADMIN_PASSWORD`
+   It does not replace non-empty values unless you explicitly pass `--force`.
 3. Start the containers:
    ```powershell
    docker compose up -d --build

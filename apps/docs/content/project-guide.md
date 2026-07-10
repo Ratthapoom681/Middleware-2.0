@@ -106,14 +106,21 @@ Wazuh Viewer:
 ### Integrated Docker runtime
 
 ```powershell
-Copy-Item .env.example .env
+node scripts/generate-env.cjs
 docker compose up -d --build
 docker compose ps
 ```
 
-With the sample environment, open `http://localhost/`. If `.env` is absent and `GATEWAY_PORT` is not otherwise set, use `http://localhost/`.
+The generator creates `.env` when missing and fills only blank or missing
+managed secrets in an existing `.env`; it does not replace non-empty values
+unless you explicitly pass `--force`.
 
-Change `PG_PASSWORD`, `AUTH_PG_PASSWORD`, `JWT_SECRET`, and `AUTH_SERVICE_TOKEN` before a shared or deployed installation. PostgreSQL initialization values are retained in named volumes; changing database credentials later does not rewrite an existing volume.
+With the generated environment, open `http://localhost/`. If `.env` is absent and `GATEWAY_PORT` is not otherwise set, use `http://localhost/`.
+
+Review `PG_PASSWORD`, `AUTH_PG_PASSWORD`, `JWT_SECRET`, `AUTH_SERVICE_TOKEN`,
+and `AUTH_BOOTSTRAP_ADMIN_PASSWORD` before a shared or deployed installation.
+PostgreSQL initialization values are retained in named volumes; changing
+database credentials later does not rewrite an existing volume.
 
 Useful service operations:
 

@@ -224,8 +224,12 @@ environment file:
 node scripts/generate-env.cjs
 ```
 
-The generator creates strong database, JWT, service-token, and bootstrap
-administrator secrets. Review `.env`, including:
+The generator is safe to rerun. It creates `.env` when missing and fills only
+blank or missing managed secrets in an existing `.env`; it does not replace
+non-empty values unless you explicitly pass `--force`.
+
+It creates strong database, JWT, service-token, and bootstrap administrator
+secrets. Review `.env`, including:
 
 ```ini
 GATEWAY_PORT=80
