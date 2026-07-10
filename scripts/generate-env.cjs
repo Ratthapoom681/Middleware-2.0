@@ -2,6 +2,10 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+const REPOSITORY_ROOT = path.resolve(__dirname, '..');
+const DEFAULT_TEMPLATE_PATH = path.join(REPOSITORY_ROOT, '.env.example');
+const DEFAULT_OUTPUT_PATH = path.join(REPOSITORY_ROOT, '.env');
+
 const GENERATED_VALUES = {
   PG_PASSWORD: () => crypto.randomBytes(24).toString('hex'),
   AUTH_PG_PASSWORD: () => crypto.randomBytes(24).toString('hex'),
@@ -49,8 +53,8 @@ const replaceManagedValues = (content, { fillOnly = false } = {}) => {
 };
 
 const generateEnvironment = ({
-  templatePath = path.resolve('.env.example'),
-  outputPath = path.resolve('.env'),
+  templatePath = DEFAULT_TEMPLATE_PATH,
+  outputPath = DEFAULT_OUTPUT_PATH,
   overwrite = false
 } = {}) => {
   if (!fs.existsSync(templatePath)) {
@@ -91,4 +95,9 @@ if (require.main === module) {
   }
 }
 
-module.exports = { generateEnvironment, replaceManagedValues };
+module.exports = {
+  DEFAULT_OUTPUT_PATH,
+  DEFAULT_TEMPLATE_PATH,
+  generateEnvironment,
+  replaceManagedValues
+};
