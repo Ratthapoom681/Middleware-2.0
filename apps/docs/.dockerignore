@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.log
+server/*.test.cjs
+web/src/**/*.test.js
+content/.backups
+content/.seed-manifest.json

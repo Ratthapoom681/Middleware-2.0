@@ -1,0 +1,6 @@
+{
+  "name": "@middleware/test-utils",
+  "private": true,
+  "version": "1.0.0",
+  "main": "index.cjs"
+}

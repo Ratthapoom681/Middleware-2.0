@@ -7,12 +7,6 @@ npm-debug.log*
 node_modules/
 dist/
 load-results/
-hub-service/node_modules/
-hub-service/dist/
-vulnerability-service/node_modules/
-vulnerability-service/dist/
-wazuh-service/node_modules/
-wazuh-service/dist/
 
 # Environment files
 .env

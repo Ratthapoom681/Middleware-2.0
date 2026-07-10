@@ -21,7 +21,7 @@ graph TB
     Auth --> AuthDB[(Auth PostgreSQL 16)]
     Auth -. first-start import .-> DB[(App PostgreSQL 16)]
     DDojo --> DB
-    DDojo & Docs -->|auth introspection| Gateway
+    DDojo & Docs -->|auth introspection| Auth
 
     style Gateway fill:#6366f1,color:#fff
     style Hub fill:#172033,stroke:#6366f1,color:#f1f4f9
@@ -49,7 +49,7 @@ The main gateway of the system. It handles:
 
 ### 3. DefectDojo Viewer (`defectdojo` · Port `3001`)
 Vulnerability workflow management tool:
-- **Backend (Express)**: Validates auth-service JWTs locally, uses live introspection when available, and falls back to valid unexpired claims only during an auth transport outage.
+- **Backend (Express)**: Validates Auth service JWTs locally, uses live introspection when available, and falls back to valid unexpired claims only during an auth transport outage.
 - **Frontend (React)**: Displays pulled vulnerability findings, CVE compactions, and coordinates ticket workflows with Redmine. A "Back to Hub" nav item is integrated to return to the portal switcher.
 
 ### 4. Wazuh Viewer (`wazuh` · Port `3002`)
@@ -99,12 +99,12 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
    On Windows development, start the portable core stack with the Docs source
    bind overlay:
    ```powershell
-   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+   docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.dev.yml up -d --build
    ```
 
    On the Linux production host, enable the host-log collectors explicitly:
    ```powershell
-   docker compose --profile host-logs up -d --build
+   docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.prod.yml -f infra/compose/compose.observability.yml --profile host-logs up -d --build
    ```
 
    The `host-logs` profile is intentionally disabled during normal Windows
@@ -118,9 +118,9 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
 3. **Access the Application**:
    Open **`http://localhost`** in your browser. If `GATEWAY_PORT` is changed,
    include that port explicitly.
-   - **Default Credentials**: 
+   - **Fresh production administrator**:
      - **Username**: `admin`
-     - **Password**: `admin`
+     - **Password**: the value supplied as `AUTH_BOOTSTRAP_ADMIN_PASSWORD`
 
 ### Cloud Server Access
 
@@ -147,7 +147,7 @@ gateway port), then browse to `http://<server-public-ip>/`.
 
 ## Documentation
 
-For a comprehensive, step-by-step walkthrough of all features, settings, user permissions, and sync operations, refer to the [Step-by-Step User Guide](docs-service/docs/user-guide.md).
+For a comprehensive, step-by-step walkthrough of all features, settings, user permissions, and sync operations, refer to the [Step-by-Step User Guide](apps/docs/content/user-guide.md).
 
 ---
 
@@ -175,7 +175,7 @@ docker compose up -d --build wazuh
 docker compose stop hub
 
 # With auth stopped, existing unexpired tokens use local validation.
-docker compose stop auth
+docker compose stop auth-primary
 ```
 
 ### Concurrent login and service capacity test
@@ -204,7 +204,7 @@ The Gateway deliberately limits login to 5 requests/second plus a burst of 10 an
 The Compose stack includes a Glances monitor container for whole-project resource visibility across the host and all Docker services:
 
 ```powershell
-docker compose up -d monitor
+docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.observability.yml --profile monitoring up -d monitor
 ```
 
 The monitor is isolated behind the `monitoring` profile. Starting it explicitly
@@ -222,7 +222,7 @@ Then open `http://localhost:61208`. Watch `defectdojo`, `db`, and `auth-db` duri
 User administration is centralized:
 - Log in as the `admin` user.
 - Click **User Management** in the administration section of the Hub.
-- The auth-service API writes to `auth-db`. DefectDojo reads auth-service tokens and live introspection rather than storing password hashes locally.
+- The Auth API writes to `auth-db`. DefectDojo reads Auth tokens and live introspection rather than storing password hashes locally.
 
 ### Database Credentials Note
 > [!WARNING]
@@ -239,12 +239,12 @@ rollback, follow the [persistent volume migration runbook](docs/operations/volum
 
 ## Directory Layout
 
-- `/gateway-service` — Nginx gateway, auth routing, and degraded Hub page.
-- `/auth-service` — Express authentication API and standalone login app.
-- `/hub-service` — Static React portal switcher and user-management frontend.
-- `/vulnerability-service` — Express + React code for vulnerability management.
-- `/wazuh-service` — Static React code for the SIEM mockup.
-- `/docs-service` — React + Express documentation reader and Markdown content.
+- `/apps` — independently buildable gateway, Auth, Hub, vulnerability, Wazuh, and Docs applications.
+- `/packages` — shared UI primitives, authentication helpers, time formatting, and test utilities.
+- `/infra/compose` — base, development, production-hardening, and observability Compose models.
+- `/scripts` — environment generation, operations, and load-testing tools.
+- `/docs/architecture` — deployment contracts and repository design.
 
 The stable Compose names, source directories, and public routes are listed in
-the [service catalog](docs/architecture/service-catalog.md).
+the [service catalog](docs/architecture/service-catalog.md). See the
+[repository layout](docs/architecture/repository-layout.md) for ownership rules.

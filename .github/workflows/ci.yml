@@ -18,11 +18,11 @@ jobs:
       fail-fast: false
       matrix:
         service:
-          - auth-service
-          - hub-service
-          - vulnerability-service
-          - wazuh-service
-          - docs-service
+          - apps/auth
+          - apps/hub
+          - apps/vulnerability
+          - apps/wazuh
+          - apps/docs
     defaults:
       run:
         working-directory: ${{ matrix.service }}
@@ -34,9 +34,9 @@ jobs:
           cache: npm
           cache-dependency-path: ${{ matrix.service }}/package-lock.json
       - run: npm ci
-      - if: matrix.service == 'auth-service' || matrix.service == 'docs-service' || matrix.service == 'vulnerability-service'
+      - if: matrix.service == 'apps/auth' || matrix.service == 'apps/docs' || matrix.service == 'apps/vulnerability'
         run: npm test
-      - if: matrix.service == 'vulnerability-service'
+      - if: matrix.service == 'apps/vulnerability'
         run: npm run lint
       - run: npm run build
 
@@ -55,15 +55,17 @@ jobs:
         with:
           node-version: 22
       - name: Validate core Compose model
-        run: docker compose config --quiet
+        run: docker compose -f infra/compose/compose.yml config --quiet
+      - name: Validate production hardening
+        run: docker compose -f infra/compose/compose.yml -f infra/compose/compose.prod.yml config --quiet
       - name: Validate host logging profile
-        run: docker compose --profile host-logs config --quiet
+        run: docker compose -f infra/compose/compose.yml -f infra/compose/compose.observability.yml --profile host-logs config --quiet
       - name: Validate monitoring profile
-        run: docker compose --profile monitoring config --quiet
+        run: docker compose -f infra/compose/compose.yml -f infra/compose/compose.observability.yml --profile monitoring config --quiet
       - name: Validate Windows development overlay
-        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
+        run: docker compose -f infra/compose/compose.yml -f infra/compose/compose.dev.yml config --quiet
       - name: Build project images
-        run: docker compose --profile host-logs build
+        run: docker compose -f infra/compose/compose.yml -f infra/compose/compose.observability.yml --profile host-logs build
       - name: Test repository operations scripts
         run: node --test scripts/*.test.cjs
       - name: Validate Linux operations scripts

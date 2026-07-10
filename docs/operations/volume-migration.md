@@ -52,8 +52,8 @@ Start production and verify login, dashboard counts, configuration, Docs
 history, Sync History, and health endpoints:
 
 ```bash
-docker compose --profile host-logs up -d --build
-docker compose ps
+docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.prod.yml -f infra/compose/compose.observability.yml --profile host-logs up -d --build
+docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.prod.yml ps
 ```
 
 Rollback is changing `VOLUME_NAMESPACE` back to `defectdojo-viewer` and

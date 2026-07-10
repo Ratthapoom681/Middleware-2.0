@@ -2,9 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const loaders = [
-  require('../auth-service/backend/runtime-config.cjs').loadRuntimeSecrets,
-  require('../docs-service/backend/runtime-config.cjs').loadRuntimeSecrets,
-  require('../vulnerability-service/backend/lib/runtime-config.cjs').loadRuntimeSecrets
+  require('../apps/auth/server/runtime-config.cjs').loadRuntimeSecrets,
+  require('../apps/docs/server/runtime-config.cjs').loadRuntimeSecrets,
+  require('../apps/vulnerability/server/lib/runtime-config.cjs').loadRuntimeSecrets
 ];
 
 test('all protected services enforce the same production secret contract', () => {

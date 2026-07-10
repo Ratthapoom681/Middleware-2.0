@@ -3,6 +3,10 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+COMPOSE=(docker compose
+  --env-file "$ROOT_DIR/.env"
+  -f "$ROOT_DIR/infra/compose/compose.yml"
+  -f "$ROOT_DIR/infra/compose/compose.prod.yml")
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="${1:-$ROOT_DIR/backups/$STAMP}"
@@ -20,33 +24,33 @@ BACKUP_DIR="$(cd "$BACKUP_DIR" && pwd)"
 
 restart_writers() {
   if [[ "$RESTART_WRITERS" == "1" && "${LEAVE_STOPPED:-0}" != "1" ]]; then
-    docker compose start "${WRITE_SERVICES[@]}" >/dev/null
+    "${COMPOSE[@]}" start "${WRITE_SERVICES[@]}" >/dev/null
   fi
 }
 trap restart_writers EXIT
 
-docker compose config --quiet
-docker compose stop "${WRITE_SERVICES[@]}"
+"${COMPOSE[@]}" config --quiet
+"${COMPOSE[@]}" stop "${WRITE_SERVICES[@]}"
 
-docker compose exec -T db pg_dump \
+"${COMPOSE[@]}" exec -T db pg_dump \
   -U "${PG_USER:-defectdojo}" \
   -d "${PG_DB:-defectdojo_viewer}" \
   --format=custom --no-owner --file=- > "$BACKUP_DIR/app-db.dump"
 
-docker compose exec -T auth-db pg_dump \
+"${COMPOSE[@]}" exec -T auth-db pg_dump \
   -U "${AUTH_PG_USER:-middleware_auth}" \
   -d "${AUTH_PG_DB:-middleware_auth}" \
   --format=custom --no-owner --file=- > "$BACKUP_DIR/auth-db.dump"
 
-docker compose run --rm --no-deps --entrypoint tar defectdojo \
+"${COMPOSE[@]}" run --rm --no-deps --entrypoint tar defectdojo \
   -C /app/data -czf - . > "$BACKUP_DIR/defectdojo-data.tar.gz"
-docker compose run --rm --no-deps --entrypoint tar docs \
+"${COMPOSE[@]}" run --rm --no-deps --entrypoint tar docs \
   -C /app/docs -czf - . > "$BACKUP_DIR/docs-data.tar.gz"
 
-APP_FINDINGS="$(docker compose exec -T db psql \
+APP_FINDINGS="$("${COMPOSE[@]}" exec -T db psql \
   -U "${PG_USER:-defectdojo}" -d "${PG_DB:-defectdojo_viewer}" -Atc \
   "SELECT count(*) FROM defectdojo_viewer_findings" 2>/dev/null || echo unknown)"
-AUTH_USERS="$(docker compose exec -T auth-db psql \
+AUTH_USERS="$("${COMPOSE[@]}" exec -T auth-db psql \
   -U "${AUTH_PG_USER:-middleware_auth}" -d "${AUTH_PG_DB:-middleware_auth}" -Atc \
   "SELECT count(*) FROM auth_users" 2>/dev/null || echo unknown)"
 
@@ -71,7 +75,7 @@ EOF
 
 RESTART_WRITERS=0
 if [[ "${LEAVE_STOPPED:-0}" != "1" ]]; then
-  docker compose start "${WRITE_SERVICES[@]}"
+  "${COMPOSE[@]}" start "${WRITE_SERVICES[@]}"
 fi
 
 echo "Backup complete: $BACKUP_DIR"

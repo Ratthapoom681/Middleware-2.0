@@ -1,0 +1,229 @@
+name: ${COMPOSE_PROJECT_NAME:-defectdojo-viewer}
+
+x-app-build: &app-build
+  context: ../..
+
+services:
+  gateway:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/gateway:${IMAGE_TAG:-local}
+    build:
+      <<: *app-build
+      dockerfile: apps/gateway/Dockerfile
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+    ports:
+      - "${GATEWAY_PORT:-80}:80"
+    networks: [edge]
+    restart: unless-stopped
+
+  hub:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/hub:${IMAGE_TAG:-local}
+    build:
+      <<: *app-build
+      dockerfile: apps/hub/Dockerfile
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+    networks: [edge]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+    restart: unless-stopped
+
+  auth-primary:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/auth:${IMAGE_TAG:-local}
+    build:
+      <<: *app-build
+      dockerfile: apps/auth/Dockerfile
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+      NODE_ENV: production
+      PORT: 3004
+      AUTH_DATABASE_URL: postgres://${AUTH_PG_USER:-middleware_auth}:${AUTH_PG_PASSWORD:?Set AUTH_PG_PASSWORD in .env}@auth-db:5432/${AUTH_PG_DB:-middleware_auth}
+      LEGACY_DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:?Set PG_PASSWORD in .env}@db:5432/${PG_DB:-defectdojo_viewer}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:?Set AUTH_SERVICE_TOKEN in .env}
+      AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${AUTH_BOOTSTRAP_ADMIN_PASSWORD:-}
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    networks: [edge, app-data, auth-data]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+    restart: unless-stopped
+
+  defectdojo:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/vulnerability:${IMAGE_TAG:-local}
+    build:
+      <<: *app-build
+      dockerfile: apps/vulnerability/Dockerfile
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+      NODE_ENV: production
+      PORT: 3001
+      DATA_DIR: /app/data
+      DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:?Set PG_PASSWORD in .env}@db:5432/${PG_DB:-defectdojo_viewer}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AUTH_INTROSPECTION_URL: http://auth-primary:3004/api/auth/introspect
+      AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:?Set AUTH_SERVICE_TOKEN in .env}
+      AUTH_REQUIRED_APP: defectdojo
+      AUTH_INTROSPECTION_TIMEOUT_MS: 1000
+      AUTH_CIRCUIT_OPEN_MS: 15000
+      ENABLE_LEGACY_LOCAL_AUTH: "false"
+      AUTO_SYNC_STATUS_EMBEDDED: "false"
+      DOCKER_LOG_COLLECTOR_URL: http://docker-log-collector:3012
+      DOCKER_LOG_COLLECTOR_TIMEOUT_MS: 2500
+      LINUX_AUTH_LOG_COLLECTOR_URL: http://linux-log-collector:3011
+      LINUX_AUTH_LOG_COLLECTOR_TIMEOUT_MS: 2500
+    volumes:
+      - defectdojo-data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [edge, app-data, observability]
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: "1.5"
+    restart: unless-stopped
+
+  auto-sync-status:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/vulnerability:${IMAGE_TAG:-local}
+    command: ["node", "workers/auto-sync-status.cjs"]
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+      NODE_ENV: production
+      DATA_DIR: /app/data
+      DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:?Set PG_PASSWORD in .env}@db:5432/${PG_DB:-defectdojo_viewer}
+      NODE_OPTIONS: --max-old-space-size=80
+      PG_POOL_MAX: 2
+      REDMINE_CHECK_CONCURRENCY: 2
+      UV_THREADPOOL_SIZE: 2
+    volumes:
+      - defectdojo-data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [edge, app-data]
+    healthcheck:
+      disable: true
+    mem_limit: 128m
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.10"
+    restart: unless-stopped
+
+  wazuh:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/wazuh:${IMAGE_TAG:-local}
+    build:
+      <<: *app-build
+      dockerfile: apps/wazuh/Dockerfile
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+    networks: [edge]
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.10"
+    restart: unless-stopped
+
+  docs:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/docs:${IMAGE_TAG:-local}
+    build:
+      <<: *app-build
+      dockerfile: apps/docs/Dockerfile
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+      NODE_ENV: production
+      PORT: 3003
+      DOCS_DIR: /app/docs
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AUTH_INTROSPECTION_URL: http://auth-primary:3004/api/auth/introspect
+      AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:?Set AUTH_SERVICE_TOKEN in .env}
+      AUTH_REQUIRED_APP: docs
+      AUTH_INTROSPECTION_TIMEOUT_MS: 1000
+      AUTH_CIRCUIT_OPEN_MS: 15000
+    volumes:
+      - docs-data:/app/docs
+    networks: [edge]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine@sha256:4e6e670bb069649261c9c18031f0aded7bb249a5b6664ddec29c013a89310d50
+    command: ["postgres", "-c", "timezone=Asia/Bangkok"]
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+      PGTZ: ${TZ:-Asia/Bangkok}
+      POSTGRES_DB: ${PG_DB:-defectdojo_viewer}
+      POSTGRES_USER: ${PG_USER:-defectdojo}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?Set PG_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [app-data]
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: "1.0"
+    restart: unless-stopped
+
+  auth-db:
+    image: postgres:16-alpine@sha256:4e6e670bb069649261c9c18031f0aded7bb249a5b6664ddec29c013a89310d50
+    command: ["postgres", "-c", "timezone=Asia/Bangkok"]
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+      PGTZ: ${TZ:-Asia/Bangkok}
+      POSTGRES_DB: ${AUTH_PG_DB:-middleware_auth}
+      POSTGRES_USER: ${AUTH_PG_USER:-middleware_auth}
+      POSTGRES_PASSWORD: ${AUTH_PG_PASSWORD:?Set AUTH_PG_PASSWORD in .env}
+    volumes:
+      - auth-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [auth-data]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    restart: unless-stopped
+
+volumes:
+  defectdojo-data:
+    name: ${VOLUME_NAMESPACE:-defectdojo-viewer}_defectdojo-data
+  postgres-data:
+    name: ${VOLUME_NAMESPACE:-defectdojo-viewer}_postgres-data
+  auth-data:
+    name: ${VOLUME_NAMESPACE:-defectdojo-viewer}_auth-data
+  docs-data:
+    name: ${VOLUME_NAMESPACE:-defectdojo-viewer}_docs-data
+
+networks:
+  edge:
+  app-data:
+    internal: true
+  auth-data:
+    internal: true
+  observability:
+    internal: true

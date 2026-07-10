@@ -6,18 +6,18 @@ Compose names below.
 
 | Compose service | Source directory | Public route | Responsibility |
 | --- | --- | --- | --- |
-| `gateway` | `gateway-service` | `/` and all routed paths | Edge routing and degraded Hub page |
-| `hub` | `hub-service` | `/` | Workspace portal and user-management UI |
-| `auth-primary` | `auth-service` | `/login/`, `/api/auth/*`, `/api/users*` | Identity, sessions, and authorization |
-| `defectdojo` | `vulnerability-service` | `/defectdojo/` | Vulnerability and Redmine workflows |
-| `auto-sync-status` | `vulnerability-service` | None | Background Redmine status worker |
-| `wazuh` | `wazuh-service` | `/wazuh/` | Static SIEM viewer |
-| `docs` | `docs-service` | `/docs/` | Documentation reader and editor |
-| `linux-log-collector` | `vulnerability-service/collectors/linux-auth-log` | None | Linux authentication log ingestion |
-| `docker-log-collector` | `vulnerability-service/collectors/docker-log` | None | Docker event-log ingestion |
+| `gateway` | `apps/gateway` | `/` and all routed paths | Edge routing and degraded Hub page |
+| `hub` | `apps/hub` | `/` | Workspace portal and user-management UI |
+| `auth-primary` | `apps/auth` | `/login/`, `/api/auth/*`, `/api/users*` | Identity, sessions, and authorization |
+| `defectdojo` | `apps/vulnerability` | `/defectdojo/` | Vulnerability and Redmine workflows |
+| `auto-sync-status` | `apps/vulnerability/workers` | None | Background Redmine status worker |
+| `wazuh` | `apps/wazuh` | `/wazuh/` | Static SIEM viewer |
+| `docs` | `apps/docs` | `/docs/` | Documentation reader and editor |
+| `linux-log-collector` | `apps/vulnerability/collectors/linux-auth-log` | None | Linux authentication log ingestion |
+| `docker-log-collector` | `apps/vulnerability/collectors/docker-log` | None | Docker event-log ingestion |
 | `db` | Upstream PostgreSQL image | None | Vulnerability workflow storage |
 | `auth-db` | Upstream PostgreSQL image | None | Authentication storage |
 | `monitor` | Upstream Glances image | Localhost-only port | Host and container monitoring |
 
-The public product name “DefectDojo Viewer” and its `/defectdojo/` route remain
-unchanged even though its source directory is named `vulnerability-service`.
+The public product name “DefectDojo Viewer,” Compose service name `defectdojo`,
+and `/defectdojo/` route remain unchanged.

@@ -1,41 +1,41 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    directory: /auth-service
+    directory: /apps/auth
     schedule: { interval: weekly }
   - package-ecosystem: npm
-    directory: /hub-service
+    directory: /apps/hub
     schedule: { interval: weekly }
   - package-ecosystem: npm
-    directory: /vulnerability-service
+    directory: /apps/vulnerability
     schedule: { interval: weekly }
   - package-ecosystem: npm
-    directory: /wazuh-service
+    directory: /apps/wazuh
     schedule: { interval: weekly }
   - package-ecosystem: npm
-    directory: /docs-service
+    directory: /apps/docs
     schedule: { interval: weekly }
   - package-ecosystem: docker
-    directory: /gateway-service
+    directory: /apps/gateway
     schedule: { interval: monthly }
   - package-ecosystem: docker
-    directory: /auth-service
+    directory: /apps/auth
     schedule: { interval: monthly }
   - package-ecosystem: docker
-    directory: /hub-service
+    directory: /apps/hub
     schedule: { interval: monthly }
   - package-ecosystem: docker
-    directory: /vulnerability-service
+    directory: /apps/vulnerability
     schedule: { interval: monthly }
   - package-ecosystem: docker
-    directory: /wazuh-service
+    directory: /apps/wazuh
     schedule: { interval: monthly }
   - package-ecosystem: docker
-    directory: /docs-service
+    directory: /apps/docs
     schedule: { interval: monthly }
   - package-ecosystem: docker
-    directory: /vulnerability-service/collectors/docker-log
+    directory: /apps/vulnerability/collectors/docker-log
     schedule: { interval: monthly }
   - package-ecosystem: docker
-    directory: /vulnerability-service/collectors/linux-auth-log
+    directory: /apps/vulnerability/collectors/linux-auth-log
     schedule: { interval: monthly }

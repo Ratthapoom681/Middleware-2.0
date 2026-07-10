@@ -10,6 +10,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BACKUP_DIR="$(cd "$1" && pwd)"
 TARGET_NAMESPACE="$2"
 RESTORE_PROJECT="${COMPOSE_PROJECT_NAME:-internal-security-middleware}-restore"
+COMPOSE=(docker compose
+  --env-file "$ROOT_DIR/.env"
+  -f "$ROOT_DIR/infra/compose/compose.yml"
+  -f "$ROOT_DIR/infra/compose/compose.prod.yml")
 
 if [[ ! "$TARGET_NAMESPACE" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
   echo "Invalid target namespace: $TARGET_NAMESPACE" >&2
@@ -46,30 +50,30 @@ for volume in "${TARGET_VOLUMES[@]}"; do
 done
 
 export VOLUME_NAMESPACE="$TARGET_NAMESPACE"
-docker compose -p "$RESTORE_PROJECT" up -d --wait db auth-db
+"${COMPOSE[@]}" -p "$RESTORE_PROJECT" up -d --wait db auth-db
 
-docker compose -p "$RESTORE_PROJECT" exec -T db pg_restore \
+"${COMPOSE[@]}" -p "$RESTORE_PROJECT" exec -T db pg_restore \
   -U "${PG_USER:-defectdojo}" \
   -d "${PG_DB:-defectdojo_viewer}" \
   --no-owner --clean --if-exists < "$BACKUP_DIR/app-db.dump"
-docker compose -p "$RESTORE_PROJECT" exec -T auth-db pg_restore \
+"${COMPOSE[@]}" -p "$RESTORE_PROJECT" exec -T auth-db pg_restore \
   -U "${AUTH_PG_USER:-middleware_auth}" \
   -d "${AUTH_PG_DB:-middleware_auth}" \
   --no-owner --clean --if-exists < "$BACKUP_DIR/auth-db.dump"
 
-docker compose -p "$RESTORE_PROJECT" run --rm --no-deps --entrypoint sh defectdojo \
+"${COMPOSE[@]}" -p "$RESTORE_PROJECT" run --rm --no-deps --entrypoint sh defectdojo \
   -c 'tar -xzf - -C /app/data' < "$BACKUP_DIR/defectdojo-data.tar.gz"
-docker compose -p "$RESTORE_PROJECT" run --rm --no-deps --entrypoint sh docs \
+"${COMPOSE[@]}" -p "$RESTORE_PROJECT" run --rm --no-deps --entrypoint sh docs \
   -c 'tar -xzf - -C /app/docs' < "$BACKUP_DIR/docs-data.tar.gz"
 
-docker compose -p "$RESTORE_PROJECT" exec -T db psql \
+"${COMPOSE[@]}" -p "$RESTORE_PROJECT" exec -T db psql \
   -U "${PG_USER:-defectdojo}" -d "${PG_DB:-defectdojo_viewer}" -Atc \
   "SELECT count(*) AS findings FROM defectdojo_viewer_findings"
-docker compose -p "$RESTORE_PROJECT" exec -T auth-db psql \
+"${COMPOSE[@]}" -p "$RESTORE_PROJECT" exec -T auth-db psql \
   -U "${AUTH_PG_USER:-middleware_auth}" -d "${AUTH_PG_DB:-middleware_auth}" -Atc \
   "SELECT count(*) AS users FROM auth_users"
 
-docker compose -p "$RESTORE_PROJECT" down
+"${COMPOSE[@]}" -p "$RESTORE_PROJECT" down
 
 echo "Restore complete in namespace: $TARGET_NAMESPACE"
 echo "Set VOLUME_NAMESPACE=$TARGET_NAMESPACE and run the normal production startup."

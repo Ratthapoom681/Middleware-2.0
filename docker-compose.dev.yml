@@ -1,4 +1,4 @@
 services:
   docs:
     volumes:
-      - ./docs-service/docs:/app/docs
+      - ./apps/docs/content:/app/docs

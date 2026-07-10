@@ -1,0 +1,78 @@
+services:
+  linux-log-collector:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/linux-log-collector:${IMAGE_TAG:-local}
+    build:
+      context: ../../apps/vulnerability/collectors/linux-auth-log
+    profiles: [host-logs]
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+      NODE_ENV: production
+      PORT: 3011
+      AUTH_LOG_SOURCE_MODE: auto
+      AUTH_LOG_PATHS: /host/var/log/secure,/host/var/log/auth.log
+      AUTH_JOURNAL_DIRS: /host/var/log/journal,/host/run/log/journal
+      AUTH_JOURNAL_UNITS: ssh.service,sshd.service,sudo.service,su.service,systemd-logind.service
+      AUTH_LOG_MAX_ROWS: 2000
+      AUTH_LOG_REFRESH_MS: 1000
+    volumes:
+      - /var/log:/host/var/log:ro
+      - /run/log/journal:/host/run/log/journal:ro
+    group_add:
+      - "${HOST_ADM_GID:-4}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [observability]
+    deploy:
+      resources:
+        limits:
+          memory: 96M
+          cpus: "0.10"
+    restart: unless-stopped
+
+  docker-log-collector:
+    image: ${IMAGE_NAMESPACE:-internal-security-middleware}/docker-log-collector:${IMAGE_TAG:-local}
+    build:
+      context: ../../apps/vulnerability/collectors/docker-log
+    profiles: [host-logs]
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+      NODE_ENV: production
+      PORT: 3012
+      DOCKER_LOG_PROJECT: ${COMPOSE_PROJECT_NAME:-}
+      DOCKER_LOG_SERVICES: ${DOCKER_LOG_SERVICES:-}
+      DOCKER_LOG_EXCLUDE_SERVICES: ${DOCKER_LOG_EXCLUDE_SERVICES:-gateway}
+      DOCKER_LOG_TAIL: 120
+      DOCKER_LOG_MAX_ROWS: 2000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [observability]
+    deploy:
+      resources:
+        limits:
+          memory: 96M
+          cpus: "0.10"
+    restart: unless-stopped
+
+  monitor:
+    image: nicolargo/glances:latest-full@sha256:58651aabedf62db8bfc1d252f8d3889675dfcdb5d0ad1c177ae5879c21626f3a
+    profiles: [monitoring]
+    pid: host
+    ports:
+      - "127.0.0.1:${MONITOR_PORT:-61208}:61208"
+    environment:
+      TZ: ${TZ:-Asia/Bangkok}
+      GLANCES_OPT: "-w"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/os-release:/etc/os-release:ro
+    networks: [edge]
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.15"
+    restart: unless-stopped
