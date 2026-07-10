@@ -17,11 +17,7 @@ packages/
   auth-client/
   time/
   test-utils/
-infra/compose/
-  compose.yml
-  compose.dev.yml
-  compose.observability.yml
-  compose.prod.yml
+docker-compose.yml
 scripts/
 docs/architecture/
 ```
@@ -31,16 +27,14 @@ docs/architecture/
 - `apps/*` own deployable behavior and remain independently installable.
 - `web` contains browser entry points and feature code; `server` contains HTTP
   APIs and persistence adapters; `workers` contains non-HTTP processes.
-- `apps/docs/content` is immutable shipped documentation. Production writes go
-  to the Docs volume; development can bind this directory explicitly.
+- `apps/docs/content` is immutable shipped documentation. Runtime writes go to
+  the Docs volume.
 - `packages/*` contain dependency-light code shared by multiple applications.
   Existing app-local modules may remain as compatibility facades while imports
   migrate.
-- `infra/compose/compose.yml` is the portable core. Development, production
-  hardening, and host observability are explicit overlays.
-- Root `docker-compose.yml` and `docker-compose.dev.yml` are compatibility
-  entry points only. New automation must use the canonical files under
-  `infra/compose`.
+- Root `docker-compose.yml` is the single canonical Compose model. Optional
+  Linux host-log collectors and Glances monitoring are controlled with Compose
+  profiles inside that file.
 
 ## Change Rules
 
@@ -48,4 +42,4 @@ docs/architecture/
 2. Do not combine source-layout changes with volume-namespace migrations.
 3. Add shared behavior to a package only after its app-specific contracts are
    covered by tests.
-4. Validate every Compose overlay combination and every application build.
+4. Validate the default Compose model, optional profiles, and every application build.

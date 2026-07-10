@@ -9,7 +9,7 @@ const { withEnvironment } = require('../packages/test-utils/index.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 
-test('canonical repository boundaries and Compose overlays exist', () => {
+test('canonical repository boundaries and single Compose model exist', () => {
   [
     'apps/gateway',
     'apps/auth/web',
@@ -27,10 +27,7 @@ test('canonical repository boundaries and Compose overlays exist', () => {
     'packages/auth-client',
     'packages/time',
     'packages/test-utils',
-    'infra/compose/compose.yml',
-    'infra/compose/compose.dev.yml',
-    'infra/compose/compose.observability.yml',
-    'infra/compose/compose.prod.yml'
+    'docker-compose.yml'
   ].forEach(relativePath => {
     assert.equal(fs.existsSync(path.join(ROOT, relativePath)), true, relativePath);
   });

@@ -113,7 +113,8 @@ Viewer accounts can be restricted to specific product names. Admin accounts have
    - `JWT_SECRET` (at least 32 characters)
    - `AUTH_SERVICE_TOKEN`
    - `AUTH_BOOTSTRAP_ADMIN_PASSWORD`
-   It does not replace non-empty values unless you explicitly pass `--force`.
+   It also replaces known unsafe auth placeholders, but it does not rotate
+   non-empty database passwords unless you explicitly pass `--force`.
 3. Start the containers:
    ```powershell
    docker compose up -d --build

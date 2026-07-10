@@ -91,22 +91,21 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
    node scripts/generate-env.cjs
    ```
 
-   The generator is safe to rerun: it creates `.env` when missing and fills
-   only blank or missing managed secrets in an existing `.env`. It does not
-   replace non-empty values unless you explicitly pass `--force`. If Node.js is
-   not installed on the host, copy `.env.example` manually and fill every blank
-   secret before starting Compose.
+   The generator is safe to rerun: it creates `.env` when missing, fills blank
+   or missing managed values, and replaces known unsafe auth placeholders. It
+   does not rotate non-empty database passwords unless you explicitly pass
+   `--force`. If Node.js is not installed on the host, copy `.env.example`
+   manually and fill every blank secret before starting Compose.
 
 2. **Boot the Orchestration Stack**:
-   On Windows development, start the portable core stack with the Docs source
-   bind overlay:
+   Start the core stack from the repository root:
    ```powershell
-   docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.dev.yml up -d --build
+   docker compose up -d --build
    ```
 
-   On the Linux production host, enable the host-log collectors explicitly:
+   On a Linux host, enable the host-log collectors explicitly when needed:
    ```powershell
-   docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.prod.yml -f infra/compose/compose.observability.yml --profile host-logs up -d --build
+   docker compose --profile host-logs up -d --build
    ```
 
    The `host-logs` profile is intentionally disabled during normal Windows
@@ -206,7 +205,7 @@ The Gateway deliberately limits login to 5 requests/second plus a burst of 10 an
 The Compose stack includes a Glances monitor container for whole-project resource visibility across the host and all Docker services:
 
 ```powershell
-docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.observability.yml --profile monitoring up -d monitor
+docker compose --profile monitoring up -d monitor
 ```
 
 The monitor is isolated behind the `monitoring` profile. Starting it explicitly
@@ -243,7 +242,7 @@ rollback, follow the [persistent volume migration runbook](docs/operations/volum
 
 - `/apps` — independently buildable gateway, Auth, Hub, vulnerability, Wazuh, and Docs applications.
 - `/packages` — shared UI primitives, authentication helpers, time formatting, and test utilities.
-- `/infra/compose` — base, development, production-hardening, and observability Compose models.
+- `/docker-compose.yml` — the single Compose model, including optional `host-logs` and `monitoring` profiles.
 - `/scripts` — environment generation, operations, and load-testing tools.
 - `/docs/architecture` — deployment contracts and repository design.
 

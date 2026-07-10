@@ -64,7 +64,7 @@ apps/                    Deployable applications
   vulnerability/        Web, server, workers, and collectors
   docs/{web,server,content}/
 packages/                Shared UI, auth, time, and test helpers
-infra/compose/           Core and environment-specific Compose models
+docker-compose.yml       Single Compose model with optional profiles
 scripts/                 Operations and verification tooling
 .env.example             Gateway, database, JWT, and service-token settings
 README.md                Operator-oriented repository overview
@@ -111,9 +111,9 @@ docker compose up -d --build
 docker compose ps
 ```
 
-The generator creates `.env` when missing and fills only blank or missing
-managed secrets in an existing `.env`; it does not replace non-empty values
-unless you explicitly pass `--force`.
+The generator creates `.env` when missing, fills blank or missing managed
+values, and replaces known unsafe auth placeholders. It does not rotate
+non-empty database passwords unless you explicitly pass `--force`.
 
 With the generated environment, open `http://localhost/`. If `.env` is absent and `GATEWAY_PORT` is not otherwise set, use `http://localhost/`.
 
@@ -397,7 +397,7 @@ The smoke test logs in and exercises operational endpoints, so use it only again
 
 For gateway or deployment changes:
 
-1. Update `infra/compose/`, `apps/gateway/nginx.conf`, and `.env.example` together when their contract changes.
+1. Update `docker-compose.yml`, `apps/gateway/nginx.conf`, and `.env.example` together when their contract changes.
 2. Preserve the same-origin paths used by the frontend API defaults.
 3. Validate with `docker compose config`, rebuild affected images, and check all three public health URLs.
 

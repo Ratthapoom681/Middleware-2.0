@@ -326,9 +326,9 @@ If you haven't already, get the project files onto your Docker host.
 node scripts/generate-env.cjs
 ```
 
-The generator creates `.env` when missing and fills only blank or missing
-managed secrets in an existing `.env`. It does not replace non-empty values
-unless you explicitly pass `--force`.
+The generator creates `.env` when missing, fills blank or missing managed
+values, and replaces known unsafe auth placeholders. It does not rotate
+non-empty database passwords unless you explicitly pass `--force`.
 
 ### Step 4.3 — Review the `.env` File
 

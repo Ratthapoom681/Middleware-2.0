@@ -1,4 +1,0 @@
-services:
-  docs:
-    volumes:
-      - ./apps/docs/content:/app/docs

@@ -3,11 +3,11 @@
 ## Supported Modes
 
 - Windows development:
-  `docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.dev.yml up -d --build`
+  `docker compose up -d --build`
 - Linux production with host logs:
-  `docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.prod.yml -f infra/compose/compose.observability.yml --profile host-logs up -d --build`
+  `docker compose --profile host-logs up -d --build`
 - Optional monitoring:
-  `docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.observability.yml --profile monitoring up -d monitor`
+  `docker compose --profile monitoring up -d monitor`
 
 The core stack does not require either optional profile. If a collector is not
 running, the vulnerability service remains healthy and the corresponding Log
@@ -38,8 +38,7 @@ variable retain the legacy `defectdojo-viewer_*` names. New environments should
 set `VOLUME_NAMESPACE=internal-security-middleware`. Changing this variable does
 not migrate data; use the documented volume migration procedure first.
 
-Production Docs content uses the namespaced `docs-data` volume. The image keeps
-shipped defaults under `/app/docs-default`; startup seeding copies missing
-files, updates files that still match the previous shipped hash, and preserves
-administrator-edited files. Windows development replaces that volume with the
-repository bind mount through `infra/compose/compose.dev.yml`.
+Docs content uses the namespaced `docs-data` volume in the single Compose
+model. The image keeps shipped defaults under `/app/docs-default`; startup
+seeding copies missing files, updates files that still match the previous
+shipped hash, and preserves administrator-edited files.

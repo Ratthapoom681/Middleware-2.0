@@ -12,8 +12,7 @@ TARGET_NAMESPACE="$2"
 RESTORE_PROJECT="${COMPOSE_PROJECT_NAME:-internal-security-middleware}-restore"
 COMPOSE=(docker compose
   --env-file "$ROOT_DIR/.env"
-  -f "$ROOT_DIR/infra/compose/compose.yml"
-  -f "$ROOT_DIR/infra/compose/compose.prod.yml")
+  -f "$ROOT_DIR/docker-compose.yml")
 
 if [[ ! "$TARGET_NAMESPACE" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
   echo "Invalid target namespace: $TARGET_NAMESPACE" >&2

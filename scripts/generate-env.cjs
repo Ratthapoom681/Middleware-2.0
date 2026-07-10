@@ -14,13 +14,34 @@ const GENERATED_VALUES = {
   AUTH_BOOTSTRAP_ADMIN_PASSWORD: () => crypto.randomBytes(24).toString('base64url')
 };
 
+const UNSAFE_AUTH_PLACEHOLDERS = new Set([
+  'change-me',
+  'change-this-jwt-secret',
+  'change-this-internal-service-token',
+  'dev-secret-key-change-me-in-production',
+  'dev-internal-auth-service-token'
+]);
+
+const AUTH_SECRET_KEYS = new Set([
+  'JWT_SECRET',
+  'AUTH_SERVICE_TOKEN',
+  'AUTH_BOOTSTRAP_ADMIN_PASSWORD'
+]);
+
 const parseEnvLine = (line) => {
   const match = line.match(/^([A-Z][A-Z0-9_]*)=(.*)$/);
   if (!match) return null;
   return { key: match[1], value: match[2] };
 };
 
-const hasUsableValue = (value) => String(value || '').trim().length > 0;
+const normalizeEnvValue = (value) => String(value || '').trim().replace(/^['"]|['"]$/g, '');
+
+const shouldGenerateValue = (key, value, { fillOnly }) => {
+  if (!fillOnly) return true;
+  const normalized = normalizeEnvValue(value);
+  if (!normalized) return true;
+  return AUTH_SECRET_KEYS.has(key) && UNSAFE_AUTH_PLACEHOLDERS.has(normalized);
+};
 
 const replaceManagedValues = (content, { fillOnly = false } = {}) => {
   const generated = {};
@@ -29,7 +50,7 @@ const replaceManagedValues = (content, { fillOnly = false } = {}) => {
     const parsed = parseEnvLine(line);
     if (!parsed || !GENERATED_VALUES[parsed.key]) return line;
     seenKeys.add(parsed.key);
-    if (fillOnly && hasUsableValue(parsed.value)) return line;
+    if (!shouldGenerateValue(parsed.key, parsed.value, { fillOnly })) return line;
     generated[parsed.key] = GENERATED_VALUES[parsed.key]();
     return `${parsed.key}=${generated[parsed.key]}`;
   });

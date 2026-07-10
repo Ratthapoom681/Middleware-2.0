@@ -94,6 +94,43 @@ test('environment generator fills only blank or missing managed values in existi
   assert.match(content, /^GATEWAY_PORT=80$/m);
 });
 
+test('environment generator replaces unsafe auth placeholders without rotating database passwords', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'middleware-env-placeholder-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const templatePath = path.join(dir, '.env.example');
+  const outputPath = path.join(dir, '.env');
+
+  fs.writeFileSync(templatePath, [
+    'PG_PASSWORD=',
+    'AUTH_PG_PASSWORD=',
+    'JWT_SECRET=',
+    'AUTH_SERVICE_TOKEN=',
+    'AUTH_BOOTSTRAP_ADMIN_PASSWORD='
+  ].join('\n'));
+
+  fs.writeFileSync(outputPath, [
+    'PG_PASSWORD=change-me',
+    'AUTH_PG_PASSWORD=change-me',
+    'JWT_SECRET=dev-secret-key-change-me-in-production',
+    'AUTH_SERVICE_TOKEN=dev-internal-auth-service-token',
+    'AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-me'
+  ].join('\n'));
+
+  const result = generateEnvironment({ templatePath, outputPath });
+  assert.deepEqual(result.generatedKeys.sort(), [
+    'AUTH_BOOTSTRAP_ADMIN_PASSWORD',
+    'AUTH_SERVICE_TOKEN',
+    'JWT_SECRET'
+  ]);
+
+  const content = fs.readFileSync(outputPath, 'utf8');
+  assert.match(content, /^PG_PASSWORD=change-me$/m);
+  assert.match(content, /^AUTH_PG_PASSWORD=change-me$/m);
+  assert.doesNotMatch(content, /^JWT_SECRET=dev-secret-key-change-me-in-production$/m);
+  assert.doesNotMatch(content, /^AUTH_SERVICE_TOKEN=dev-internal-auth-service-token$/m);
+  assert.doesNotMatch(content, /^AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-me$/m);
+});
+
 test('environment generator CLI works when launched from the scripts directory', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'middleware-env-cwd-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

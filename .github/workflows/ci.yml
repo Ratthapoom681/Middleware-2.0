@@ -54,18 +54,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Validate core Compose model
-        run: docker compose -f infra/compose/compose.yml config --quiet
-      - name: Validate production hardening
-        run: docker compose -f infra/compose/compose.yml -f infra/compose/compose.prod.yml config --quiet
+      - name: Validate Compose model
+        run: docker compose config --quiet
       - name: Validate host logging profile
-        run: docker compose -f infra/compose/compose.yml -f infra/compose/compose.observability.yml --profile host-logs config --quiet
+        run: docker compose --profile host-logs config --quiet
       - name: Validate monitoring profile
-        run: docker compose -f infra/compose/compose.yml -f infra/compose/compose.observability.yml --profile monitoring config --quiet
-      - name: Validate Windows development overlay
-        run: docker compose -f infra/compose/compose.yml -f infra/compose/compose.dev.yml config --quiet
+        run: docker compose --profile monitoring config --quiet
       - name: Build project images
-        run: docker compose -f infra/compose/compose.yml -f infra/compose/compose.observability.yml --profile host-logs build
+        run: docker compose --profile host-logs build
       - name: Test repository operations scripts
         run: node --test scripts/*.test.cjs
       - name: Validate Linux operations scripts

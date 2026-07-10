@@ -5,8 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 COMPOSE=(docker compose
   --env-file "$ROOT_DIR/.env"
-  -f "$ROOT_DIR/infra/compose/compose.yml"
-  -f "$ROOT_DIR/infra/compose/compose.prod.yml")
+  -f "$ROOT_DIR/docker-compose.yml")
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="${1:-$ROOT_DIR/backups/$STAMP}"

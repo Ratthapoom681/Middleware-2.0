@@ -70,9 +70,10 @@ node scripts/generate-env.cjs
 ```
 
 ### Step 2: Configure Environment Variables
-The generator creates `.env` when missing and fills only blank or missing
-managed secrets in an existing `.env`. Open `.env` in a text editor and review
-the values:
+The generator creates `.env` when missing, fills blank or missing managed
+values, and replaces known unsafe auth placeholders. It does not rotate
+non-empty database passwords unless you explicitly pass `--force`. Open `.env`
+in a text editor and review the values:
 
 | Variable | Purpose | What Happens If Wrong | Example |
 |---|---|---|---|

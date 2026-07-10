@@ -224,9 +224,9 @@ environment file:
 node scripts/generate-env.cjs
 ```
 
-The generator is safe to rerun. It creates `.env` when missing and fills only
-blank or missing managed secrets in an existing `.env`; it does not replace
-non-empty values unless you explicitly pass `--force`.
+The generator is safe to rerun. It creates `.env` when missing, fills blank or
+missing managed values, and replaces known unsafe auth placeholders. It does
+not rotate non-empty database passwords unless you explicitly pass `--force`.
 
 It creates strong database, JWT, service-token, and bootstrap administrator
 secrets. Review `.env`, including:
@@ -253,7 +253,7 @@ AUTH_BOOTSTRAP_ADMIN_PASSWORD=<strong-initial-admin-password>
 Build and start the stack:
 
 ```powershell
-docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.dev.yml up -d --build
+docker compose up -d --build
 ```
 
 The stack starts seven services: `gateway`, `hub`, `docs`, `defectdojo`, `wazuh`, `db`, and `auth-db`.
@@ -261,7 +261,7 @@ The stack starts seven services: `gateway`, `hub`, `docs`, `defectdojo`, `wazuh`
 Check their state:
 
 ```powershell
-docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.dev.yml ps
+docker compose ps
 ```
 
 The first startup can take 30–60 seconds. If a service is still starting, wait and run the command again.
@@ -271,7 +271,7 @@ The first startup can take 30–60 seconds. If a service is still starting, wait
 If a service remains unhealthy after two minutes, inspect its logs:
 
 ```powershell
-docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.dev.yml logs --tail=100
+docker compose logs --tail=100
 ```
 
 ---
