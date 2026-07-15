@@ -22,6 +22,15 @@ function EyeClosedIcon() {
   );
 }
 
+function ShieldCheckIcon() {
+  return (
+    <>
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      <path d="M9 12l2 2 4-5" />
+    </>
+  );
+}
+
 function BrandIllustration() {
   const dbRows = [
     { y: 120, w1: 30, w2: 35 },
@@ -230,76 +239,78 @@ export default function LoginPage({ onLoginSuccess }) {
         <div className="glow-blob glow-blob-1" />
         <div className="glow-blob glow-blob-2" />
 
-        <div className="glass-card">
-          <div className="card-header">
-            <h1 className="card-title">Welcome</h1>
-            <p className="card-subtitle">Please enter your credentials below</p>
+        <div className="login-shell">
+          <div className="glass-card">
+            <div className="card-header">
+              <span className="card-eyebrow">Middleware Hub</span>
+              <h1 className="card-title">Sign in</h1>
+            </div>
+
+            <form onSubmit={handleSignIn}>
+              {error && (
+                <div className="login-error" role="alert">
+                  {error}
+                </div>
+              )}
+
+              {/* Username */}
+              <div className="form-group">
+                <label className="form-label" htmlFor="username">Username</label>
+                <div className="input-wrapper">
+                  <input
+                    type="text"
+                    id="username"
+                    className="form-input"
+                    placeholder="Enter Username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    required
+                    autoComplete="username"
+                    disabled={loading}
+                    aria-invalid={Boolean(error)}
+                  />
+                </div>
+              </div>
+
+              {/* Password */}
+              <div className="form-group">
+                <label className="form-label" htmlFor="password">Password</label>
+                <div className="input-wrapper">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    id="password"
+                    className="form-input password-input"
+                    placeholder="Enter Password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    autoComplete="current-password"
+                    disabled={loading}
+                    aria-invalid={Boolean(error)}
+                  />
+                  <button
+                    type="button"
+                    className="toggle-password"
+                    onClick={() => setShowPassword((v) => !v)}
+                    disabled={loading}
+                    aria-label="Toggle password visibility"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2"
+                      strokeLinecap="round" strokeLinejoin="round">
+                      {showPassword ? <EyeClosedIcon /> : <EyeOpenIcon />}
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Submit */}
+              <button type="submit" className="btn-submit" disabled={loading}>
+                {loading && <span className="spinner" />}
+                <span>{loading ? 'Authenticating…' : 'Sign In'}</span>
+              </button>
+            </form>
           </div>
-
-          <form onSubmit={handleSignIn}>
-            {error && (
-              <div className="login-error" role="alert">
-                {error}
-              </div>
-            )}
-
-            {/* Username */}
-            <div className="form-group">
-              <label className="form-label" htmlFor="username">Username</label>
-              <div className="input-wrapper">
-                <input
-                  type="text"
-                  id="username"
-                  className="form-input"
-                  placeholder="Enter Username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  required
-                  autoComplete="username"
-                  disabled={loading}
-                  aria-invalid={Boolean(error)}
-                />
-              </div>
-            </div>
-
-            {/* Password */}
-            <div className="form-group">
-              <label className="form-label" htmlFor="password">Password</label>
-              <div className="input-wrapper">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  id="password"
-                  className="form-input password-input"
-                  placeholder="Enter Password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  autoComplete="current-password"
-                  disabled={loading}
-                  aria-invalid={Boolean(error)}
-                />
-                <button
-                  type="button"
-                  className="toggle-password"
-                  onClick={() => setShowPassword((v) => !v)}
-                  disabled={loading}
-                  aria-label="Toggle password visibility"
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="2"
-                    strokeLinecap="round" strokeLinejoin="round">
-                    {showPassword ? <EyeClosedIcon /> : <EyeOpenIcon />}
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            {/* Submit */}
-            <button type="submit" className="btn-submit" disabled={loading}>
-              {loading && <span className="spinner" />}
-              <span>{loading ? 'Authenticating…' : 'Sign In'}</span>
-            </button>
-          </form>
         </div>
       </div>
 
