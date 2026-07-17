@@ -8,7 +8,7 @@ Compose names below.
 | --- | --- | --- | --- |
 | `gateway` | `apps/gateway` | `/` and all routed paths | Edge routing and degraded Hub page |
 | `hub` | `apps/hub` | `/` | Workspace portal and user-management UI |
-| `auth-primary` | `apps/auth` | `/login/`, `/api/auth/*`, `/api/users*` | Identity, sessions, and authorization |
+| `auth` | `apps/auth` | `/login/`, `/api/auth/*`, `/api/users*` | Identity, sessions, and authorization |
 | `defectdojo` | `apps/vulnerability` | `/defectdojo/` | Vulnerability and Redmine workflows |
 | `auto-sync-status` | `apps/vulnerability/workers` | None | Background Redmine status worker |
 | `wazuh` | `apps/wazuh` | `/wazuh/` | Static SIEM viewer |

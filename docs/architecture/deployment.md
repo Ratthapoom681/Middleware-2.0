@@ -25,7 +25,7 @@ and the corresponding Log Monitor endpoint reports that source as unavailable.
 The two data networks and the observability network are internal. Databases are
 not attached to the edge network.
 
-Protected services call `auth-primary` directly for token introspection. The
+Protected services call `auth` directly for token introspection. The
 gateway does not expose the introspection endpoint publicly.
 
 ## Stable Names and Storage

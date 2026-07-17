@@ -41,7 +41,7 @@ services:
           memory: 256M
           cpus: "0.25"
 
-  auth-primary:
+  auth:
     <<: *app-runtime
     image: ${IMAGE_NAMESPACE:-internal-security-middleware}/auth:${IMAGE_TAG:-local}
     build:
@@ -79,7 +79,7 @@ services:
       DATA_DIR: /app/data
       DATABASE_URL: postgres://${PG_USER:-defectdojo}:${PG_PASSWORD:?Set PG_PASSWORD in .env}@db:5432/${PG_DB:-defectdojo_viewer}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
-      AUTH_INTROSPECTION_URL: http://auth-primary:3004/api/auth/introspect
+      AUTH_INTROSPECTION_URL: http://auth:3004/api/auth/introspect
       AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:?Set AUTH_SERVICE_TOKEN in .env}
       AUTH_REQUIRED_APP: defectdojo
       AUTH_INTROSPECTION_TIMEOUT_MS: 1000
@@ -157,7 +157,7 @@ services:
       PORT: 3003
       DOCS_DIR: /app/docs
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
-      AUTH_INTROSPECTION_URL: http://auth-primary:3004/api/auth/introspect
+      AUTH_INTROSPECTION_URL: http://auth:3004/api/auth/introspect
       AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:?Set AUTH_SERVICE_TOKEN in .env}
       AUTH_REQUIRED_APP: docs
       AUTH_INTROSPECTION_TIMEOUT_MS: 1000

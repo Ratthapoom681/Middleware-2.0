@@ -10,7 +10,7 @@ COMPOSE=(docker compose
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="${1:-$ROOT_DIR/backups/$STAMP}"
 VOLUME_NAMESPACE="${VOLUME_NAMESPACE:-defectdojo-viewer}"
-WRITE_SERVICES=(gateway defectdojo auto-sync-status auth-primary docs)
+WRITE_SERVICES=(gateway defectdojo auto-sync-status auth docs)
 RESTART_WRITERS=1
 
 if [[ -e "$BACKUP_DIR" ]]; then
