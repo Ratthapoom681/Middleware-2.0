@@ -43,7 +43,7 @@ The system runs six Docker containers orchestrated by Docker Compose:
 | **defectdojo** | DefectDojo Viewer — vulnerability findings and Redmine workflows | 3001 |
 | **wazuh** | Wazuh Viewer — SIEM mockup interface | 3002 |
 | **docs** | Documentation reader service | 3003 |
-| **db** | PostgreSQL — application data (findings, config, sync state) | 5432 |
+| **defectdojo_db** | PostgreSQL — application data (findings, config, sync state) | 5432 |
 | **auth-db** | PostgreSQL — authentication data (users, sessions, audit) | 5432 |
 
 All services are accessed through the gateway on a single port (default: 80).
@@ -104,7 +104,7 @@ docker compose up -d --build
 ```powershell
 docker compose ps
 ```
-You should see all seven containers (`gateway`, `hub`, `defectdojo`, `wazuh`, `docs`, `db`, `auth-db`) with status "Up" or "running".
+You should see all seven containers (`gateway`, `hub`, `defectdojo`, `wazuh`, `docs`, `defectdojo_db`, `auth-db`) with status "Up" or "running".
 
 ### Step 5: Verify Health Endpoints
 ```powershell

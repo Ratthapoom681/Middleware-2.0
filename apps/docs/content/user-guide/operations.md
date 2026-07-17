@@ -96,7 +96,7 @@ Before starting, ensure you have completed all steps in the [Quick Start Guide](
    ```powershell
    docker compose ps
    ```
-3. Confirm `gateway`, `hub`, `defectdojo`, `wazuh`, `db`, and `auth-db` are running.
+3. Confirm `gateway`, `hub`, `defectdojo`, `wazuh`, `defectdojo_db`, and `auth-db` are running.
 4. If running on a server, confirm the firewall allows inbound traffic on the gateway port.
 
 ### Login Fails

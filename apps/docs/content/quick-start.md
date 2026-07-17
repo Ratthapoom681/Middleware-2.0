@@ -256,7 +256,7 @@ Build and start the stack:
 docker compose up -d --build
 ```
 
-The stack starts seven services: `gateway`, `hub`, `docs`, `defectdojo`, `wazuh`, `db`, and `auth-db`.
+The stack starts seven services: `gateway`, `hub`, `docs`, `defectdojo`, `wazuh`, `defectdojo_db`, and `auth-db`.
 
 Check their state:
 

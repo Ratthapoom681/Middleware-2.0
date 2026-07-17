@@ -60,7 +60,7 @@ A frontend-only static mockup representing the SIEM & incident management dashbo
 ### 5. Auth Database (`auth-db` · Port `5432` internally)
 A PostgreSQL 16 database used by the auth service for users, credentials, app memberships, sessions, and audit events.
 
-### 6. App Database (`db` · Port `5432` internally)
+### 6. App Database (`defectdojo_db` · Port `5432` internally)
 A PostgreSQL 16 database used by DefectDojo Viewer for configuration, findings, Redmine sync state, sync history, mitigation reviews, and mapped product/engagement data. On first start, Hub can import legacy users from this database through `LEGACY_DATABASE_URL`, then identity is managed from `auth-db`.
 
 ---
@@ -212,7 +212,7 @@ The dashboard is bound to localhost only at `127.0.0.1:${MONITOR_PORT:-61208}`. 
 ssh -L 61208:127.0.0.1:61208 user@<server-public-ip>
 ```
 
-Then open `http://localhost:61208`. Watch `defectdojo`, `db`, and `auth-db` during large Sync Findings runs.
+Then open `http://localhost:61208`. Watch `defectdojo`, `defectdojo_db`, and `auth-db` during large Sync Findings runs.
 
 ### User Management
 User administration is centralized:

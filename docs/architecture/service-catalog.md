@@ -15,7 +15,7 @@ Compose names below.
 | `docs` | `apps/docs` | `/docs/` | Documentation reader and editor |
 | `linux-log-collector` | `apps/vulnerability/collectors/linux-auth-log` | None | Linux authentication log ingestion |
 | `docker-log-collector` | `apps/vulnerability/collectors/docker-log` | None | Docker event-log ingestion |
-| `db` | Upstream PostgreSQL image | None | Vulnerability workflow storage |
+| `defectdojo_db` | Upstream PostgreSQL image | None | Vulnerability workflow storage |
 | `auth-db` | Upstream PostgreSQL image | None | Authentication storage |
 | `monitor` | Upstream Glances image | Localhost-only port | Host and container monitoring |
 

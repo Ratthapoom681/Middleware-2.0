@@ -31,7 +31,7 @@ trap restart_writers EXIT
 "${COMPOSE[@]}" config --quiet
 "${COMPOSE[@]}" stop "${WRITE_SERVICES[@]}"
 
-"${COMPOSE[@]}" exec -T db pg_dump \
+"${COMPOSE[@]}" exec -T defectdojo_db pg_dump \
   -U "${PG_USER:-defectdojo}" \
   -d "${PG_DB:-defectdojo_viewer}" \
   --format=custom --no-owner --file=- > "$BACKUP_DIR/app-db.dump"
@@ -46,7 +46,7 @@ trap restart_writers EXIT
 "${COMPOSE[@]}" run --rm --no-deps --entrypoint tar docs \
   -C /app/docs -czf - . > "$BACKUP_DIR/docs-data.tar.gz"
 
-APP_FINDINGS="$("${COMPOSE[@]}" exec -T db psql \
+APP_FINDINGS="$("${COMPOSE[@]}" exec -T defectdojo_db psql \
   -U "${PG_USER:-defectdojo}" -d "${PG_DB:-defectdojo_viewer}" -Atc \
   "SELECT count(*) FROM defectdojo_viewer_findings" 2>/dev/null || echo unknown)"
 AUTH_USERS="$("${COMPOSE[@]}" exec -T auth-db psql \

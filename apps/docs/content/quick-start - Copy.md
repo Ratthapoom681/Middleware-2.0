@@ -368,7 +368,7 @@ AUTH_BOOTSTRAP_ADMIN_PASSWORD=<set-a-strong-bootstrap-password-here>
 docker compose up -d --build
 ```
 
-This builds and starts six containers: gateway, hub, defectdojo, wazuh, db, and auth-db.
+This builds and starts six containers: gateway, hub, defectdojo, wazuh, defectdojo_db, and auth-db.
 
 ### Step 4.5 — Verify All Services Are Running
 
@@ -499,7 +499,7 @@ After the sync completes, check these items:
 | 403 from Redmine | REST API not enabled | Enable it in Redmine Admin → Settings → API |
 | Redmine 422 error | User lacks permissions or project/tracker doesn't exist | Check user permissions and project identifier |
 | "Use the project identifier, not numeric ID" | Entered a number in Project ID field | Use the string identifier from the project URL |
-| Containers not healthy after 2 minutes | Database initialization failed | Check logs with `docker compose logs db auth-db` |
+| Containers not healthy after 2 minutes | Database initialization failed | Check logs with `docker compose logs defectdojo_db auth-db` |
 | DefectDojo or Redmine on localhost unreachable | Using `localhost` in URL, resolves to container | Use `http://host.docker.internal:PORT` (Docker Desktop) or host IP (Linux) |
 
 ---

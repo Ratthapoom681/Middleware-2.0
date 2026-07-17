@@ -32,9 +32,9 @@ gateway (Nginx, published host port)
   `-- /wazuh/*          -> wazuh:3002
 
 auth -------------------> auth-db (users, memberships, sessions, audit)
-  `---- legacy import --> db
+  `---- legacy import --> defectdojo_db
 
-defectdojo -------------> db (findings, config, sync and review state)
+defectdojo -------------> defectdojo_db (findings, config, sync and review state)
   `---- introspection --> auth
   `---- access logs ----> linux-log-collector
 
@@ -305,7 +305,7 @@ The two PostgreSQL services are deliberately separate.
 - `auth_sessions`
 - `auth_audit_events`
 
-`db` is owned by DefectDojo Viewer and contains configuration, backups, findings, mapped products and engagements, Redmine state/tickets, sync history, mitigation rechecks/reviews, and admin actions. Its tables use the `defectdojo_viewer_` prefix. `defectdojo_viewer_users` remains only for legacy import/local-auth compatibility.
+`defectdojo_db` is owned by DefectDojo Viewer and contains configuration, backups, findings, mapped products and engagements, Redmine state/tickets, sync history, mitigation rechecks/reviews, and admin actions. Its tables use the `defectdojo_viewer_` prefix. `defectdojo_viewer_users` remains only for legacy import/local-auth compatibility.
 
 When PostgreSQL is not configured, DefectDojo falls back to files under `DATA_DIR`, including:
 

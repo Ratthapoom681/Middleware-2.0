@@ -49,9 +49,9 @@ for volume in "${TARGET_VOLUMES[@]}"; do
 done
 
 export VOLUME_NAMESPACE="$TARGET_NAMESPACE"
-"${COMPOSE[@]}" -p "$RESTORE_PROJECT" up -d --wait db auth-db
+"${COMPOSE[@]}" -p "$RESTORE_PROJECT" up -d --wait defectdojo_db auth-db
 
-"${COMPOSE[@]}" -p "$RESTORE_PROJECT" exec -T db pg_restore \
+"${COMPOSE[@]}" -p "$RESTORE_PROJECT" exec -T defectdojo_db pg_restore \
   -U "${PG_USER:-defectdojo}" \
   -d "${PG_DB:-defectdojo_viewer}" \
   --no-owner --clean --if-exists < "$BACKUP_DIR/app-db.dump"
@@ -65,7 +65,7 @@ export VOLUME_NAMESPACE="$TARGET_NAMESPACE"
 "${COMPOSE[@]}" -p "$RESTORE_PROJECT" run --rm --no-deps --entrypoint sh docs \
   -c 'tar -xzf - -C /app/docs' < "$BACKUP_DIR/docs-data.tar.gz"
 
-"${COMPOSE[@]}" -p "$RESTORE_PROJECT" exec -T db psql \
+"${COMPOSE[@]}" -p "$RESTORE_PROJECT" exec -T defectdojo_db psql \
   -U "${PG_USER:-defectdojo}" -d "${PG_DB:-defectdojo_viewer}" -Atc \
   "SELECT count(*) AS findings FROM defectdojo_viewer_findings"
 "${COMPOSE[@]}" -p "$RESTORE_PROJECT" exec -T auth-db psql \
