@@ -162,17 +162,15 @@ Click a card (DefectDojo Viewer or Wazuh Viewer) to open that workspace. Use **B
 ### Sign Out
 Click **Sign Out** in the Hub top bar, or inside a workspace.
 
-### Manage Your Profile and Authenticator
+### View Your Profile and Enroll an Authenticator
 
-Open the profile menu from the Hub, DefectDojo Viewer, Wazuh Viewer, or Documentation and select **Your profile**. The central Profile page lets you:
+Open the profile menu from the Hub, DefectDojo Viewer, Wazuh Viewer, or Documentation and select **Your profile**. Profile shows your contact details, role, workspace access, last login, and MFA status. Contact an administrator to change these details or reset your password.
 
-- Add or update an optional email address.
-- Change your password. New passwords must contain 12–128 characters; changing it signs out every session.
-- Enable Google Authenticator, Microsoft Authenticator, or another compatible authenticator app.
+An administrator enables **Authenticator MFA** from User Management. Your account enters **Pending setup**, password-only access continues, and the system emails the setup link to your account address. The Hub also displays a setup banner.
 
-To enable an authenticator, choose the app, confirm your password, scan the QR code (or enter the manual key), and enter the current six-digit code. Save the ten recovery codes shown at the end; each can be used once if the authenticator is unavailable.
+Open the link or the Hub banner, re-enter your password, scan the QR code with Google Authenticator, Microsoft Authenticator, or another compatible TOTP app, and enter the current six-digit code. You can enter the manual setup key when scanning is unavailable.
 
-When MFA is enabled, sign-in asks for a six-digit code after the password. Select **Use a recovery code** when needed. From Profile you can replace the authenticator, regenerate recovery codes, or turn MFA off. These sensitive actions require the current password and a current authenticator or recovery code.
+After enrollment, sign-in asks for a six-digit code after the password. The system does not issue recovery codes. Contact an administrator to reset MFA after losing or replacing the authenticator device.
 
 ---
 
@@ -181,9 +179,9 @@ When MFA is enabled, sign-in asks for a six-digit code after the password. Selec
 Admins can manage identities from the Hub.
 
 1. Find the **Administration** section on the Hub page and click **User Management**.
-2. **Add a User**: Click Add User, enter details, choose Role (Admin/Viewer), and Allowed Products for Viewers.
-3. **Edit/Delete/Reset**: Use the table actions to modify existing users. You cannot delete your own active user.
-4. **Reset MFA**: If a user loses both their authenticator and recovery codes, use the shield-off action. Re-enter your administrator password, record a reason, and type the target username. This removes MFA and signs the target out; administrators manage their own MFA from Profile.
+2. **Add a User**: Click Add User, enter the optional full name, company, and department, then choose Role, Allowed Products, and Disabled or Authenticator MFA. Authenticator MFA requires an email address.
+3. **Reset a Password**: Use the key action, enter the replacement password, confirm your administrator password, and record a reason. The system revokes the target's sessions.
+4. **Manage MFA**: Enable, resend a failed setup email, reset an enrolled authenticator, or disable MFA. Each action requires your administrator password and an audit reason. Reset and disable actions revoke the target's sessions. Administrators can manage their own security settings from User Management.
 
 ---
 

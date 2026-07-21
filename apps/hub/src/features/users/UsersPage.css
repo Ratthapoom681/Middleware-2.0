@@ -127,6 +127,16 @@
   font-size: 0.9rem;
 }
 
+.users-notice {
+  margin: 1rem 1.25rem 0;
+  border: 1px solid var(--connected-border);
+  background-color: var(--connected-bg);
+  color: var(--connected-text);
+  border-radius: var(--rounded-sm);
+  padding: 0.8rem 1rem;
+  font-size: 0.9rem;
+}
+
 .users-tools {
   padding: 1rem 1.25rem 0;
 }
@@ -307,6 +317,18 @@
   color: var(--connected-text);
 }
 
+.mfa-badge.pending {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+.mfa-badge.mail-failed {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
 .users-empty-row {
   min-width: var(--data-table-min-width);
   min-height: 12rem;
@@ -370,6 +392,15 @@
   flex-direction: column;
   gap: 0.9rem;
   padding: 1.25rem;
+}
+
+.modal-error {
+  border: 1px solid var(--danger-border);
+  border-radius: var(--rounded-sm);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  padding: .7rem .8rem;
+  font-size: .8rem;
 }
 
 .user-form label {

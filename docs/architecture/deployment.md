@@ -3,11 +3,32 @@
 ## Supported Modes
 
 - Windows development:
-  `docker compose up -d --build`
+  `node scripts/compose-up.cjs`
 - Linux production:
-  `docker compose up -d --build`
+  `node scripts/compose-up.cjs`
 - Optional monitoring:
   `docker compose --profile monitoring up -d monitor`
+
+The wrapper creates `.env` from `.env.example`, generates required local
+secrets, and appends new settings without replacing operator
+values. `docker compose up -d --build` does not run the generator. Prepare
+`.env` before using Compose directly because Compose resolves required
+variables before it starts a container.
+
+## Authenticator Email Delivery
+
+Only the `auth` container receives `APP_PUBLIC_URL` and the `SMTP_*` values.
+Enrollment notices automatically use the browser-facing gateway origin from
+the administrator's request, including a private IP and custom port.
+`APP_PUBLIC_URL` remains an optional fallback for unusual proxy
+deployments. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, and `SMTP_FROM`
+to enable mail. Relays that require authentication also need both `SMTP_USER`
+and `SMTP_PASSWORD`.
+
+Auth starts when SMTP is absent. An MFA enable or reset remains pending when
+delivery fails, and an administrator can resend the notice after fixing the
+mail settings. Enrollment messages contain the setup page URL without a QR
+secret, OTP, challenge token, or SMTP credential.
 
 The core stack starts the Linux auth-log and Docker log collectors by default.
 If a collector cannot read a source, the vulnerability service remains healthy

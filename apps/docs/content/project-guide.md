@@ -207,7 +207,7 @@ Important Linux Log Collector runtime variables:
 Auth-service is the identity owner:
 
 1. `POST /api/login` validates the user against `auth-db` (or auth file storage when no database is configured).
-2. Accounts without MFA receive a one-hour JWT immediately. MFA-enabled accounts receive a five-minute, one-time challenge and obtain the JWT only after `POST /api/login/mfa` validates TOTP or an unused recovery code.
+2. Disabled and pending accounts receive a one-hour JWT immediately. MFA-enabled accounts receive a five-minute, one-time challenge and obtain the JWT only after `POST /api/login/mfa` validates TOTP.
 3. The frontend stores the token as `middleware_token` and the public user as `middleware_user`.
 4. The shared gateway origin makes those values available at `/`, `/defectdojo/`, and `/wazuh/`.
 5. DefectDojo and Docs requests attach `Authorization: Bearer <token>`.
@@ -223,7 +223,7 @@ If production auth storage contains no users and no legacy users can be
 imported, Auth requires `AUTH_BOOTSTRAP_ADMIN_PASSWORD`. It never creates
 `admin` / `admin` in production or rewrites existing users.
 
-Production also requires `MFA_ENCRYPTION_KEY`, a stable base64-encoded 32-byte key. Authenticator secrets are encrypted with AES-256-GCM; recovery codes and challenge tokens are stored only as hashes. TOTP uses SHA-1, six digits, a 30-second period, a one-period clock window, replay counters, per-challenge attempt limits, and account-level temporary locks. Production traffic must reach the gateway through TLS so setup keys and codes are never sent over plaintext networks.
+Production also requires `MFA_ENCRYPTION_KEY`, a stable base64-encoded 32-byte key. Authenticator secrets use AES-256-GCM encryption, and challenge tokens remain stored as hashes. TOTP uses SHA-1, six digits, a 30-second period, a one-period clock window, replay counters, per-challenge attempt limits, and account-level temporary locks. Production traffic must reach the gateway through TLS so setup keys and codes never cross plaintext networks. The system offers admin recovery instead of recovery codes.
 
 DefectDojo's own `/api/login` and local user APIs return `410 Gone` unless `ENABLE_LEGACY_LOCAL_AUTH=true`. User administration in the normal runtime belongs to Hub.
 
@@ -234,8 +234,9 @@ apps/auth/
   server/
     server.cjs           Auth API, JWTs, sessions, users, health, static serving
     auth-store.cjs       PostgreSQL/file auth adapter and legacy import
-    mfa-service.cjs      TOTP, secret encryption, recovery codes, challenge hashes
-    profile-routes.cjs   Self-service Profile and MFA endpoints
+    mfa-service.cjs      TOTP, secret encryption, and challenge hashes
+    profile-routes.cjs   Read-only Profile, enrollment, and admin security endpoints
+    mailer.cjs           Authenticator setup notification delivery
   web/src/
     features/auth/       Login screen
 
@@ -243,7 +244,7 @@ apps/hub/
   src/
     app/App.jsx          Portal state and hash route selection
     features/hub/        Workspace switcher and health badges
-    features/profile/    Profile, password, enrollment, and recovery UX
+    features/profile/    Read-only Profile and approved enrollment UX
     features/users/      Central user administration
     shared/ui/           Shared Hub UI components
 ```
@@ -251,7 +252,8 @@ apps/hub/
 Hub hash routes are intentionally small:
 
 - Empty hash: workspace switcher.
-- `#profile`: authenticated self-service profile; an encoded internal `returnTo` restores the originating workspace.
+- `#profile`: authenticated read-only profile; an encoded internal `returnTo` restores the originating workspace.
+- `#mfa-setup`: authenticated enrollment for users whose administrator selected Authenticator MFA.
 - `#users`: user administration for admins.
 - `#docs`: documentation reader. The technical documents are hidden from viewers by the backend, not only by the UI.
 
@@ -310,9 +312,11 @@ The two PostgreSQL services are deliberately separate.
 - `auth_app_memberships`
 - `auth_sessions`
 - `auth_audit_events`
+- `auth_mfa_policy`
 - `auth_mfa_config`
-- `auth_mfa_recovery_codes`
 - `auth_mfa_challenges`
+
+The migration retains `auth_mfa_recovery_codes` for schema-history compatibility but deletes its rows and the application no longer reads or writes recovery codes.
 
 `defectdojo_db` is owned by DefectDojo Viewer and contains configuration, backups, findings, mapped products and engagements, Redmine state/tickets, sync history, mitigation rechecks/reviews, and admin actions. Its tables use the `defectdojo_viewer_` prefix. `defectdojo_viewer_users` remains only for legacy import/local-auth compatibility.
 

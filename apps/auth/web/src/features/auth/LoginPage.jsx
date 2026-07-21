@@ -30,8 +30,6 @@ export default function LoginPage({ onLoginSuccess }) {
   const [focusedField, setFocusedField] = useState(null);
   const [caretPosition, setCaretPosition] = useState(0.5);
   const [mfaChallenge, setMfaChallenge] = useState('');
-  const [authenticatorApp, setAuthenticatorApp] = useState('');
-  const [verificationMode, setVerificationMode] = useState('totp');
   const [verificationCode, setVerificationCode] = useState('');
   const passwordRef = useRef(null);
   const textMeasureRef = useRef(null);
@@ -94,7 +92,6 @@ export default function LoginPage({ onLoginSuccess }) {
 
       if (data.mfaRequired && data.challengeToken) {
         setMfaChallenge(data.challengeToken);
-        setAuthenticatorApp(data.authenticatorApp || 'other');
         setPassword('');
         setFocusedField('otp');
         return;
@@ -124,7 +121,6 @@ export default function LoginPage({ onLoginSuccess }) {
         body: JSON.stringify({
           challengeToken: mfaChallenge,
           code: verificationCode,
-          mode: verificationMode,
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -135,10 +131,7 @@ export default function LoginPage({ onLoginSuccess }) {
       }
       if (!response.ok) throw new Error(data.error || 'Unable to verify code');
       if (!data.token || !data.user) throw new Error('Verification response was missing session data');
-      onLoginSuccess?.(data.user, data.token, {
-        usedRecoveryCode: verificationMode === 'recovery',
-        recoveryCodesRemaining: data.recoveryCodesRemaining,
-      });
+      onLoginSuccess?.(data.user, data.token);
     } catch (err) {
       setError(err.message || 'Unable to verify code');
     } finally {
@@ -148,26 +141,112 @@ export default function LoginPage({ onLoginSuccess }) {
 
   function backToPassword() {
     setMfaChallenge('');
-    setAuthenticatorApp('');
     setVerificationCode('');
-    setVerificationMode('totp');
     setError('');
     setFocusedField('username');
   }
-
-  const providerLabel = authenticatorApp === 'google'
-    ? 'Google Authenticator'
-    : authenticatorApp === 'microsoft'
-      ? 'Microsoft Authenticator'
-      : 'your authenticator app';
 
   const loginNotice = new URLSearchParams(window.location.search).get('notice');
 
   return (
     <main className="login-page">
-      <div className="bg-blob bg-blob-1" aria-hidden="true" />
-      <div className="bg-blob bg-blob-2" aria-hidden="true" />
-      <div className="bg-blob bg-blob-3" aria-hidden="true" />
+      <div className="security-background" aria-hidden="true">
+        <div className="security-halo" />
+        <div className="edge-glow edge-glow-left" />
+        <div className="edge-glow edge-glow-right" />
+        <div className="security-grid" />
+
+        <svg
+          className="security-network"
+          viewBox="0 0 1440 900"
+          preserveAspectRatio="none"
+          focusable="false"
+        >
+          <defs>
+            <path
+              id="login-network-route-outbound"
+              d="M105 160L220 225L350 450H1090L1210 210L1325 135"
+            />
+            <path
+              id="login-network-route-return"
+              d="M1125 760L1230 600L1090 450H350L205 575L315 740"
+            />
+          </defs>
+
+          <g className="network-lines" fill="none">
+            <path d="M105 160L220 225" />
+            <path d="M105 160L178 355" />
+            <path d="M220 225L178 355" />
+            <path d="M220 225L350 450" />
+            <path d="M178 355L350 450" />
+            <path d="M178 355L205 575" />
+            <path d="M205 575L350 450" />
+            <path d="M205 575L315 740" />
+
+            <path className="network-bridge" d="M350 450H1090" />
+
+            <path d="M1090 450L1210 210" />
+            <path d="M1090 450L1260 380" />
+            <path d="M1090 450L1230 600" />
+            <path d="M1210 210L1325 135" />
+            <path d="M1210 210L1260 380" />
+            <path d="M1260 380L1230 600" />
+            <path d="M1230 600L1125 760" />
+          </g>
+
+          <g className="network-nodes">
+            <circle cx="105" cy="160" r="4" />
+            <circle cx="220" cy="225" r="5" />
+            <circle cx="178" cy="355" r="3.5" />
+            <circle cx="205" cy="575" r="5" />
+            <circle className="network-node-arrival network-node-arrival-return" cx="315" cy="740" r="3.5" />
+            <circle cx="350" cy="450" r="4.5" />
+
+            <circle cx="1090" cy="450" r="4.5" />
+            <circle className="network-node-arrival network-node-arrival-outbound" cx="1325" cy="135" r="4" />
+            <circle cx="1210" cy="210" r="5" />
+            <circle cx="1260" cy="380" r="3.5" />
+            <circle cx="1230" cy="600" r="5" />
+            <circle cx="1125" cy="760" r="3.5" />
+          </g>
+
+          <g className="network-packets">
+            <g className="network-packet network-packet-outbound">
+              <circle className="network-packet-glow" r="8" />
+              <circle className="network-packet-core" r="3" />
+              <animateMotion dur="12s" begin="0s" repeatCount="indefinite">
+                <mpath href="#login-network-route-outbound" />
+              </animateMotion>
+              <animate
+                attributeName="opacity"
+                values="0;1;1;0"
+                keyTimes="0;0.05;0.94;1"
+                dur="12s"
+                begin="0s"
+                repeatCount="indefinite"
+              />
+            </g>
+
+            <g className="network-packet network-packet-return">
+              <circle className="network-packet-glow" r="8" />
+              <circle className="network-packet-core" r="3" />
+              <animateMotion dur="12s" begin="-5s" repeatCount="indefinite">
+                <mpath href="#login-network-route-return" />
+              </animateMotion>
+              <animate
+                attributeName="opacity"
+                values="0;1;1;0"
+                keyTimes="0;0.05;0.94;1"
+                dur="12s"
+                begin="-5s"
+                repeatCount="indefinite"
+              />
+            </g>
+          </g>
+        </svg>
+
+        <div className="security-vignette" />
+      </div>
 
       <div className="login-card-wrapper">
         <section className="login-card" aria-labelledby="login-title">
@@ -194,31 +273,25 @@ export default function LoginPage({ onLoginSuccess }) {
             <form onSubmit={handleMfaVerify}>
               {error && <div className="login-error" role="alert">{error}</div>}
               <p className="verification-copy">
-                {verificationMode === 'recovery'
-                  ? 'Enter one of the recovery codes you saved during setup.'
-                  : `Enter the six-digit code from ${providerLabel}.`}
+                Enter the six-digit code from your authenticator app.
               </p>
               <div className="form-group">
                 <label className="form-label" htmlFor="verification-code">
-                  {verificationMode === 'recovery' ? 'Recovery code' : 'Authenticator code'}
+                  Authenticator code
                 </label>
                 <div className="input-wrapper">
                   <input
                     type="text"
                     id="verification-code"
-                    className={`form-input verification-code-input ${verificationMode === 'recovery' ? 'recovery' : ''}`}
-                    placeholder={verificationMode === 'recovery' ? 'XXXXX-XXXXX-XXXXX' : '000000'}
+                    className="form-input verification-code-input"
+                    placeholder="000000"
                     value={verificationCode}
-                    onChange={(event) => setVerificationCode(
-                      verificationMode === 'recovery'
-                        ? event.target.value.toUpperCase().slice(0, 17)
-                        : event.target.value.replace(/\D/g, '').slice(0, 6)
-                    )}
+                    onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
                     onFocus={() => setFocusedField('otp')}
-                    inputMode={verificationMode === 'recovery' ? 'text' : 'numeric'}
+                    inputMode="numeric"
                     autoComplete="one-time-code"
-                    maxLength={verificationMode === 'recovery' ? 17 : 6}
-                    pattern={verificationMode === 'recovery' ? undefined : '[0-9]{6}'}
+                    maxLength={6}
+                    pattern="[0-9]{6}"
                     required
                     autoFocus
                     disabled={loading}
@@ -231,9 +304,6 @@ export default function LoginPage({ onLoginSuccess }) {
                 <span>{loading ? 'Verifying…' : 'Verify and sign in'}</span>
               </button>
               <div className="verification-actions">
-                <button type="button" onClick={() => { setVerificationMode(mode => mode === 'recovery' ? 'totp' : 'recovery'); setVerificationCode(''); setError(''); }} disabled={loading}>
-                  {verificationMode === 'recovery' ? 'Use authenticator code' : 'Use a recovery code'}
-                </button>
                 <button type="button" onClick={backToPassword} disabled={loading}>Back to sign in</button>
               </div>
             </form>

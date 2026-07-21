@@ -52,56 +52,161 @@
   font-family: var(--font-sans);
 }
 
-/* ── Animated background mesh ── */
-.login-page .bg-blob {
+/* ── Security operations background ── */
+.login-page .security-background {
   position: absolute;
-  z-index: -1;
-  border-radius: 50%;
-  filter: blur(120px);
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
   pointer-events: none;
+}
+
+.login-page .security-halo {
+  position: absolute;
+  z-index: 0;
+  top: 44%;
+  left: 50%;
+  width: min(860px, 88vw);
+  height: min(680px, 78vh);
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(41, 121, 255, 0.17) 0%,
+    rgba(21, 101, 192, 0.08) 38%,
+    rgba(11, 14, 23, 0) 72%
+  );
+  filter: blur(18px);
+  transform: translate(-50%, -50%);
+  animation: security-halo-breathe 18s ease-in-out infinite alternate;
+  will-change: transform, opacity;
+}
+
+.login-page .edge-glow {
+  --glow-x: 0px;
+  --glow-y: 0px;
+  position: absolute;
+  z-index: 0;
+  width: 520px;
+  height: 520px;
+  border-radius: 50%;
+  filter: blur(100px);
+  opacity: 0.7;
+  animation: security-edge-drift 32s ease-in-out infinite alternate;
   will-change: transform;
 }
 
-.login-page .bg-blob-1 {
-  width: 500px;
-  height: 500px;
-  top: -10%;
-  left: -5%;
-  background: rgba(41, 121, 255, 0.18);
-  animation: blob-drift-1 25s ease-in-out infinite alternate;
+.login-page .edge-glow-left {
+  --glow-x: 55px;
+  --glow-y: 38px;
+  top: 4%;
+  left: -260px;
+  background: radial-gradient(circle, rgba(41, 121, 255, 0.13), transparent 68%);
 }
 
-.login-page .bg-blob-2 {
-  width: 400px;
-  height: 400px;
-  right: -3%;
-  bottom: -8%;
-  background: rgba(21, 101, 192, 0.15);
-  animation: blob-drift-2 30s ease-in-out infinite alternate;
+.login-page .edge-glow-right {
+  --glow-x: -48px;
+  --glow-y: -34px;
+  right: -250px;
+  bottom: -10%;
+  background: radial-gradient(circle, rgba(13, 71, 161, 0.14), transparent 70%);
+  animation-duration: 38s;
 }
 
-.login-page .bg-blob-3 {
-  width: 350px;
-  height: 350px;
-  bottom: 10%;
-  left: 40%;
-  background: rgba(13, 71, 161, 0.12);
-  animation: blob-pulse 20s ease-in-out infinite alternate;
+.login-page .security-grid {
+  position: absolute;
+  z-index: 1;
+  inset: -64px;
+  background-image:
+    linear-gradient(rgba(92, 156, 255, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(92, 156, 255, 0.07) 1px, transparent 1px);
+  background-size: 64px 64px;
+  opacity: 0.38;
+  -webkit-mask-image: radial-gradient(ellipse 82% 76% at 50% 45%, #000 12%, rgba(0, 0, 0, 0.8) 58%, transparent 100%);
+  mask-image: radial-gradient(ellipse 82% 76% at 50% 45%, #000 12%, rgba(0, 0, 0, 0.8) 58%, transparent 100%);
+  animation: security-grid-drift 44s linear infinite;
+  will-change: transform;
 }
 
-@keyframes blob-drift-1 {
-  0% { transform: translate(0, 0) scale(1); }
-  100% { transform: translate(80px, 60px) scale(1.1); }
+.login-page .security-network {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.72;
 }
 
-@keyframes blob-drift-2 {
-  0% { transform: translate(0, 0) scale(1); }
-  100% { transform: translate(-60px, -40px) scale(1.05); }
+.login-page .network-lines path {
+  stroke: rgba(92, 156, 255, 0.2);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
 }
 
-@keyframes blob-pulse {
-  0% { transform: scale(1); opacity: 0.12; }
-  100% { transform: scale(1.15); opacity: 0.18; }
+.login-page .network-lines .network-bridge {
+  stroke: rgba(92, 156, 255, 0.15);
+}
+
+.login-page .network-nodes circle {
+  fill: rgba(92, 156, 255, 0.56);
+  filter: drop-shadow(0 0 5px rgba(41, 121, 255, 0.72));
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.login-page .network-node-arrival {
+  animation: security-node-arrival 12s linear infinite;
+  will-change: transform, opacity;
+}
+
+.login-page .network-node-arrival-return {
+  animation-delay: -5s;
+}
+
+.login-page .network-packets {
+  pointer-events: none;
+}
+
+.login-page .network-packet-glow {
+  fill: rgba(41, 121, 255, 0.24);
+  filter: drop-shadow(0 0 7px rgba(41, 121, 255, 0.9));
+}
+
+.login-page .network-packet-core {
+  fill: #a9ccff;
+  filter: drop-shadow(0 0 3px rgba(92, 156, 255, 1));
+}
+
+.login-page .security-vignette {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at 50% 47%,
+    rgba(5, 7, 12, 0) 30%,
+    rgba(5, 7, 12, 0.22) 66%,
+    rgba(5, 7, 12, 0.76) 100%
+  );
+}
+
+@keyframes security-grid-drift {
+  to { transform: translate3d(64px, 64px, 0); }
+}
+
+@keyframes security-halo-breathe {
+  0% { opacity: 0.78; transform: translate(-50%, -50%) scale(0.96); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+}
+
+@keyframes security-edge-drift {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  100% { transform: translate3d(var(--glow-x), var(--glow-y), 0) scale(1.08); }
+}
+
+@keyframes security-node-arrival {
+  0%, 88%, 100% { opacity: 0.56; transform: scale(1); }
+  94% { opacity: 1; transform: scale(1.75); }
 }
 
 /* ── Card ── */
@@ -447,9 +552,24 @@
     height: 100px;
   }
 
-  .login-page .bg-blob-1 { width: 300px; height: 300px; }
-  .login-page .bg-blob-2 { width: 250px; height: 250px; }
-  .login-page .bg-blob-3 { width: 200px; height: 200px; }
+  .login-page .security-grid {
+    opacity: 0.3;
+  }
+
+  .login-page .security-network {
+    opacity: 0.5;
+  }
+
+  .login-page .edge-glow {
+    width: 380px;
+    height: 380px;
+    filter: blur(88px);
+  }
+
+  .login-page .security-halo {
+    width: min(700px, 108vw);
+    height: min(620px, 72vh);
+  }
 }
 
 @media (max-width: 480px) {
@@ -479,13 +599,46 @@
     width: 110px;
     height: 85px;
   }
+
+  .login-page .security-network,
+  .login-page .edge-glow {
+    display: none;
+  }
+
+  .login-page .security-grid {
+    opacity: 0.18;
+    -webkit-mask-image: radial-gradient(ellipse 105% 72% at 50% 42%, #000 8%, rgba(0, 0, 0, 0.68) 54%, transparent 100%);
+    mask-image: radial-gradient(ellipse 105% 72% at 50% 42%, #000 8%, rgba(0, 0, 0, 0.68) 54%, transparent 100%);
+  }
+
+  .login-page .security-halo {
+    top: 42%;
+    width: 130vw;
+    height: 64vh;
+  }
+
+  .login-page .security-vignette {
+    background: radial-gradient(
+      ellipse at 50% 44%,
+      rgba(5, 7, 12, 0) 25%,
+      rgba(5, 7, 12, 0.28) 64%,
+      rgba(5, 7, 12, 0.78) 100%
+    );
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .login-page .bg-blob,
+  .login-page .security-grid,
+  .login-page .security-halo,
+  .login-page .edge-glow,
+  .login-page .network-node-arrival,
   .login-page .login-error,
   .login-page .spinner {
     animation: none;
+  }
+
+  .login-page .network-packets {
+    display: none;
   }
 
   .login-page .form-input,

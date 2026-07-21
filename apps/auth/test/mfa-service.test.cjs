@@ -43,16 +43,6 @@ test('MFA secrets round-trip through AES-GCM and reject the wrong key', () => {
   assert.equal(JSON.stringify(encrypted).includes('JBSWY3DPEHPK3PXP'), false);
 });
 
-test('recovery codes contain 75 bits of random alphabet and hash deterministically', () => {
-  const service = createService();
-  const codes = service.generateRecoveryCodes();
-  assert.equal(codes.length, 10);
-  assert.equal(new Set(codes).size, 10);
-  for (const code of codes) assert.match(code, /^[A-HJ-NP-Z2-9]{5}(?:-[A-HJ-NP-Z2-9]{5}){2}$/);
-  assert.equal(service.recoveryCodeHash(codes[0]), service.recoveryCodeHash(codes[0].toLowerCase()));
-  assert.notEqual(service.recoveryCodeHash(codes[0]), service.recoveryCodeHash(codes[1]));
-});
-
 test('opaque challenge tokens are random and stored through a stable SHA-256 hash', () => {
   const service = createService();
   const first = service.createOpaqueToken();

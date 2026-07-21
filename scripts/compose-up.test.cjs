@@ -13,6 +13,7 @@ test('compose wrapper prepares the environment before starting the stack', () =>
       return {
         outputPath: path.join(REPOSITORY_ROOT, '.env'),
         generatedKeys: ['MFA_ENCRYPTION_KEY'],
+        addedKeys: [],
         created: false
       };
     },
@@ -35,7 +36,7 @@ test('compose wrapper prepares the environment before starting the stack', () =>
 test('compose wrapper does not rotate a complete environment', () => {
   let composeStarted = false;
   runComposeUp({
-    generate: () => ({ outputPath: '.env', generatedKeys: [], created: false }),
+    generate: () => ({ outputPath: '.env', generatedKeys: [], addedKeys: [], created: false }),
     spawn: () => {
       composeStarted = true;
       return { status: 0 };
@@ -47,7 +48,7 @@ test('compose wrapper does not rotate a complete environment', () => {
 
 test('compose wrapper returns the Docker Compose exit status', () => {
   assert.throws(() => runComposeUp({
-    generate: () => ({ outputPath: '.env', generatedKeys: [], created: false }),
+    generate: () => ({ outputPath: '.env', generatedKeys: [], addedKeys: [], created: false }),
     spawn: () => ({ status: 17 }),
     logger: { log: () => {} }
   }), error => error.exitCode === 17);

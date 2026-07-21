@@ -226,6 +226,9 @@ node scripts/compose-up.cjs
 The wrapper creates or completes `.env` without rotating existing non-empty
 secrets, then runs `docker compose up -d --build`.
 
+Compose does not run the environment generator. If you invoke
+`docker compose up -d --build` yourself, create and complete `.env` first.
+
 It creates strong database, JWT, service-token, and bootstrap administrator
 secrets. Review `.env`, including:
 
@@ -244,7 +247,23 @@ JWT_SECRET=<random-string-at-least-32-characters>
 AUTH_SERVICE_TOKEN=<another-long-random-string>
 MFA_ENCRYPTION_KEY=<base64-encoded-32-byte-key>
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=<strong-initial-admin-password>
+
+# Optional fallback; enrollment email links normally use the current app host/IP.
+APP_PUBLIC_URL=
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=<smtp-user>
+SMTP_PASSWORD=<smtp-password>
+SMTP_FROM=Security Hub <security@example.com>
 ```
+
+Enrollment email links automatically use the browser-facing gateway host or
+private IP from the administrator's request. `APP_PUBLIC_URL` is only a fallback
+for unusual proxy deployments. Leave `SMTP_HOST` blank when you do not have a
+mail relay. Auth will start, but administrators will see failed MFA-notification
+delivery and must resend after SMTP is configured. Relays without authentication
+can leave `SMTP_USER` and `SMTP_PASSWORD` blank.
 
 > [!CAUTION]
 > Do not use the example secrets on a shared or deployed system. Keep `.env` private.

@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   KeyRound,
+  MailCheck,
   Pencil,
   Plus,
+  RefreshCw,
   Save,
   ShieldCheck,
   ShieldOff,
@@ -30,11 +32,15 @@ import './UsersPage.css';
 
 const EMPTY_USER = {
   username: '',
+  fullName: '',
   email: '',
+  company: '',
+  department: '',
   password: '',
   role: 'viewer',
   products: '',
   status: 'active',
+  mfaMode: 'disabled',
 };
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30,40, 50];
@@ -152,11 +158,53 @@ const getRowTone = (user) => {
   return 'mapped';
 };
 
-export default function UsersPage({ token, currentUser, onBack }) {
+const getMfaStatus = (user) => {
+  const status = normalize(user?.mfa?.status || user?.mfaStatus);
+  if (['disabled', 'pending', 'enabled'].includes(status)) return status;
+  if (user?.mfa?.enabled || user?.mfaEnabled) return 'enabled';
+  return normalize(user?.mfa?.mode || user?.mfaMode) === 'authenticator' ? 'pending' : 'disabled';
+};
+
+const getMfaMode = (user) => getMfaStatus(user) === 'disabled' ? 'disabled' : 'authenticator';
+
+const getNotificationStatus = user => normalize(user?.mfa?.notificationStatus || user?.mfa?.notification?.status || user?.mfaNotificationStatus || user?.mfaNotification?.status);
+
+function useDialogFocus(open, onClose) {
+  const dialogRef = useRef(null);
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
+  useEffect(() => {
+    if (!open || !dialogRef.current) return undefined;
+    const root = dialogRef.current;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusable = () => Array.from(root.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href]'));
+    const initial = root.querySelector('[autofocus]') || focusable()[0];
+    initial?.focus();
+    const handleKey = event => {
+      if (event.key === 'Escape') { event.preventDefault(); closeRef.current?.(); return; }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('keydown', handleKey);
+      requestAnimationFrame(() => previous?.focus());
+    };
+  }, [open]);
+  return dialogRef;
+}
+
+export default function UsersPage({ token, currentUser, onBack, onSessionEnded, onUserUpdated }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorMode, setEditorMode] = useState('create');
   const [draftUser, setDraftUser] = useState(EMPTY_USER);
@@ -168,8 +216,13 @@ export default function UsersPage({ token, currentUser, onBack }) {
   const [accessFilter, setAccessFilter] = useState('all');
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
-  const [mfaResetUser, setMfaResetUser] = useState(null);
-  const [mfaResetDraft, setMfaResetDraft] = useState({ adminPassword: '', reason: '', confirmation: '' });
+  const [securityAction, setSecurityAction] = useState(null);
+  const [securityDraft, setSecurityDraft] = useState({ adminPassword: '', reason: '', confirmation: '' });
+  const [passwordResetUser, setPasswordResetUser] = useState(null);
+  const [passwordDraft, setPasswordDraft] = useState({ newPassword: '', confirmationPassword: '', adminPassword: '', reason: '' });
+  const editorDialogRef = useDialogFocus(editorOpen && !securityAction, () => setEditorOpen(false));
+  const passwordDialogRef = useDialogFocus(Boolean(passwordResetUser), () => setPasswordResetUser(null));
+  const securityDialogRef = useDialogFocus(Boolean(securityAction), () => setSecurityAction(null));
 
   const authHeaders = useMemo(() => ({
     'Content-Type': 'application/json',
@@ -223,12 +276,15 @@ export default function UsersPage({ token, currentUser, onBack }) {
       const accessSummary = getAccessSummary(user);
       const searchableText = [
         user.username,
+        user.fullName,
         user.email,
+        user.company,
+        user.department,
         role,
         presence,
         accountStatus,
-        user.mfaEnabled ? 'mfa enabled' : 'mfa disabled',
-        user.mfaProvider,
+        `mfa ${getMfaStatus(user)}`,
+        getNotificationStatus(user),
         accessStatus,
         accessSummary.title,
         accessSummary.details,
@@ -268,39 +324,79 @@ export default function UsersPage({ token, currentUser, onBack }) {
   function openEdit(user) {
     setDraftUser({
       username: user.username,
+      fullName: user.fullName || '',
       email: user.email || '',
+      company: user.company || '',
+      department: user.department || '',
       password: '',
       role: user.role || 'viewer',
       products: getUserProducts(user).join(', '),
       status: user.accountStatus || 'active',
+      mfaMode: getMfaMode(user),
     });
     setEditorMode('edit');
     setEditorOpen(true);
   }
 
   function openReset(user) {
-    openEdit(user);
-    setEditorMode('reset');
+    setPasswordResetUser(user);
+    setPasswordDraft({ newPassword: '', confirmationPassword: '', adminPassword: '', reason: '' });
+    setError('');
   }
+
+  const userPayload = (includeSecurity = false) => ({
+    username: draftUser.username.trim(),
+    fullName: draftUser.fullName.trim(),
+    email: draftUser.email.trim(),
+    company: draftUser.company.trim(),
+    department: draftUser.department.trim(),
+    ...(editorMode === 'create' ? {
+      password: draftUser.password,
+      mfaMode: draftUser.mfaMode,
+    } : {}),
+    role: draftUser.role,
+    products: parseProducts(draftUser.products),
+    status: draftUser.status,
+    ...(includeSecurity ? {
+      adminPassword: securityDraft.adminPassword,
+      reason: securityDraft.reason.trim(),
+    } : {}),
+  });
+
+  const openSecurityAction = (type, user, mfaMode = getMfaMode(user)) => {
+    setSecurityAction({ type, user, mfaMode });
+    setSecurityDraft({ adminPassword: '', reason: '', confirmation: '' });
+    setError('');
+    setNotice('');
+  };
 
   async function saveUser(event) {
     event.preventDefault();
-    setSaving(true);
     setError('');
+    setNotice('');
+    if (draftUser.mfaMode === 'authenticator' && !draftUser.email.trim()) {
+      setError('A valid email address is required for Authenticator MFA.');
+      return;
+    }
+    const existingUser = users.find(user => user.username === draftUser.username);
+    if (editorMode === 'create' && draftUser.mfaMode === 'authenticator') {
+      openSecurityAction('create', { username: draftUser.username.trim() }, 'authenticator');
+      return;
+    }
+    if (editorMode === 'edit' && existingUser && getMfaMode(existingUser) !== draftUser.mfaMode) {
+      openSecurityAction('change', existingUser, draftUser.mfaMode);
+      return;
+    }
+    setSaving(true);
     try {
-      await request('/users', {
+      const data = await request('/users', {
         method: 'POST',
-        body: JSON.stringify({
-          username: draftUser.username.trim(),
-          email: draftUser.email.trim(),
-          password: draftUser.password,
-          role: draftUser.role,
-          products: parseProducts(draftUser.products),
-          status: draftUser.status,
-        }),
+        body: JSON.stringify(userPayload()),
       });
+      if (data?.user?.username === currentUser?.username) onUserUpdated?.(data.user);
       setEditorOpen(false);
       setDraftUser({ ...EMPTY_USER });
+      setNotice(editorMode === 'create' ? 'User created.' : 'User details updated.');
       await loadUsers();
     } catch (err) {
       setError(err.message || 'Unable to save user');
@@ -320,21 +416,95 @@ export default function UsersPage({ token, currentUser, onBack }) {
     }
   }
 
-  async function resetMfa(event) {
+  async function submitPasswordReset(event) {
     event.preventDefault();
-    if (!mfaResetUser) return;
+    if (!passwordResetUser) return;
+    setError(''); setNotice('');
+    if (passwordDraft.newPassword !== passwordDraft.confirmationPassword) {
+      setError('New passwords do not match.');
+      return;
+    }
+    if (passwordDraft.newPassword.length < 12 || passwordDraft.newPassword.length > 128) {
+      setError('New password must contain 12–128 characters.');
+      return;
+    }
     setSaving(true);
-    setError('');
     try {
-      await request(`/users/${encodeURIComponent(mfaResetUser.username)}/mfa/reset`, {
-        method: 'POST',
-        body: JSON.stringify(mfaResetDraft),
+      const data = await request(`/users/${encodeURIComponent(passwordResetUser.username)}/password`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          newPassword: passwordDraft.newPassword,
+          adminPassword: passwordDraft.adminPassword,
+          reason: passwordDraft.reason.trim(),
+        }),
       });
-      setMfaResetUser(null);
-      setMfaResetDraft({ adminPassword: '', reason: '', confirmation: '' });
+      setPasswordResetUser(null);
+      setPasswordDraft({ newPassword: '', confirmationPassword: '', adminPassword: '', reason: '' });
+      if (data?.sessionEnded) {
+        onSessionEnded?.('password-changed');
+        return;
+      }
+      setNotice('Password reset. The user must sign in again.');
       await loadUsers();
     } catch (err) {
-      setError(err.message || 'Unable to reset authenticator');
+      setError(err.message || 'Unable to reset password');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitSecurityAction(event) {
+    event.preventDefault();
+    if (!securityAction) return;
+    const { type, user, mfaMode } = securityAction;
+    if (['reset', 'disable'].includes(type) && securityDraft.confirmation !== user.username) return;
+    setSaving(true); setError(''); setNotice('');
+    try {
+      let data;
+      if (type === 'create') {
+        data = await request('/users', { method: 'POST', body: JSON.stringify(userPayload(true)) });
+        setEditorOpen(false);
+        setDraftUser({ ...EMPTY_USER });
+      } else {
+        if (type === 'change') {
+          const identity = await request('/users', { method: 'POST', body: JSON.stringify(userPayload()) });
+          if (identity?.user?.username === currentUser?.username) onUserUpdated?.(identity.user);
+        }
+        const username = encodeURIComponent(user.username);
+        const path = type === 'reset'
+          ? `/users/${username}/mfa/reset`
+          : type === 'resend'
+            ? `/users/${username}/mfa/resend`
+            : `/users/${username}/mfa`;
+        const method = ['reset', 'resend'].includes(type) ? 'POST' : 'PATCH';
+        data = await request(path, {
+          method,
+          body: JSON.stringify({
+            adminPassword: securityDraft.adminPassword,
+            reason: securityDraft.reason.trim(),
+            ...(type === 'change' || type === 'enable' || type === 'disable' ? { mode: mfaMode } : {}),
+            ...(['reset', 'disable'].includes(type) ? { confirmation: securityDraft.confirmation } : {}),
+          }),
+        });
+        if (type === 'change') setEditorOpen(false);
+      }
+      if (data?.user?.username === currentUser?.username) onUserUpdated?.(data.user);
+      setSecurityAction(null);
+      setSecurityDraft({ adminPassword: '', reason: '', confirmation: '' });
+      if (data?.sessionEnded) {
+        onSessionEnded?.(type === 'reset' ? 'mfa-reset' : 'mfa-disabled');
+        return;
+      }
+      const notification = data?.notification || data?.mfa?.notification;
+      const notificationFailed = normalize(notification?.status || notification) === 'failed';
+      setNotice(notificationFailed
+        ? 'Authenticator is pending, but the setup email could not be sent. Use Resend after mail is configured.'
+        : type === 'resend' ? 'Setup email sent.'
+          : type === 'disable' ? 'Authenticator MFA disabled.'
+            : 'Authenticator MFA updated.');
+      await loadUsers();
+    } catch (err) {
+      setError(err.message || 'Unable to update Authenticator MFA');
     } finally {
       setSaving(false);
     }
@@ -364,6 +534,7 @@ export default function UsersPage({ token, currentUser, onBack }) {
           </div>
 
           {error && <div className="users-error" role="alert">{error}</div>}
+          {notice && <div className="users-notice" role="status">{notice}</div>}
 
           <div className="users-tools">
             <SearchOptionsPanel
@@ -379,7 +550,7 @@ export default function UsersPage({ token, currentUser, onBack }) {
                   label="Search users"
                   onChange={setSearchTerm}
                   onClear={() => setSearchTerm('')}
-                  placeholder="Search username, email, role, status, product"
+                  placeholder="Search name, company, email, role, status, product"
                   showClear={Boolean(searchTerm)}
                   value={searchTerm}
                 />
@@ -474,13 +645,15 @@ export default function UsersPage({ token, currentUser, onBack }) {
                 const accessStatus = getAccessStatus(user);
                 const accessSummary = getAccessSummary(user);
                 const email = user.email || 'No email';
+                const mfaStatus = getMfaStatus(user);
+                const notificationFailed = mfaStatus === 'pending' && getNotificationStatus(user) === 'failed';
 
                 return (
                   <DataTableRow key={user.username} tone={getRowTone(user)} ariaLabel={`User ${user.username}`}>
                     <DataTableCell className="cell-name users-user-cell" label="User">
-                      <strong className="cell-name-title">{user.username}</strong>
+                      <strong className="cell-name-title">{user.fullName || user.username}</strong>
                       <span className="cell-name-subtitle">
-                        {user.username === currentUser?.username ? 'Current session' : 'Hub identity'}
+                        {user.fullName ? user.username : user.username === currentUser?.username ? 'Current session' : 'Hub identity'}
                       </span>
                     </DataTableCell>
                     <DataTableCell className="cell-email users-muted-cell" label="Email" title={email}>
@@ -496,9 +669,9 @@ export default function UsersPage({ token, currentUser, onBack }) {
                       <span className={`account-badge ${accountStatus}`}>{formatLabel(accountStatus)}</span>
                     </DataTableCell>
                     <DataTableCell className="cell-mfa" label="MFA">
-                      <span className={`mfa-badge ${user.mfaEnabled ? 'enabled' : 'disabled'}`}>
-                        {user.mfaEnabled ? <ShieldCheck size={13} /> : <ShieldOff size={13} />}
-                        {user.mfaEnabled ? formatLabel(user.mfaProvider || 'enabled') : 'Not set'}
+                      <span className={`mfa-badge ${mfaStatus}${notificationFailed ? ' mail-failed' : ''}`} title={notificationFailed ? 'Setup email failed' : undefined}>
+                        {mfaStatus === 'enabled' ? <ShieldCheck size={13} /> : <ShieldOff size={13} />}
+                        {notificationFailed ? 'Pending · email failed' : mfaStatus === 'pending' ? 'Pending setup' : mfaStatus === 'enabled' ? 'Authenticator' : 'Disabled'}
                       </span>
                     </DataTableCell>
                     <DataTableCell className="cell-access users-access-cell" label="Access" title={accessSummary.details}>
@@ -516,11 +689,10 @@ export default function UsersPage({ token, currentUser, onBack }) {
                         <button type="button" className="icon-btn" onClick={() => openReset(user)} title="Reset password" aria-label={`Reset password for ${user.username}`}>
                           <KeyRound size={15} />
                         </button>
-                        {user.mfaEnabled && (
-                          <button type="button" className="icon-btn warning" onClick={() => { setMfaResetUser(user); setMfaResetDraft({ adminPassword: '', reason: '', confirmation: '' }); }} disabled={user.username === currentUser?.username} title="Reset authenticator" aria-label={`Reset authenticator for ${user.username}`}>
-                            <ShieldOff size={15} />
-                          </button>
-                        )}
+                        {mfaStatus === 'disabled' && <button type="button" className="icon-btn" onClick={() => openSecurityAction('enable', user, 'authenticator')} disabled={!user.email} title={user.email ? 'Enable Authenticator MFA' : 'Add an email before enabling MFA'} aria-label={`Enable Authenticator MFA for ${user.username}`}><ShieldCheck size={15} /></button>}
+                        {mfaStatus === 'pending' && <button type="button" className="icon-btn" onClick={() => openSecurityAction('resend', user)} title="Resend setup email" aria-label={`Resend setup email to ${user.username}`}><MailCheck size={15} /></button>}
+                        {mfaStatus === 'enabled' && <button type="button" className="icon-btn warning" onClick={() => openSecurityAction('reset', user, 'authenticator')} title="Reset authenticator" aria-label={`Reset authenticator for ${user.username}`}><RefreshCw size={15} /></button>}
+                        {mfaStatus !== 'disabled' && <button type="button" className="icon-btn warning" onClick={() => openSecurityAction('disable', user, 'disabled')} title="Disable Authenticator MFA" aria-label={`Disable Authenticator MFA for ${user.username}`}><ShieldOff size={15} /></button>}
                         <button
                           type="button"
                           className="icon-btn danger"
@@ -542,13 +714,13 @@ export default function UsersPage({ token, currentUser, onBack }) {
 
         {editorOpen && (
           <div className="modal-backdrop" role="presentation" onMouseDown={() => setEditorOpen(false)}>
-            <section className="user-modal" role="dialog" aria-modal="true" aria-labelledby="user-editor-title" onMouseDown={event => event.stopPropagation()}>
+            <section ref={editorDialogRef} className="user-modal" role="dialog" aria-modal="true" aria-labelledby="user-editor-title" onMouseDown={event => event.stopPropagation()}>
               <div className="modal-header">
                 <div>
                   <h2 id="user-editor-title">
-                    {editorMode === 'create' ? 'Add User' : editorMode === 'reset' ? `Reset Password: ${draftUser.username}` : `Edit User: ${draftUser.username}`}
+                    {editorMode === 'create' ? 'Add User' : `Edit User: ${draftUser.username}`}
                   </h2>
-                  <p>{editorMode === 'reset' ? 'Set a new password without changing app access.' : 'Manage Hub identity and DefectDojo access.'}</p>
+                  <p>Manage identity, access, and the administrator-controlled MFA policy.</p>
                 </div>
                 <button type="button" className="icon-btn" onClick={() => setEditorOpen(false)} aria-label="Close user editor">
                   <X size={16} />
@@ -556,6 +728,7 @@ export default function UsersPage({ token, currentUser, onBack }) {
               </div>
 
               <form className="user-form" onSubmit={saveUser}>
+                {error && <div className="modal-error" role="alert">{error}</div>}
                 <label>
                   <span>Username</span>
                   <input
@@ -566,33 +739,42 @@ export default function UsersPage({ token, currentUser, onBack }) {
                   />
                 </label>
                 <label>
+                  <span>Full name <small>Optional</small></span>
+                  <input maxLength={120} value={draftUser.fullName} onChange={event => setDraftUser({ ...draftUser, fullName: event.target.value })} placeholder="Alex Morgan" />
+                </label>
+                <label>
                   <span>Email</span>
                   <input
                     type="email"
+                    maxLength={254}
                     value={draftUser.email}
                     onChange={event => setDraftUser({ ...draftUser, email: event.target.value })}
-                    disabled={editorMode === 'reset'}
                   />
+                  {draftUser.mfaMode === 'authenticator' && <small>A valid email is required so the user can receive setup instructions.</small>}
                 </label>
-                <label>
-                  <span>{editorMode === 'create' ? 'Password' : editorMode === 'reset' ? 'New password' : 'Password (leave blank to keep)'}</span>
+                {editorMode === 'create' && <label>
+                  <span>Password</span>
                   <input
                     type="password"
-                    minLength={draftUser.password ? 12 : undefined}
+                    autoComplete="new-password"
+                    minLength={12}
                     maxLength={128}
                     value={draftUser.password}
                     onChange={event => setDraftUser({ ...draftUser, password: event.target.value })}
-                    required={editorMode === 'create' || editorMode === 'reset'}
+                    required
                   />
                   <small>New passwords must contain 12–128 characters.</small>
-                </label>
+                </label>}
+                <div className="form-grid">
+                  <label><span>Company <small>Optional</small></span><input maxLength={120} value={draftUser.company} onChange={event => setDraftUser({ ...draftUser, company: event.target.value })} /></label>
+                  <label><span>Department <small>Optional</small></span><input maxLength={120} value={draftUser.department} onChange={event => setDraftUser({ ...draftUser, department: event.target.value })} /></label>
+                </div>
                 <div className="form-grid">
                   <label>
                     <span>Role</span>
                     <select
                       value={draftUser.role}
                       onChange={event => setDraftUser({ ...draftUser, role: event.target.value })}
-                      disabled={editorMode === 'reset'}
                     >
                       <option value="viewer">Viewer</option>
                       <option value="admin">Admin</option>
@@ -603,7 +785,6 @@ export default function UsersPage({ token, currentUser, onBack }) {
                     <select
                       value={draftUser.status}
                       onChange={event => setDraftUser({ ...draftUser, status: event.target.value })}
-                      disabled={editorMode === 'reset'}
                     >
                       <option value="active">Active</option>
                       <option value="suspended">Suspended</option>
@@ -611,11 +792,19 @@ export default function UsersPage({ token, currentUser, onBack }) {
                   </label>
                 </div>
                 <label>
+                  <span>Authenticator MFA</span>
+                  <select value={draftUser.mfaMode} onChange={event => setDraftUser({ ...draftUser, mfaMode: event.target.value })}>
+                    <option value="disabled">Disabled</option>
+                    <option value="authenticator">Authenticator MFA</option>
+                  </select>
+                  <small>Changing this setting requires your administrator password and an audit reason.</small>
+                </label>
+                <label>
                   <span>Allowed Products</span>
                   <input
                     value={draftUser.products}
                     onChange={event => setDraftUser({ ...draftUser, products: event.target.value })}
-                    disabled={editorMode === 'reset' || draftUser.role === 'admin'}
+                    disabled={draftUser.role === 'admin'}
                     placeholder="Product A, Product B"
                   />
                 </label>
@@ -631,22 +820,52 @@ export default function UsersPage({ token, currentUser, onBack }) {
           </div>
         )}
 
-        {mfaResetUser && (
-          <div className="modal-backdrop" role="presentation" onMouseDown={() => setMfaResetUser(null)}>
-            <section className="user-modal mfa-reset-modal" role="dialog" aria-modal="true" aria-labelledby="mfa-reset-title" onMouseDown={event => event.stopPropagation()}>
+        {passwordResetUser && (
+          <div className="modal-backdrop" role="presentation" onMouseDown={() => setPasswordResetUser(null)}>
+            <section ref={passwordDialogRef} className="user-modal" role="dialog" aria-modal="true" aria-labelledby="password-reset-title" onMouseDown={event => event.stopPropagation()}>
               <div className="modal-header">
-                <div><h2 id="mfa-reset-title">Reset MFA: {mfaResetUser.username}</h2><p>This signs the user out and removes their authenticator and recovery codes.</p></div>
-                <button type="button" className="icon-btn" onClick={() => setMfaResetUser(null)} aria-label="Close MFA reset"><X size={16} /></button>
+                <div><h2 id="password-reset-title">Reset password: {passwordResetUser.username}</h2><p>All of this user’s sessions will be revoked.</p></div>
+                <button type="button" className="icon-btn" onClick={() => setPasswordResetUser(null)} aria-label="Close password reset"><X size={16} /></button>
               </div>
-              <form className="user-form" onSubmit={resetMfa}>
-                <label><span>Your administrator password</span><input type="password" autoComplete="current-password" value={mfaResetDraft.adminPassword} onChange={event => setMfaResetDraft(value => ({ ...value, adminPassword: event.target.value }))} required /></label>
-                <label><span>Reason</span><textarea minLength={3} maxLength={500} value={mfaResetDraft.reason} onChange={event => setMfaResetDraft(value => ({ ...value, reason: event.target.value }))} placeholder="Lost or replaced device" required /></label>
-                <label><span>Type {mfaResetUser.username} to confirm</span><input value={mfaResetDraft.confirmation} onChange={event => setMfaResetDraft(value => ({ ...value, confirmation: event.target.value }))} required /></label>
-                <div className="modal-actions"><button type="button" className="btn-secondary" onClick={() => setMfaResetUser(null)}>Cancel</button><button type="submit" className="btn-danger" disabled={saving || mfaResetDraft.confirmation !== mfaResetUser.username}>{saving ? 'Resetting…' : 'Reset MFA and sign out user'}</button></div>
+              <form className="user-form" onSubmit={submitPasswordReset}>
+                {error && <div className="modal-error" role="alert">{error}</div>}
+                <label><span>New password</span><input type="password" autoComplete="new-password" minLength={12} maxLength={128} value={passwordDraft.newPassword} onChange={event => setPasswordDraft(value => ({ ...value, newPassword: event.target.value }))} required /><small>Use 12–128 characters.</small></label>
+                <label><span>Confirm new password</span><input type="password" autoComplete="new-password" minLength={12} maxLength={128} value={passwordDraft.confirmationPassword} onChange={event => setPasswordDraft(value => ({ ...value, confirmationPassword: event.target.value }))} required /></label>
+                <label><span>Your administrator password</span><input type="password" autoComplete="current-password" value={passwordDraft.adminPassword} onChange={event => setPasswordDraft(value => ({ ...value, adminPassword: event.target.value }))} required /></label>
+                <label><span>Audit reason</span><textarea minLength={3} maxLength={500} value={passwordDraft.reason} onChange={event => setPasswordDraft(value => ({ ...value, reason: event.target.value }))} placeholder="Requested by account owner" required /></label>
+                <div className="modal-actions"><button type="button" className="btn-secondary" onClick={() => setPasswordResetUser(null)}>Cancel</button><button type="submit" className="btn-danger" disabled={saving}>{saving ? 'Resetting…' : 'Reset password'}</button></div>
               </form>
             </section>
           </div>
         )}
+
+        {securityAction && (() => {
+          const username = securityAction.user.username;
+          const actionLabels = {
+            create: ['Enable Authenticator MFA', 'Create the user, mark setup as pending, and email the setup link.'],
+            change: [securityAction.mfaMode === 'authenticator' ? 'Enable Authenticator MFA' : 'Disable Authenticator MFA', securityAction.mfaMode === 'authenticator' ? 'Email the user a setup link after saving their details.' : 'Remove authenticator access and revoke the user’s sessions.'],
+            enable: ['Enable Authenticator MFA', 'Mark setup as pending and email the user a setup link.'],
+            reset: ['Reset Authenticator MFA', 'Remove the current authenticator, revoke sessions, and email a new setup link.'],
+            resend: ['Resend setup email', 'Send the trusted setup link to the email on this account.'],
+            disable: ['Disable Authenticator MFA', 'Remove authenticator access and revoke the user’s sessions.'],
+          };
+          const [title, description] = actionLabels[securityAction.type];
+          const destructive = ['reset', 'disable'].includes(securityAction.type);
+          return (
+            <div className="modal-backdrop" role="presentation" onMouseDown={() => setSecurityAction(null)}>
+              <section ref={securityDialogRef} className="user-modal" role="dialog" aria-modal="true" aria-labelledby="mfa-action-title" onMouseDown={event => event.stopPropagation()}>
+                <div className="modal-header"><div><h2 id="mfa-action-title">{title}: {username}</h2><p>{description}</p></div><button type="button" className="icon-btn" onClick={() => setSecurityAction(null)} aria-label="Close authenticator action"><X size={16} /></button></div>
+                <form className="user-form" onSubmit={submitSecurityAction}>
+                  {error && <div className="modal-error" role="alert">{error}</div>}
+                  <label><span>Your administrator password</span><input type="password" autoComplete="current-password" value={securityDraft.adminPassword} onChange={event => setSecurityDraft(value => ({ ...value, adminPassword: event.target.value }))} required autoFocus /></label>
+                  <label><span>Audit reason</span><textarea minLength={3} maxLength={500} value={securityDraft.reason} onChange={event => setSecurityDraft(value => ({ ...value, reason: event.target.value }))} placeholder="Requested by account owner" required /></label>
+                  {destructive && <label><span>Type {username} to confirm</span><input value={securityDraft.confirmation} onChange={event => setSecurityDraft(value => ({ ...value, confirmation: event.target.value }))} required /></label>}
+                  <div className="modal-actions"><button type="button" className="btn-secondary" onClick={() => setSecurityAction(null)}>Cancel</button><button type="submit" className={destructive ? 'btn-danger' : 'btn-primary'} disabled={saving || (destructive && securityDraft.confirmation !== username)}>{saving ? 'Saving…' : title}</button></div>
+                </form>
+              </section>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

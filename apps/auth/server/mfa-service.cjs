@@ -3,7 +3,6 @@ const OTPAuth = require('otpauth');
 
 const MFA_ISSUER = 'Internal Security Middleware';
 const MFA_PROVIDERS = new Set(['google', 'microsoft', 'other']);
-const RECOVERY_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const TOTP_PERIOD_SECONDS = 30;
 const TOTP_DIGITS = 6;
 const TOTP_WINDOW = 1;
@@ -15,7 +14,6 @@ const normalizeProvider = (value) => (
 );
 
 const normalizeOtp = (value) => String(value || '').replace(/\s+/g, '');
-const normalizeRecoveryCode = (value) => String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 function parseEncryptionKey(value) {
   const key = Buffer.from(String(value || ''), 'base64');
@@ -27,7 +25,6 @@ function parseEncryptionKey(value) {
 
 function createMfaService({ encryptionKey }) {
   const key = Buffer.isBuffer(encryptionKey) ? encryptionKey : parseEncryptionKey(encryptionKey);
-  const recoveryKey = crypto.hkdfSync('sha256', key, Buffer.alloc(0), Buffer.from('auth-mfa-recovery-codes'), 32);
 
   const encryptSecret = (secret) => {
     const iv = crypto.randomBytes(12);
@@ -85,20 +82,6 @@ function createMfaService({ encryptionKey }) {
     return Math.floor(timestamp / 1000 / TOTP_PERIOD_SECONDS) + delta;
   };
 
-  const recoveryCodeHash = (code) => crypto
-    .createHmac('sha256', recoveryKey)
-    .update(normalizeRecoveryCode(code))
-    .digest('hex');
-
-  const generateRecoveryCodes = (count = 10) => Array.from({ length: count }, () => {
-    let raw = '';
-    while (raw.length < 15) {
-      const byte = crypto.randomBytes(1)[0];
-      if (byte < 224) raw += RECOVERY_ALPHABET[byte % RECOVERY_ALPHABET.length];
-    }
-    return raw.match(/.{1,5}/g).join('-');
-  });
-
   const createOpaqueToken = () => crypto.randomBytes(32).toString('base64url');
   const tokenHash = (token) => crypto.createHash('sha256').update(String(token || '')).digest('hex');
 
@@ -107,10 +90,7 @@ function createMfaService({ encryptionKey }) {
     decryptSecret,
     encryptSecret,
     generateEnrollment,
-    generateRecoveryCodes,
     normalizeProvider,
-    normalizeRecoveryCode,
-    recoveryCodeHash,
     tokenHash,
     validateTotp
   };
@@ -123,6 +103,5 @@ module.exports = {
   TOTP_WINDOW,
   createMfaService,
   normalizeProvider,
-  normalizeRecoveryCode,
   parseEncryptionKey
 };

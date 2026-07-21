@@ -129,7 +129,7 @@ sequenceDiagram
         LoginUI-->>User: Display Error Box (AlertTriangle)
     else Password accepted and MFA enabled
         Server-->>LoginUI: 200 OK {mfaRequired, challengeToken}
-        User->>LoginUI: Enter authenticator or recovery code
+        User->>LoginUI: Enter authenticator code
         LoginUI->>Server: POST /api/login/mfa
         Server-->>LoginUI: 200 OK {token, user}
         LoginUI->>LocalStore: Store shared token and user
@@ -537,16 +537,17 @@ All backend API requests require authorization, using JWT tokens sent in the HTT
 | HTTP Method | API URL Path | Admin | Payload / Parameters | Response Shape |
 |---|---|---|---|---|
 | **POST** | `/api/login` | No | `{username, password}` | Session response or `{mfaRequired, challengeToken, authenticatorApp}` |
-| **POST** | `/api/login/mfa` | No | `{challengeToken, code, mode}` | `{token, user, recoveryCodesRemaining}` |
+| **POST** | `/api/login/mfa` | No | `{challengeToken, code}` | `{token, user}` |
 | **POST** | `/api/logout` | No | None (Token Header) | `{message: "Logged out"}` |
-| **GET/PATCH** | `/api/profile` | No | Optional `{email}` | Current public user and MFA status |
-| **PATCH** | `/api/profile/password` | No | Current/new password and MFA factor when enabled | Password-change confirmation; all sessions revoked |
-| **POST** | `/api/profile/mfa/setup` | No | Provider, current password, existing factor when replacing | Temporary setup token, QR URI, manual key |
-| **POST** | `/api/profile/mfa/confirm` | No | `{setupToken, code}` | MFA status and one-time recovery codes |
-| **POST** | `/api/profile/mfa/recovery-codes/regenerate` | No | Current password and MFA factor | Replacement recovery codes |
-| **POST** | `/api/profile/mfa/disable` | No | Current password and MFA factor | MFA removal; all sessions revoked |
+| **GET** | `/api/profile` | No | None | Read-only public identity and MFA status |
+| **POST** | `/api/profile/mfa/enrollment/start` | No | `{currentPassword}` | Temporary setup token, QR URI, manual key |
+| **POST** | `/api/profile/mfa/enrollment/confirm` | No | `{setupToken, code}` | Enabled MFA status |
 | **GET** | `/api/users` | **Yes** | None | `Array<{username, role, products: []}>` |
-| **POST** | `/api/users` | **Yes** | `{username, password?, role, products: []}` | `{message: "User saved successfully"}` |
+| **POST** | `/api/users` | **Yes** | Identity, access, initial password, and optional `mfaMode` | Saved public user and notification status |
+| **PATCH** | `/api/users/:username/password` | **Yes** | `{newPassword, adminPassword, reason}` | Reset confirmation and session status |
+| **PATCH** | `/api/users/:username/mfa` | **Yes** | `{mode, adminPassword, reason}` | Disabled or pending MFA status |
+| **POST** | `/api/users/:username/mfa/reset` | **Yes** | `{adminPassword, reason}` | Pending MFA status and notification result |
+| **POST** | `/api/users/:username/mfa/resend` | **Yes** | `{adminPassword, reason}` | Notification result |
 | **DELETE** | `/api/users/:username` | **Yes** | None | `{message: "User deleted"}` |
 | **GET** | `/api/config` | No | None | `{defectDojoUrl, redmineUrl, trackers, ...}` |
 | **POST** | `/api/config` | **Yes** | Configuration Object | `{message: "Config saved successfully"}` |

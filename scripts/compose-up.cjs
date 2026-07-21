@@ -13,9 +13,12 @@ function runComposeUp({
   cwd = REPOSITORY_ROOT
 } = {}) {
   const environment = generate();
-  if (environment.generatedKeys.length) {
+  if (environment.generatedKeys.length || environment.addedKeys?.length) {
     const action = environment.created ? 'Created' : 'Updated';
-    logger.log(`${action} ${environment.outputPath}; generated ${environment.generatedKeys.join(', ')}`);
+    const changes = [];
+    if (environment.generatedKeys.length) changes.push(`generated ${environment.generatedKeys.join(', ')}`);
+    if (environment.addedKeys?.length) changes.push(`added ${environment.addedKeys.join(', ')}`);
+    logger.log(`${action} ${environment.outputPath}; ${changes.join('; ')}`);
   } else {
     logger.log(`Environment ready: ${environment.outputPath}`);
   }

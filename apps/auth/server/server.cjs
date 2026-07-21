@@ -7,7 +7,8 @@ const { verifyJwt } = require('../../../packages/auth-client/index.cjs');
 const { createAuthStore, DEFAULT_APP_KEY } = require('./auth-store.cjs');
 const { loadRuntimeSecrets } = require('./runtime-config.cjs');
 const { createMfaService } = require('./mfa-service.cjs');
-const { registerProfileRoutes, validateNewPassword } = require('./profile-routes.cjs');
+const { createMailer } = require('./mailer.cjs');
+const { isValidEmail, registerProfileRoutes, validateNewPassword } = require('./profile-routes.cjs');
 
 const PORT = process.env.PORT || 3000;
 const {
@@ -80,6 +81,47 @@ function verifyPassword(password, user = {}) {
 
 const authStore = createAuthStore({ dataDir: DATA_DIR, hashPassword });
 const mfaService = createMfaService({ encryptionKey: MFA_ENCRYPTION_KEY });
+const mailer = createMailer(process.env);
+
+function getRequestApplicationUrl(req) {
+  const parseUrl = value => {
+    try {
+      const candidate = new URL(String(value || '').trim());
+      if (
+        (candidate.protocol === 'http:' || candidate.protocol === 'https:')
+        && !candidate.username
+        && !candidate.password
+      ) return candidate.origin;
+    } catch {
+      // Fall through to the trusted proxy headers.
+    }
+    return '';
+  };
+
+  const forwardedProtocol = String(req?.headers?.['x-forwarded-proto'] || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  const protocol = forwardedProtocol === 'https' ? 'https' : 'http';
+  const host = String(
+    req?.headers?.['x-forwarded-host']
+      || req?.headers?.host
+      || ''
+  ).split(',')[0].trim();
+
+  // Browser requests provide the exact external origin, including a VPN-facing
+  // private IP and non-default port. Accept it only when it names the same host
+  // reached by the request; the gateway-derived value is the fallback.
+  const browserOrigin = parseUrl(req?.headers?.origin);
+  const requestHostUrl = parseUrl(host ? `http://${host}` : '');
+  if (
+    browserOrigin
+    && requestHostUrl
+    && new URL(browserOrigin).host === new URL(requestHostUrl).host
+  ) return browserOrigin;
+
+  return parseUrl(host ? `${protocol}://${host}` : '');
+}
 
 function buildTokenPayload(user, sid) {
   return {
@@ -89,6 +131,9 @@ function buildTokenPayload(user, sid) {
     sid,
     username: user.username,
     email: user.email,
+    fullName: user.fullName,
+    company: user.company,
+    department: user.department,
     role: user.role,
     products: user.products,
     status: user.status,
@@ -153,6 +198,9 @@ async function authenticateJwt(req, res, next) {
       sub: currentUser.id,
       username: currentUser.username,
       email: currentUser.email,
+      fullName: currentUser.fullName,
+      company: currentUser.company,
+      department: currentUser.department,
       role: currentUser.role,
       products: currentUser.products,
       status: currentUser.status
@@ -161,6 +209,48 @@ async function authenticateJwt(req, res, next) {
   } catch (err) {
     console.error('Session validation error:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+async function sendMfaSetupNotification({ user, requestedBy, request }) {
+  const attemptedAt = new Date().toISOString();
+  try {
+    await mailer.sendMfaSetupEmail({
+      to: user.email,
+      fullName: user.fullName,
+      username: user.username,
+      requestedBy,
+      applicationUrl: getRequestApplicationUrl(request)
+    });
+    await authStore.setMfaPolicy(user.username, {
+      mode: 'authenticator',
+      notificationStatus: 'sent',
+      notificationAttemptedAt: attemptedAt,
+      notificationSentAt: attemptedAt,
+      notificationError: ''
+    });
+    await authStore.saveAuditEvent({
+      actorUsername: requestedBy,
+      targetUsername: user.username,
+      action: 'mfa.notification_sent'
+    });
+    return { status: 'sent', attemptedAt, sentAt: attemptedAt };
+  } catch (error) {
+    const code = error?.code === 'MAIL_NOT_CONFIGURED' ? 'MAIL_NOT_CONFIGURED' : 'SMTP_DELIVERY_FAILED';
+    await authStore.setMfaPolicy(user.username, {
+      mode: 'authenticator',
+      notificationStatus: 'failed',
+      notificationAttemptedAt: attemptedAt,
+      notificationSentAt: '',
+      notificationError: code
+    });
+    await authStore.saveAuditEvent({
+      actorUsername: requestedBy,
+      targetUsername: user.username,
+      action: 'mfa.notification_failed',
+      metadata: { code }
+    });
+    return { status: 'failed', attemptedAt, code };
   }
 }
 
@@ -220,7 +310,7 @@ app.post('/api/login', async (req, res) => {
         mfaRequired: true,
         challengeToken,
         expiresIn,
-        authenticatorApp: mfa.provider
+        authenticatorApp: 'authenticator'
       });
     }
 
@@ -250,7 +340,8 @@ registerProfileRoutes({
   mfaService,
   verifyPassword,
   hashPassword,
-  issueSession
+  issueSession,
+  sendMfaSetupNotification
 });
 
 // Auth - Internal token introspection for protected services
@@ -284,6 +375,9 @@ app.post('/api/auth/introspect', async (req, res) => {
       sub: currentUser.id,
       username: currentUser.username,
       email: currentUser.email,
+      fullName: currentUser.fullName,
+      company: currentUser.company,
+      department: currentUser.department,
       role: currentUser.role,
       products: currentUser.products,
       status: currentUser.status
@@ -304,7 +398,10 @@ app.get('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
 
 // Users - Create or Update (Admins only)
 app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
-  const { username, password, role, products, email, status } = req.body;
+  const {
+    username, password, role, products, email, status,
+    fullName, company, department, mfaMode, adminPassword, reason
+  } = req.body;
   if (!username || !role) {
     return res.status(400).json({ error: 'Username and role are required' });
   }
@@ -316,7 +413,18 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
 
     const nextStatus = String(status || 'active').trim().toLowerCase() === 'suspended' ? 'suspended' : 'active';
     const nextEmail = String(email || '').trim();
+    const nextFullName = String(fullName || '').trim();
+    const nextCompany = String(company || '').trim();
+    const nextDepartment = String(department || '').trim();
     const nextProducts = Array.isArray(products) ? products : [];
+    const requestedMfaMode = String(mfaMode || 'disabled').trim().toLowerCase() === 'authenticator'
+      ? 'authenticator'
+      : 'disabled';
+
+    if (!isValidEmail(nextEmail)) return res.status(400).json({ error: 'Enter a valid email address' });
+    if ([nextFullName, nextCompany, nextDepartment].some(value => value.length > 120)) {
+      return res.status(400).json({ error: 'Full name, company, and department must be 120 characters or fewer' });
+    }
 
     // Prevent suspending yourself
     if (req.user.username === normalizedUsername && nextStatus === 'suspended') {
@@ -330,9 +438,25 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Password is required for new users' });
     }
 
+    if (existingUser && password) {
+      return res.status(400).json({ error: 'Use the administrator password-reset action for an existing user' });
+    }
+
     if (password) {
       const passwordError = validateNewPassword(password);
       if (passwordError) return res.status(400).json({ error: passwordError });
+    }
+
+    if (!existingUser && requestedMfaMode === 'authenticator') {
+      if (!nextEmail) return res.status(400).json({ error: 'Email is required for Authenticator MFA' });
+      const admin = await authStore.getUserByUsername(req.user.username);
+      if (!admin || !verifyPassword(String(adminPassword || ''), admin)) {
+        return res.status(400).json({ error: 'Administrator password is incorrect' });
+      }
+      const auditReason = String(reason || '').trim();
+      if (auditReason.length < 3 || auditReason.length > 500) {
+        return res.status(400).json({ error: 'Enter a reason between 3 and 500 characters' });
+      }
     }
 
     if (existingUser?.role === 'admin' && role !== 'admin' && users.filter(u => u.role === 'admin').length <= 1) {
@@ -343,6 +467,9 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
       ...(existingUser || {}),
       username: normalizedUsername,
       email: nextEmail,
+      fullName: nextFullName,
+      company: nextCompany,
+      department: nextDepartment,
       role,
       products: nextProducts,
       status: nextStatus,
@@ -357,15 +484,39 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
     }
 
     const saved = await authStore.upsertUser(nextUser);
+    let notification = null;
+    if (!existingUser) {
+      await authStore.setMfaPolicy(normalizedUsername, {
+        mode: requestedMfaMode,
+        requestedAt: requestedMfaMode === 'authenticator' ? new Date().toISOString() : '',
+        requestedBy: requestedMfaMode === 'authenticator' ? req.user.username : '',
+        requestReason: requestedMfaMode === 'authenticator' ? String(reason || '').trim() : '',
+        notificationStatus: requestedMfaMode === 'authenticator' ? 'pending' : 'none'
+      });
+      if (requestedMfaMode === 'authenticator') {
+        notification = await sendMfaSetupNotification({ user: saved, requestedBy: req.user.username, request: req });
+        await authStore.saveAuditEvent({
+          actorUsername: req.user.username,
+          targetUsername: normalizedUsername,
+          action: 'mfa.admin_enabled',
+          metadata: { reason: String(reason || '').trim(), source: 'user.create' }
+        });
+      }
+    }
     await authStore.saveAuditEvent({
       actorUsername: req.user.username,
       targetUsername: normalizedUsername,
       action: existingUser ? 'user.updated' : 'user.created',
-      metadata: { role, status: nextStatus }
+      metadata: {
+        role,
+        status: nextStatus,
+        ...(existingUser ? {} : { mfaMode: requestedMfaMode, reason: String(reason || '').trim() })
+      }
     });
     res.json({
       message: 'User saved successfully',
-      user: authStore.buildPublicUser(saved)
+      user: authStore.buildPublicUser(await authStore.getUserByUsername(normalizedUsername)),
+      notification
     });
   } catch (err) {
     console.error('Save user error:', err);
@@ -467,4 +618,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, authStore, start };
+module.exports = { app, authStore, getRequestApplicationUrl, start };
