@@ -174,6 +174,26 @@ docker compose start defectdojo
 docker compose up -d --build wazuh
 ```
 
+### Remove containers outside this app
+
+Preview containers that do not belong to this app's resolved Compose project:
+
+```powershell
+node scripts/cleanup-foreign-containers.cjs
+```
+
+The preview prints the exact confirmed command needed to stop and remove those
+containers. For example:
+
+```powershell
+node scripts/cleanup-foreign-containers.cjs --execute --confirm=internal-security-middleware
+```
+
+The project name is resolved from the current Compose configuration, including
+`.env` overrides. The script preserves all containers with that Compose project
+label. It removes foreign running and stopped containers only; named volumes,
+images, and networks are left untouched.
+
 ### Authentication and Hub outage checks
 
 ```powershell
