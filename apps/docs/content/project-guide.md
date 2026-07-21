@@ -106,19 +106,19 @@ Wazuh Viewer:
 ### Integrated Docker runtime
 
 ```powershell
-node scripts/generate-env.cjs
-docker compose up -d --build
+node scripts/compose-up.cjs
 docker compose ps
 ```
 
-The generator creates `.env` when missing, fills blank or missing managed
-values, and replaces known unsafe auth placeholders. It does not rotate
-non-empty database passwords unless you explicitly pass `--force`.
+The wrapper creates `.env` when missing, fills blank or missing managed values,
+replaces known unsafe auth placeholders, and then runs
+`docker compose up -d --build`. Existing non-empty secrets are preserved.
 
 With the generated environment, open `http://localhost/`. If `.env` is absent and `GATEWAY_PORT` is not otherwise set, use `http://localhost/`.
 
 Review `PG_PASSWORD`, `AUTH_PG_PASSWORD`, `JWT_SECRET`, `AUTH_SERVICE_TOKEN`,
-and `AUTH_BOOTSTRAP_ADMIN_PASSWORD` before a shared or deployed installation.
+`MFA_ENCRYPTION_KEY`, and `AUTH_BOOTSTRAP_ADMIN_PASSWORD` before a shared or
+deployed installation.
 PostgreSQL initialization values are retained in named volumes; changing
 database credentials later does not rewrite an existing volume.
 
@@ -207,7 +207,7 @@ Important Linux Log Collector runtime variables:
 Auth-service is the identity owner:
 
 1. `POST /api/login` validates the user against `auth-db` (or auth file storage when no database is configured).
-2. Auth-service creates a session and returns a one-hour JWT containing issuer, audience, session, role, membership, and product-scope claims.
+2. Accounts without MFA receive a one-hour JWT immediately. MFA-enabled accounts receive a five-minute, one-time challenge and obtain the JWT only after `POST /api/login/mfa` validates TOTP or an unused recovery code.
 3. The frontend stores the token as `middleware_token` and the public user as `middleware_user`.
 4. The shared gateway origin makes those values available at `/`, `/defectdojo/`, and `/wazuh/`.
 5. DefectDojo and Docs requests attach `Authorization: Bearer <token>`.
@@ -223,6 +223,8 @@ If production auth storage contains no users and no legacy users can be
 imported, Auth requires `AUTH_BOOTSTRAP_ADMIN_PASSWORD`. It never creates
 `admin` / `admin` in production or rewrites existing users.
 
+Production also requires `MFA_ENCRYPTION_KEY`, a stable base64-encoded 32-byte key. Authenticator secrets are encrypted with AES-256-GCM; recovery codes and challenge tokens are stored only as hashes. TOTP uses SHA-1, six digits, a 30-second period, a one-period clock window, replay counters, per-challenge attempt limits, and account-level temporary locks. Production traffic must reach the gateway through TLS so setup keys and codes are never sent over plaintext networks.
+
 DefectDojo's own `/api/login` and local user APIs return `410 Gone` unless `ENABLE_LEGACY_LOCAL_AUTH=true`. User administration in the normal runtime belongs to Hub.
 
 ## 8. Authentication and Hub Architecture
@@ -232,6 +234,8 @@ apps/auth/
   server/
     server.cjs           Auth API, JWTs, sessions, users, health, static serving
     auth-store.cjs       PostgreSQL/file auth adapter and legacy import
+    mfa-service.cjs      TOTP, secret encryption, recovery codes, challenge hashes
+    profile-routes.cjs   Self-service Profile and MFA endpoints
   web/src/
     features/auth/       Login screen
 
@@ -239,6 +243,7 @@ apps/hub/
   src/
     app/App.jsx          Portal state and hash route selection
     features/hub/        Workspace switcher and health badges
+    features/profile/    Profile, password, enrollment, and recovery UX
     features/users/      Central user administration
     shared/ui/           Shared Hub UI components
 ```
@@ -246,6 +251,7 @@ apps/hub/
 Hub hash routes are intentionally small:
 
 - Empty hash: workspace switcher.
+- `#profile`: authenticated self-service profile; an encoded internal `returnTo` restores the originating workspace.
 - `#users`: user administration for admins.
 - `#docs`: documentation reader. The technical documents are hidden from viewers by the backend, not only by the UI.
 
@@ -304,6 +310,9 @@ The two PostgreSQL services are deliberately separate.
 - `auth_app_memberships`
 - `auth_sessions`
 - `auth_audit_events`
+- `auth_mfa_config`
+- `auth_mfa_recovery_codes`
+- `auth_mfa_challenges`
 
 `defectdojo_db` is owned by DefectDojo Viewer and contains configuration, backups, findings, mapped products and engagements, Redmine state/tickets, sync history, mitigation rechecks/reviews, and admin actions. Its tables use the `defectdojo_viewer_` prefix. `defectdojo_viewer_users` remains only for legacy import/local-auth compatibility.
 
@@ -343,6 +352,7 @@ Mitigation review state is stored separately from the action history. Admins can
 Hub owns:
 
 - `/api/login`, `/api/logout`
+- `/api/login/mfa`, `/api/profile`, `/api/profile/*`
 - `/api/auth/introspect`
 - `/api/users`
 - `/api/docs`

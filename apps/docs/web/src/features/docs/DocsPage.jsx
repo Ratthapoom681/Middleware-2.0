@@ -518,7 +518,10 @@ export default function DocsPage({ token, user, routeHash, onBack, onLogout, onU
           </div>
         </div>
         <div className="docs-topbar-user">
-          <span className="docs-user-name">{user?.username}</span>
+          <button type="button" className="docs-user-name docs-profile-link" onClick={() => {
+            const returnTo = `${window.location.pathname}${window.location.hash || ''}`;
+            window.location.href = `/#profile?returnTo=${encodeURIComponent(returnTo)}`;
+          }}>{user?.username}</button>
           <span className={`docs-role-badge ${user?.role}`}>{user?.role}</span>
           <button type="button" className="docs-icon-command" onClick={onLogout} title="Sign Out">
             <LogOut size={16} />

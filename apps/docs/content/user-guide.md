@@ -103,27 +103,24 @@ Viewer accounts can be restricted to specific product names. Admin accounts have
 
 ## 4. Start the System
 
-1. Generate a safe local environment file:
+1. Generate any missing secrets and start the stack:
    ```powershell
-   node scripts/generate-env.cjs
+   node scripts/compose-up.cjs
    ```
-2. Review `.env`. The generator creates or fills blank values for:
+2. Review `.env`. The wrapper creates or fills blank values for:
    - `PG_PASSWORD`
    - `AUTH_PG_PASSWORD`
    - `JWT_SECRET` (at least 32 characters)
    - `AUTH_SERVICE_TOKEN`
+   - `MFA_ENCRYPTION_KEY` (base64-encoded 32-byte key)
    - `AUTH_BOOTSTRAP_ADMIN_PASSWORD`
-   It also replaces known unsafe auth placeholders, but it does not rotate
-   non-empty database passwords unless you explicitly pass `--force`.
-3. Start the containers:
-   ```powershell
-   docker compose up -d --build
-   ```
-4. Verify all containers are running:
+   It also replaces known unsafe auth placeholders, preserves non-empty
+   secrets, and runs `docker compose up -d --build`.
+3. Verify all containers are running:
    ```powershell
    docker compose ps
    ```
-5. Open the Hub in a browser:
+4. Open the Hub in a browser:
    ```text
    http://localhost
    ```
@@ -165,6 +162,18 @@ Click a card (DefectDojo Viewer or Wazuh Viewer) to open that workspace. Use **B
 ### Sign Out
 Click **Sign Out** in the Hub top bar, or inside a workspace.
 
+### Manage Your Profile and Authenticator
+
+Open the profile menu from the Hub, DefectDojo Viewer, Wazuh Viewer, or Documentation and select **Your profile**. The central Profile page lets you:
+
+- Add or update an optional email address.
+- Change your password. New passwords must contain 12–128 characters; changing it signs out every session.
+- Enable Google Authenticator, Microsoft Authenticator, or another compatible authenticator app.
+
+To enable an authenticator, choose the app, confirm your password, scan the QR code (or enter the manual key), and enter the current six-digit code. Save the ten recovery codes shown at the end; each can be used once if the authenticator is unavailable.
+
+When MFA is enabled, sign-in asks for a six-digit code after the password. Select **Use a recovery code** when needed. From Profile you can replace the authenticator, regenerate recovery codes, or turn MFA off. These sensitive actions require the current password and a current authenticator or recovery code.
+
 ---
 
 ## 7. Manage Hub Users
@@ -174,6 +183,7 @@ Admins can manage identities from the Hub.
 1. Find the **Administration** section on the Hub page and click **User Management**.
 2. **Add a User**: Click Add User, enter details, choose Role (Admin/Viewer), and Allowed Products for Viewers.
 3. **Edit/Delete/Reset**: Use the table actions to modify existing users. You cannot delete your own active user.
+4. **Reset MFA**: If a user loses both their authenticator and recovery codes, use the shield-off action. Re-enter your administrator password, record a reason, and type the target username. This removes MFA and signs the target out; administrators manage their own MFA from Profile.
 
 ---
 

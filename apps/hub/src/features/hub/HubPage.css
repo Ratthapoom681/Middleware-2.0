@@ -110,6 +110,22 @@
   flex-direction: column;
 }
 
+.hub-auth-notice {
+  margin-bottom: 1.25rem;
+  padding: .7rem .8rem;
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--rounded-sm);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  font-size: .78rem;
+}
+
+.hub-auth-notice span { flex: 1; }
+.hub-auth-notice button { min-height: 38px; padding: .35rem .6rem; border: 1px solid currentColor; border-radius: .4rem; background: transparent; color: inherit; cursor: pointer; }
+
 .welcome-section {
   margin-bottom: 2rem;
 }

@@ -5,6 +5,8 @@ import {
   Pencil,
   Plus,
   Save,
+  ShieldCheck,
+  ShieldOff,
   Trash2,
   Users,
   X,
@@ -43,6 +45,7 @@ const TABLE_COLUMNS = [
   { key: 'role', label: 'Role', className: 'cell-role' },
   { key: 'presence', label: 'Presence', className: 'cell-presence' },
   { key: 'account', label: 'Account', className: 'cell-account' },
+  { key: 'mfa', label: 'MFA', className: 'cell-mfa' },
   { key: 'access', label: 'Access', className: 'cell-access' },
   { key: 'lastLogin', label: 'Last Login', className: 'cell-date' },
   { key: 'actions', label: 'Actions', className: 'cell-actions' },
@@ -165,6 +168,8 @@ export default function UsersPage({ token, currentUser, onBack }) {
   const [accessFilter, setAccessFilter] = useState('all');
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
+  const [mfaResetUser, setMfaResetUser] = useState(null);
+  const [mfaResetDraft, setMfaResetDraft] = useState({ adminPassword: '', reason: '', confirmation: '' });
 
   const authHeaders = useMemo(() => ({
     'Content-Type': 'application/json',
@@ -222,6 +227,8 @@ export default function UsersPage({ token, currentUser, onBack }) {
         role,
         presence,
         accountStatus,
+        user.mfaEnabled ? 'mfa enabled' : 'mfa disabled',
+        user.mfaProvider,
         accessStatus,
         accessSummary.title,
         accessSummary.details,
@@ -310,6 +317,26 @@ export default function UsersPage({ token, currentUser, onBack }) {
       await loadUsers();
     } catch (err) {
       setError(err.message || 'Unable to delete user');
+    }
+  }
+
+  async function resetMfa(event) {
+    event.preventDefault();
+    if (!mfaResetUser) return;
+    setSaving(true);
+    setError('');
+    try {
+      await request(`/users/${encodeURIComponent(mfaResetUser.username)}/mfa/reset`, {
+        method: 'POST',
+        body: JSON.stringify(mfaResetDraft),
+      });
+      setMfaResetUser(null);
+      setMfaResetDraft({ adminPassword: '', reason: '', confirmation: '' });
+      await loadUsers();
+    } catch (err) {
+      setError(err.message || 'Unable to reset authenticator');
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -436,7 +463,7 @@ export default function UsersPage({ token, currentUser, onBack }) {
                   totalRows={filteredUsers.length}
                 />
               )}
-              gridTemplate="minmax(180px, 1.2fr) minmax(190px, 1fr) 96px 118px 116px minmax(190px, 1.1fr) 156px 124px"
+              gridTemplate="minmax(180px, 1.2fr) minmax(190px, 1fr) 96px 118px 116px 122px minmax(190px, 1.1fr) 156px 156px"
               loading={loading}
               minWidth="1180px"
             >
@@ -468,6 +495,12 @@ export default function UsersPage({ token, currentUser, onBack }) {
                     <DataTableCell className="cell-account" label="Account">
                       <span className={`account-badge ${accountStatus}`}>{formatLabel(accountStatus)}</span>
                     </DataTableCell>
+                    <DataTableCell className="cell-mfa" label="MFA">
+                      <span className={`mfa-badge ${user.mfaEnabled ? 'enabled' : 'disabled'}`}>
+                        {user.mfaEnabled ? <ShieldCheck size={13} /> : <ShieldOff size={13} />}
+                        {user.mfaEnabled ? formatLabel(user.mfaProvider || 'enabled') : 'Not set'}
+                      </span>
+                    </DataTableCell>
                     <DataTableCell className="cell-access users-access-cell" label="Access" title={accessSummary.details}>
                       <strong>{accessSummary.title}</strong>
                       <span className={`access-detail ${accessStatus}`}>{accessSummary.details}</span>
@@ -483,6 +516,11 @@ export default function UsersPage({ token, currentUser, onBack }) {
                         <button type="button" className="icon-btn" onClick={() => openReset(user)} title="Reset password" aria-label={`Reset password for ${user.username}`}>
                           <KeyRound size={15} />
                         </button>
+                        {user.mfaEnabled && (
+                          <button type="button" className="icon-btn warning" onClick={() => { setMfaResetUser(user); setMfaResetDraft({ adminPassword: '', reason: '', confirmation: '' }); }} disabled={user.username === currentUser?.username} title="Reset authenticator" aria-label={`Reset authenticator for ${user.username}`}>
+                            <ShieldOff size={15} />
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="icon-btn danger"
@@ -540,10 +578,13 @@ export default function UsersPage({ token, currentUser, onBack }) {
                   <span>{editorMode === 'create' ? 'Password' : editorMode === 'reset' ? 'New password' : 'Password (leave blank to keep)'}</span>
                   <input
                     type="password"
+                    minLength={draftUser.password ? 12 : undefined}
+                    maxLength={128}
                     value={draftUser.password}
                     onChange={event => setDraftUser({ ...draftUser, password: event.target.value })}
                     required={editorMode === 'create' || editorMode === 'reset'}
                   />
+                  <small>New passwords must contain 12–128 characters.</small>
                 </label>
                 <div className="form-grid">
                   <label>
@@ -585,6 +626,23 @@ export default function UsersPage({ token, currentUser, onBack }) {
                     <span>{saving ? 'Saving...' : 'Save User'}</span>
                   </button>
                 </div>
+              </form>
+            </section>
+          </div>
+        )}
+
+        {mfaResetUser && (
+          <div className="modal-backdrop" role="presentation" onMouseDown={() => setMfaResetUser(null)}>
+            <section className="user-modal mfa-reset-modal" role="dialog" aria-modal="true" aria-labelledby="mfa-reset-title" onMouseDown={event => event.stopPropagation()}>
+              <div className="modal-header">
+                <div><h2 id="mfa-reset-title">Reset MFA: {mfaResetUser.username}</h2><p>This signs the user out and removes their authenticator and recovery codes.</p></div>
+                <button type="button" className="icon-btn" onClick={() => setMfaResetUser(null)} aria-label="Close MFA reset"><X size={16} /></button>
+              </div>
+              <form className="user-form" onSubmit={resetMfa}>
+                <label><span>Your administrator password</span><input type="password" autoComplete="current-password" value={mfaResetDraft.adminPassword} onChange={event => setMfaResetDraft(value => ({ ...value, adminPassword: event.target.value }))} required /></label>
+                <label><span>Reason</span><textarea minLength={3} maxLength={500} value={mfaResetDraft.reason} onChange={event => setMfaResetDraft(value => ({ ...value, reason: event.target.value }))} placeholder="Lost or replaced device" required /></label>
+                <label><span>Type {mfaResetUser.username} to confirm</span><input value={mfaResetDraft.confirmation} onChange={event => setMfaResetDraft(value => ({ ...value, confirmation: event.target.value }))} required /></label>
+                <div className="modal-actions"><button type="button" className="btn-secondary" onClick={() => setMfaResetUser(null)}>Cancel</button><button type="submit" className="btn-danger" disabled={saving || mfaResetDraft.confirmation !== mfaResetUser.username}>{saving ? 'Resetting…' : 'Reset MFA and sign out user'}</button></div>
               </form>
             </section>
           </div>

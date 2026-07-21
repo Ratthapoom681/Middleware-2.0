@@ -282,6 +282,31 @@
   color: var(--danger-text);
 }
 
+.icon-btn.warning:hover {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+.mfa-badge {
+  min-height: 1.65rem;
+  padding: .18rem .45rem;
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: .68rem;
+  white-space: nowrap;
+}
+
+.mfa-badge.enabled {
+  border-color: var(--connected-border);
+  background: var(--connected-bg);
+  color: var(--connected-text);
+}
+
 .users-empty-row {
   min-width: var(--data-table-min-width);
   min-height: 12rem;
@@ -357,7 +382,8 @@
 }
 
 .user-form input,
-.user-form select {
+.user-form select,
+.user-form textarea {
   width: 100%;
   min-height: 2.55rem;
   border: 1px solid var(--border-subtle);
@@ -367,6 +393,29 @@
   padding: 0.65rem 0.75rem;
   font: inherit;
 }
+
+.user-form textarea {
+  min-height: 5.5rem;
+  padding: .65rem .75rem;
+  resize: vertical;
+}
+
+.user-form label > small {
+  color: var(--text-muted);
+  font-size: .68rem;
+}
+
+.btn-danger {
+  min-height: 2.55rem;
+  padding: .5rem .85rem;
+  border: 1px solid var(--danger-border);
+  border-radius: var(--rounded-sm);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  cursor: pointer;
+}
+
+.btn-danger:disabled { cursor: not-allowed; opacity: .55; }
 
 .user-form input:disabled,
 .user-form select:disabled {

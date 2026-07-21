@@ -52,6 +52,22 @@
   font-size: 0.82rem;
 }
 
+.docs-profile-link {
+  min-height: 40px;
+  padding: .3rem .5rem;
+  border: 1px solid transparent;
+  border-radius: .4rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.docs-profile-link:hover {
+  border-color: var(--border);
+  background: var(--bg-subtle);
+}
+
 .docs-role-badge {
   padding: 0.12rem 0.45rem;
   border: 1px solid var(--border);

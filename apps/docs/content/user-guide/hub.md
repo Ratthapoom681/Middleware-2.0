@@ -63,17 +63,17 @@ Viewer accounts can be restricted to specific product names. Admin accounts have
 
 Use these steps to configure and run the application locally with Docker Compose.
 
-### Step 1: Generate the Environment File
-Open a terminal in the project root and generate the environment file:
+### Step 1: Generate the Environment and Start
+Open a terminal in the project root and run the guarded Compose wrapper:
 ```powershell
-node scripts/generate-env.cjs
+node scripts/compose-up.cjs
 ```
 
-### Step 2: Configure Environment Variables
-The generator creates `.env` when missing, fills blank or missing managed
-values, and replaces known unsafe auth placeholders. It does not rotate
-non-empty database passwords unless you explicitly pass `--force`. Open `.env`
-in a text editor and review the values:
+### Step 2: Review Environment Variables
+The wrapper creates `.env` when missing, fills blank or missing managed values,
+replaces known unsafe auth placeholders, preserves existing non-empty secrets,
+and then runs `docker compose up -d --build`. Open `.env` in a text editor and
+review the values:
 
 | Variable | Purpose | What Happens If Wrong | Example |
 |---|---|---|---|
@@ -86,6 +86,7 @@ in a text editor and review the values:
 | `AUTH_PG_PASSWORD` | Database password for authentication data | Login and user management fails | Use a strong random password |
 | `JWT_SECRET` | Secret key for signing authentication tokens. Must be the same across the Auth service, DefectDojo Viewer, and Docs. | Authentication between services breaks — users may be logged out or unable to access workspaces | Use a random string of at least 32 characters |
 | `AUTH_SERVICE_TOKEN` | Internal token used by DefectDojo Viewer and Docs for live session introspection. | Live revocation checks fail closed unless auth is unreachable, when valid JWTs enter bounded fallback | Use a random string |
+| `MFA_ENCRYPTION_KEY` | Stable encryption key for authenticator secrets. | Existing MFA enrollments cannot be decrypted | A base64-encoded 32-byte key |
 
 > [!CAUTION]
 > PostgreSQL stores credentials in Docker volumes on first startup. If you change `PG_PASSWORD`, `AUTH_PG_PASSWORD`, `PG_USER`, or `AUTH_PG_USER` AFTER the system has already run once, the old credentials remain active in the volumes. To apply new credentials, you must delete the volumes:
@@ -95,12 +96,7 @@ in a text editor and review the values:
 > ```
 > This deletes ALL data including findings, users, and configuration.
 
-### Step 3: Start the Containers
-```powershell
-docker compose up -d --build
-```
-
-### Step 4: Verify All Services Are Running
+### Step 3: Verify All Services Are Running
 ```powershell
 docker compose ps
 ```

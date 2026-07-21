@@ -6,11 +6,14 @@ const crypto = require('crypto');
 const { verifyJwt } = require('../../../packages/auth-client/index.cjs');
 const { createAuthStore, DEFAULT_APP_KEY } = require('./auth-store.cjs');
 const { loadRuntimeSecrets } = require('./runtime-config.cjs');
+const { createMfaService } = require('./mfa-service.cjs');
+const { registerProfileRoutes, validateNewPassword } = require('./profile-routes.cjs');
 
 const PORT = process.env.PORT || 3000;
 const {
   jwtSecret: JWT_SECRET,
-  authServiceToken: AUTH_SERVICE_TOKEN
+  authServiceToken: AUTH_SERVICE_TOKEN,
+  mfaEncryptionKey: MFA_ENCRYPTION_KEY
 } = loadRuntimeSecrets();
 const TOKEN_ISSUER = process.env.JWT_ISSUER || 'middleware-hub';
 const TOKEN_AUDIENCE = 'internal-security-middleware';
@@ -76,6 +79,7 @@ function verifyPassword(password, user = {}) {
 }
 
 const authStore = createAuthStore({ dataDir: DATA_DIR, hashPassword });
+const mfaService = createMfaService({ encryptionKey: MFA_ENCRYPTION_KEY });
 
 function buildTokenPayload(user, sid) {
   return {
@@ -89,6 +93,31 @@ function buildTokenPayload(user, sid) {
     products: user.products,
     status: user.status,
     apps: ['hub', DEFAULT_APP_KEY, 'wazuh', 'docs']
+  };
+}
+
+async function issueSession(user, req) {
+  const lastLoginAt = new Date().toISOString();
+  const sid = crypto.randomBytes(24).toString('hex');
+  const expiresInSeconds = 3600;
+  const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
+  await authStore.recordLogin(user.username, lastLoginAt);
+  const loggedInUser = {
+    ...user,
+    lastLoginAt,
+    online: true,
+    presenceStatus: 'online'
+  };
+  await authStore.createSession({
+    user: loggedInUser,
+    sid,
+    expiresAt,
+    userAgent: req.headers['user-agent'] || '',
+    ipAddress: req.ip || req.socket?.remoteAddress || ''
+  });
+  return {
+    token: signJwt(buildTokenPayload(loggedInUser, sid), JWT_SECRET, expiresInSeconds),
+    user: authStore.buildPublicUser(loggedInUser)
   };
 }
 
@@ -165,39 +194,37 @@ app.post('/api/login', async (req, res) => {
 
     if (user.passwordAlgorithm !== CURRENT_PASSWORD_ALGORITHM) {
       const upgraded = hashPassword(password);
-      await authStore.upsertUser({
-        ...user,
+      await authStore.updatePassword(user.username, {
         salt: upgraded.salt,
         hash: upgraded.hash,
         passwordAlgorithm: upgraded.algorithm
       });
     }
 
-    const lastLoginAt = new Date().toISOString();
-    const sid = crypto.randomBytes(24).toString('hex');
-    const expiresInSeconds = 3600;
-    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
-    await authStore.recordLogin(user.username, lastLoginAt);
-    const loggedInUser = {
-      ...user,
-      lastLoginAt,
-      online: true,
-      presenceStatus: 'online'
-    };
-    await authStore.createSession({
-      user: loggedInUser,
-      sid,
-      expiresAt,
-      userAgent: req.headers['user-agent'] || '',
-      ipAddress: req.ip || req.socket?.remoteAddress || ''
-    });
+    const mfa = await authStore.getMfaConfig(user.username);
+    if (mfa) {
+      if (mfa.lockedUntil && Date.parse(mfa.lockedUntil) > Date.now()) {
+        return res.status(429).json({ error: 'Authenticator verification is temporarily locked. Try again later.' });
+      }
+      const challengeToken = mfaService.createOpaqueToken();
+      const expiresIn = 5 * 60;
+      await authStore.createMfaChallenge({
+        id: crypto.randomUUID(),
+        username: user.username,
+        purpose: 'login',
+        tokenHash: mfaService.tokenHash(challengeToken),
+        expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString()
+      });
+      res.set('Cache-Control', 'no-store');
+      return res.json({
+        mfaRequired: true,
+        challengeToken,
+        expiresIn,
+        authenticatorApp: mfa.provider
+      });
+    }
 
-    const token = signJwt(buildTokenPayload(loggedInUser, sid), JWT_SECRET, expiresInSeconds);
-
-    res.json({
-      token,
-      user: authStore.buildPublicUser(loggedInUser)
-    });
+    res.json(await issueSession(user, req));
   } catch (err) {
     console.error('Login error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -213,6 +240,17 @@ app.post('/api/logout', async (req, res) => {
     await authStore.revokeSession(payload.sid);
   }
   res.json({ message: 'Logged out successfully' });
+});
+
+registerProfileRoutes({
+  app,
+  authenticateJwt,
+  requireAdmin,
+  authStore,
+  mfaService,
+  verifyPassword,
+  hashPassword,
+  issueSession
 });
 
 // Auth - Internal token introspection for protected services
@@ -290,6 +328,11 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
 
     if (!existingUser && !password) {
       return res.status(400).json({ error: 'Password is required for new users' });
+    }
+
+    if (password) {
+      const passwordError = validateNewPassword(password);
+      if (passwordError) return res.status(400).json({ error: passwordError });
     }
 
     if (existingUser?.role === 'admin' && role !== 'admin' && users.filter(u => u.role === 'admin').length <= 1) {
@@ -401,7 +444,7 @@ app.use((_req, res) => res.status(404).json({ error: 'Not Found' }));
 
 
 // Start Server
-async function start() {
+async function start(port = PORT) {
   await authStore.initialize();
   if (String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
     const admin = await authStore.getUserByUsername('admin');
@@ -409,12 +452,19 @@ async function start() {
       console.warn('Auth Service: The existing admin account still uses the default password; change it immediately');
     }
   }
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Auth Service listening on 0.0.0.0:${PORT}`);
+  return new Promise((resolve) => {
+    const server = app.listen(port, '0.0.0.0', () => {
+      console.log(`Auth Service listening on 0.0.0.0:${server.address().port}`);
+      resolve(server);
+    });
   });
 }
 
-start().catch((err) => {
-  console.error('Auth Service failed to start:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  start().catch((err) => {
+    console.error('Auth Service failed to start:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = { app, authStore, start };

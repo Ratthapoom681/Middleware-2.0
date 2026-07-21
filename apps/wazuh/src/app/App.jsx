@@ -128,10 +128,13 @@ export default function App() {
           <span>Wazuh Viewer</span>
         </div>
 
-        <div className="sidebar-user">
+        <button type="button" className="sidebar-user" onClick={() => {
+          const returnTo = `${window.location.pathname}${window.location.hash || '#dashboard'}`;
+          window.location.href = `/#profile?returnTo=${encodeURIComponent(returnTo)}`;
+        }} aria-label="Open your profile">
           <span>{user.username}</span>
           <small>{user.role}</small>
-        </div>
+        </button>
 
         <nav className="sidebar-nav">
           <button

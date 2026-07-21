@@ -217,16 +217,14 @@ Ensure your Redmine workflow allows these transitions for the tracker and roles 
 
 **You are here:** Prerequisites → DefectDojo → Redmine → **Install** → Sign in → Connect DefectDojo → Connect Redmine → Map → Sync → Verify
 
-Open PowerShell in the repository root and generate a non-overwriting local
-environment file:
+Open PowerShell in the repository root and run the guarded Compose wrapper:
 
 ```powershell
-node scripts/generate-env.cjs
+node scripts/compose-up.cjs
 ```
 
-The generator is safe to rerun. It creates `.env` when missing, fills blank or
-missing managed values, and replaces known unsafe auth placeholders. It does
-not rotate non-empty database passwords unless you explicitly pass `--force`.
+The wrapper creates or completes `.env` without rotating existing non-empty
+secrets, then runs `docker compose up -d --build`.
 
 It creates strong database, JWT, service-token, and bootstrap administrator
 secrets. Review `.env`, including:
@@ -244,17 +242,12 @@ AUTH_PG_PASSWORD=<different-strong-password>
 
 JWT_SECRET=<random-string-at-least-32-characters>
 AUTH_SERVICE_TOKEN=<another-long-random-string>
+MFA_ENCRYPTION_KEY=<base64-encoded-32-byte-key>
 AUTH_BOOTSTRAP_ADMIN_PASSWORD=<strong-initial-admin-password>
 ```
 
 > [!CAUTION]
 > Do not use the example secrets on a shared or deployed system. Keep `.env` private.
-
-Build and start the stack:
-
-```powershell
-docker compose up -d --build
-```
 
 The stack starts seven services: `gateway`, `hub`, `docs`, `defectdojo`, `wazuh`, `defectdojo_db`, and `auth-db`.
 

@@ -84,21 +84,19 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
 
 ### Setup and Start
 
-1. **Configure Environment Variables**:
-   Generate a new `.env` with random database passwords, JWT signing material,
-   an internal service token, and a bootstrap administrator password:
+1. **Configure and Start**:
+   Run the guarded Compose wrapper from the repository root:
    ```powershell
-   node scripts/generate-env.cjs
+   node scripts/compose-up.cjs
    ```
 
-   The generator is safe to rerun: it creates `.env` when missing, fills blank
-   or missing managed values, and replaces known unsafe auth placeholders. It
-   does not rotate non-empty database passwords unless you explicitly pass
-   `--force`. If Node.js is not installed on the host, copy `.env.example`
-   manually and fill every blank secret before starting Compose.
+   The wrapper creates `.env` when missing, fills blank or missing managed
+   values (including `MFA_ENCRYPTION_KEY`), preserves existing non-empty
+   secrets, and then runs `docker compose up -d --build`. Arguments are
+   forwarded, so `node scripts/compose-up.cjs hub` rebuilds only Hub.
 
-2. **Boot the Orchestration Stack**:
-   Start the core stack from the repository root:
+   If Node.js is unavailable, copy `.env.example`, fill every blank secret, and
+   run Compose directly:
    ```powershell
    docker compose up -d --build
    ```
@@ -111,7 +109,7 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
    namespaced `docs-data` volume. The image seeds missing or unchanged shipped
    documents without overwriting administrator edits.
 
-3. **Access the Application**:
+2. **Access the Application**:
    Open **`http://localhost`** in your browser. If `GATEWAY_PORT` is changed,
    include that port explicitly.
    - **Fresh production administrator**:

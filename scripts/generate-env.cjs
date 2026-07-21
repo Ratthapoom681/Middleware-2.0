@@ -5,12 +5,17 @@ const path = require('path');
 const REPOSITORY_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_TEMPLATE_PATH = path.join(REPOSITORY_ROOT, '.env.example');
 const DEFAULT_OUTPUT_PATH = path.join(REPOSITORY_ROOT, '.env');
+const DEVELOPMENT_MFA_KEY = Buffer.from(
+  'development-mfa-encryption-key-change-me',
+  'utf8'
+).subarray(0, 32).toString('base64');
 
 const GENERATED_VALUES = {
   PG_PASSWORD: () => crypto.randomBytes(24).toString('hex'),
   AUTH_PG_PASSWORD: () => crypto.randomBytes(24).toString('hex'),
   JWT_SECRET: () => crypto.randomBytes(48).toString('base64url'),
   AUTH_SERVICE_TOKEN: () => crypto.randomBytes(48).toString('base64url'),
+  MFA_ENCRYPTION_KEY: () => crypto.randomBytes(32).toString('base64'),
   AUTH_BOOTSTRAP_ADMIN_PASSWORD: () => crypto.randomBytes(24).toString('base64url')
 };
 
@@ -19,12 +24,14 @@ const UNSAFE_AUTH_PLACEHOLDERS = new Set([
   'change-this-jwt-secret',
   'change-this-internal-service-token',
   'dev-secret-key-change-me-in-production',
-  'dev-internal-auth-service-token'
+  'dev-internal-auth-service-token',
+  DEVELOPMENT_MFA_KEY
 ]);
 
 const AUTH_SECRET_KEYS = new Set([
   'JWT_SECRET',
   'AUTH_SERVICE_TOKEN',
+  'MFA_ENCRYPTION_KEY',
   'AUTH_BOOTSTRAP_ADMIN_PASSWORD'
 ]);
 

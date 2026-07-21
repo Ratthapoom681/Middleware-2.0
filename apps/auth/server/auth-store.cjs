@@ -14,7 +14,10 @@ const TABLES = {
   credentials: 'auth_credentials',
   memberships: 'auth_app_memberships',
   sessions: 'auth_sessions',
-  auditEvents: 'auth_audit_events'
+  auditEvents: 'auth_audit_events',
+  mfaConfig: 'auth_mfa_config',
+  recoveryCodes: 'auth_mfa_recovery_codes',
+  mfaChallenges: 'auth_mfa_challenges'
 };
 
 const normalizeText = (value) => String(value || '').trim();
@@ -79,9 +82,14 @@ const normalizeUserRecord = (user = {}) => ({
   salt: user.salt || '',
   hash: user.hash || user.password_hash || '',
   passwordAlgorithm: user.passwordAlgorithm || user.password_algorithm || 'pbkdf2-sha512:1000',
+  passwordUpdatedAt: toIsoString(user.passwordUpdatedAt || user.password_updated_at),
   lastLoginAt: toIsoString(user.lastLoginAt || user.last_login_at),
   online: Boolean(user.online),
-  presenceStatus: user.presenceStatus || user.presence_status || ''
+  presenceStatus: user.presenceStatus || user.presence_status || '',
+  mfaEnabled: Boolean(user.mfaEnabled || user.mfa_enabled),
+  mfaProvider: normalizeText(user.mfaProvider || user.mfa_provider),
+  mfaEnabledAt: toIsoString(user.mfaEnabledAt || user.mfa_enabled_at),
+  recoveryCodesRemaining: Number(user.recoveryCodesRemaining ?? user.recovery_codes_remaining ?? 0)
 });
 
 const buildPublicUser = (user = {}) => {
@@ -99,7 +107,12 @@ const buildPublicUser = (user = {}) => {
     status: accountStatus === 'suspended' ? 'suspended' : presenceStatus,
     accountStatus,
     presenceStatus,
-    lastLoginAt: normalized.lastLoginAt
+    lastLoginAt: normalized.lastLoginAt,
+    passwordUpdatedAt: normalized.passwordUpdatedAt,
+    mfaEnabled: normalized.mfaEnabled,
+    mfaProvider: normalized.mfaProvider,
+    mfaEnabledAt: normalized.mfaEnabledAt,
+    recoveryCodesRemaining: normalized.recoveryCodesRemaining
   };
 };
 
@@ -133,11 +146,13 @@ const createDefaultAdminUser = (hashPassword, password = 'admin') => {
 
 function createAuthStore({ dataDir, hashPassword }) {
   const usersPath = path.join(dataDir, 'users.json');
+  const mfaPath = path.join(dataDir, 'mfa.json');
   const authConnectionString = getAuthConnectionString();
   const dbConfigured = Boolean(authConnectionString || process.env.PGHOST || process.env.PGDATABASE);
   const legacyConnectionString = getLegacyConnectionString();
   let pool = null;
   const fileSessions = new Map();
+  const fileChallenges = new Map();
   const production = normalizeText(process.env.NODE_ENV).toLowerCase() === 'production';
 
   const createBootstrapAdminUser = () => {
@@ -181,9 +196,14 @@ function createAuthStore({ dataDir, hashPassword }) {
     salt: row.salt,
     hash: row.password_hash,
     passwordAlgorithm: row.password_algorithm,
+    passwordUpdatedAt: row.password_updated_at,
     lastLoginAt: row.last_login_at,
     online: row.online,
-    presenceStatus: row.presence_status
+    presenceStatus: row.presence_status,
+    mfaEnabled: row.mfa_enabled,
+    mfaProvider: row.mfa_provider,
+    mfaEnabledAt: row.mfa_enabled_at,
+    recoveryCodesRemaining: row.recovery_codes_remaining
   }));
 
   const listUsersFromDb = async (appKey = DEFAULT_APP_KEY) => {
@@ -197,6 +217,14 @@ function createAuthStore({ dataDir, hashPassword }) {
         c.salt,
         c.password_hash,
         c.password_algorithm,
+        c.updated_at AS password_updated_at,
+        (mf.user_id IS NOT NULL) AS mfa_enabled,
+        mf.provider AS mfa_provider,
+        mf.enabled_at AS mfa_enabled_at,
+        COALESCE((
+          SELECT count(*)::int FROM ${TABLES.recoveryCodes} rc
+          WHERE rc.user_id = u.id AND rc.used_at IS NULL
+        ), 0) AS recovery_codes_remaining,
         COALESCE(m.role, hub_m.role, 'viewer') AS role,
         COALESCE(m.products, hub_m.products, '[]'::jsonb) AS products,
         EXISTS (
@@ -207,6 +235,7 @@ function createAuthStore({ dataDir, hashPassword }) {
         ) AS online
       FROM ${TABLES.users} u
       LEFT JOIN ${TABLES.credentials} c ON c.user_id = u.id
+      LEFT JOIN ${TABLES.mfaConfig} mf ON mf.user_id = u.id
       LEFT JOIN ${TABLES.memberships} m ON m.user_id = u.id AND m.app_key = $1
       LEFT JOIN ${TABLES.memberships} hub_m ON hub_m.user_id = u.id AND hub_m.app_key = $2
       ORDER BY u.username
@@ -225,6 +254,14 @@ function createAuthStore({ dataDir, hashPassword }) {
         c.salt,
         c.password_hash,
         c.password_algorithm,
+        c.updated_at AS password_updated_at,
+        (mf.user_id IS NOT NULL) AS mfa_enabled,
+        mf.provider AS mfa_provider,
+        mf.enabled_at AS mfa_enabled_at,
+        COALESCE((
+          SELECT count(*)::int FROM ${TABLES.recoveryCodes} rc
+          WHERE rc.user_id = u.id AND rc.used_at IS NULL
+        ), 0) AS recovery_codes_remaining,
         COALESCE(m.role, hub_m.role, 'viewer') AS role,
         COALESCE(m.products, hub_m.products, '[]'::jsonb) AS products,
         EXISTS (
@@ -235,6 +272,7 @@ function createAuthStore({ dataDir, hashPassword }) {
         ) AS online
       FROM ${TABLES.users} u
       LEFT JOIN ${TABLES.credentials} c ON c.user_id = u.id
+      LEFT JOIN ${TABLES.mfaConfig} mf ON mf.user_id = u.id
       LEFT JOIN ${TABLES.memberships} m ON m.user_id = u.id AND m.app_key = $2
       LEFT JOIN ${TABLES.memberships} hub_m ON hub_m.user_id = u.id AND hub_m.app_key = $3
       WHERE u.username = $1
@@ -408,17 +446,43 @@ function createAuthStore({ dataDir, hashPassword }) {
     }
   };
 
+  const readMfaFile = () => {
+    if (!fs.existsSync(mfaPath)) return {};
+    try {
+      const data = JSON.parse(fs.readFileSync(mfaPath, 'utf8'));
+      return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    } catch (err) {
+      console.error('Auth Service: Error reading MFA data from disk:', err);
+      return {};
+    }
+  };
+
+  const writeMfaFile = (data) => {
+    fs.writeFileSync(mfaPath, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600 });
+  };
+
+  const getFileMfaEntry = (username) => readMfaFile()[normalizeText(username)] || null;
+
   const listFileUsers = () => {
     const users = readUsersFromDisk(usersPath);
+    const mfaData = readMfaFile();
     const now = Date.now();
-    return users.map(user => ({
-      ...user,
-      presenceStatus: Array.from(fileSessions.values()).some(session => (
+    return users.map(user => {
+      const mfa = mfaData[user.username] || null;
+      return {
+        ...user,
+        passwordUpdatedAt: user.passwordUpdatedAt || '',
+        mfaEnabled: Boolean(mfa?.secretCiphertext),
+        mfaProvider: mfa?.provider || '',
+        mfaEnabledAt: mfa?.enabledAt || '',
+        recoveryCodesRemaining: (mfa?.recoveryCodes || []).filter(code => !code.usedAt).length,
+        presenceStatus: Array.from(fileSessions.values()).some(session => (
         session.username === user.username
         && !session.revokedAt
         && Date.parse(session.expiresAt) > now
       )) ? 'online' : 'offline'
-    }));
+      };
+    });
   };
 
   const writeFileUsers = (users) => {
@@ -506,6 +570,9 @@ function createAuthStore({ dataDir, hashPassword }) {
     if (index < 0) return false;
     users.splice(index, 1);
     writeFileUsers(users);
+    const mfaData = readMfaFile();
+    delete mfaData[normalizedUsername];
+    writeMfaFile(mfaData);
     for (const [sid, session] of fileSessions.entries()) {
       if (session.username === normalizedUsername) fileSessions.delete(sid);
     }
@@ -561,6 +628,387 @@ function createAuthStore({ dataDir, hashPassword }) {
     };
   };
 
+  const updateEmail = async (username, email) => {
+    const normalizedUsername = normalizeText(username);
+    const normalizedEmail = normalizeText(email);
+    if (pool) {
+      await pool.query(`
+        UPDATE ${TABLES.users}
+        SET email = $2, updated_at = now()
+        WHERE username = $1
+      `, [normalizedUsername, normalizedEmail]);
+      return getUserByUsernameFromDb(normalizedUsername);
+    }
+    const { users, index } = getFileUserIndex(normalizedUsername);
+    if (index < 0) return null;
+    users[index].email = normalizedEmail;
+    writeFileUsers(users);
+    return getUserByUsername(normalizedUsername);
+  };
+
+  const updatePassword = async (username, { salt, hash, passwordAlgorithm }) => {
+    const normalizedUsername = normalizeText(username);
+    const updatedAt = new Date().toISOString();
+    if (pool) {
+      const result = await pool.query(`
+        UPDATE ${TABLES.credentials} c
+        SET salt = $2, password_hash = $3, password_algorithm = $4, updated_at = now()
+        FROM ${TABLES.users} u
+        WHERE c.user_id = u.id AND u.username = $1
+      `, [normalizedUsername, salt, hash, passwordAlgorithm]);
+      return result.rowCount > 0;
+    }
+    const { users, index } = getFileUserIndex(normalizedUsername);
+    if (index < 0) return false;
+    users[index] = { ...users[index], salt, hash, passwordAlgorithm, passwordUpdatedAt: updatedAt };
+    writeFileUsers(users);
+    return true;
+  };
+
+  const revokeUserSessions = async (username, { exceptSid = '' } = {}) => {
+    const normalizedUsername = normalizeText(username);
+    if (pool) {
+      const result = await pool.query(`
+        UPDATE ${TABLES.sessions} s
+        SET revoked_at = COALESCE(s.revoked_at, now())
+        FROM ${TABLES.users} u
+        WHERE s.user_id = u.id
+          AND u.username = $1
+          AND s.revoked_at IS NULL
+          AND ($2 = '' OR s.id <> $2)
+      `, [normalizedUsername, exceptSid]);
+      return result.rowCount;
+    }
+    let count = 0;
+    for (const [sid, session] of fileSessions.entries()) {
+      if (session.username !== normalizedUsername || session.revokedAt || (exceptSid && sid === exceptSid)) continue;
+      session.revokedAt = new Date().toISOString();
+      fileSessions.set(sid, session);
+      count += 1;
+    }
+    return count;
+  };
+
+  const getMfaConfig = async (username) => {
+    const normalizedUsername = normalizeText(username);
+    if (pool) {
+      const { rows } = await pool.query(`
+        SELECT
+          u.id AS user_id,
+          mf.provider,
+          mf.secret_ciphertext,
+          mf.secret_iv,
+          mf.secret_tag,
+          mf.enabled_at,
+          mf.last_used_counter,
+          mf.failed_attempts,
+          mf.locked_until,
+          COALESCE((
+            SELECT count(*)::int FROM ${TABLES.recoveryCodes} rc
+            WHERE rc.user_id = u.id AND rc.used_at IS NULL
+          ), 0) AS recovery_codes_remaining
+        FROM ${TABLES.users} u
+        JOIN ${TABLES.mfaConfig} mf ON mf.user_id = u.id
+        WHERE u.username = $1
+        LIMIT 1
+      `, [normalizedUsername]);
+      if (!rows[0]) return null;
+      const row = rows[0];
+      return {
+        userId: row.user_id,
+        provider: row.provider,
+        secretCiphertext: row.secret_ciphertext,
+        secretIv: row.secret_iv,
+        secretTag: row.secret_tag,
+        enabledAt: toIsoString(row.enabled_at),
+        lastUsedCounter: row.last_used_counter === null ? null : Number(row.last_used_counter),
+        failedAttempts: Number(row.failed_attempts || 0),
+        lockedUntil: toIsoString(row.locked_until),
+        recoveryCodesRemaining: Number(row.recovery_codes_remaining || 0)
+      };
+    }
+    const entry = getFileMfaEntry(normalizedUsername);
+    if (!entry?.secretCiphertext) return null;
+    const user = await getUserByUsername(normalizedUsername);
+    return {
+      userId: user?.id || '',
+      ...entry,
+      recoveryCodesRemaining: (entry.recoveryCodes || []).filter(code => !code.usedAt).length
+    };
+  };
+
+  const saveMfaConfig = async (username, config = {}, recoveryCodeHashes = []) => {
+    const normalizedUsername = normalizeText(username);
+    const enabledAt = config.enabledAt || new Date().toISOString();
+    if (pool) {
+      await withTransaction(async (client) => {
+        const userResult = await client.query(`SELECT id FROM ${TABLES.users} WHERE username = $1`, [normalizedUsername]);
+        const userId = userResult.rows[0]?.id;
+        if (!userId) throw new Error('User not found');
+        await client.query(`
+          INSERT INTO ${TABLES.mfaConfig} (
+            user_id, provider, secret_ciphertext, secret_iv, secret_tag,
+            enabled_at, last_used_counter, failed_attempts, locked_until
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, NULL)
+          ON CONFLICT (user_id) DO UPDATE SET
+            provider = EXCLUDED.provider,
+            secret_ciphertext = EXCLUDED.secret_ciphertext,
+            secret_iv = EXCLUDED.secret_iv,
+            secret_tag = EXCLUDED.secret_tag,
+            enabled_at = EXCLUDED.enabled_at,
+            last_used_counter = EXCLUDED.last_used_counter,
+            failed_attempts = 0,
+            locked_until = NULL,
+            updated_at = now()
+        `, [
+          userId,
+          config.provider,
+          config.secretCiphertext,
+          config.secretIv,
+          config.secretTag,
+          new Date(enabledAt),
+          config.lastUsedCounter ?? null
+        ]);
+        await client.query(`DELETE FROM ${TABLES.recoveryCodes} WHERE user_id = $1`, [userId]);
+        for (const codeHash of recoveryCodeHashes) {
+          await client.query(`
+            INSERT INTO ${TABLES.recoveryCodes} (user_id, code_hash)
+            VALUES ($1, $2)
+          `, [userId, codeHash]);
+        }
+      });
+      return getMfaConfig(normalizedUsername);
+    }
+    const data = readMfaFile();
+    data[normalizedUsername] = {
+      provider: config.provider,
+      secretCiphertext: config.secretCiphertext,
+      secretIv: config.secretIv,
+      secretTag: config.secretTag,
+      enabledAt,
+      lastUsedCounter: config.lastUsedCounter ?? null,
+      failedAttempts: 0,
+      lockedUntil: '',
+      recoveryCodes: recoveryCodeHashes.map(codeHash => ({ codeHash, usedAt: '' }))
+    };
+    writeMfaFile(data);
+    return getMfaConfig(normalizedUsername);
+  };
+
+  const clearMfa = async (username) => {
+    const normalizedUsername = normalizeText(username);
+    if (pool) {
+      return withTransaction(async (client) => {
+        const userResult = await client.query(`SELECT id FROM ${TABLES.users} WHERE username = $1`, [normalizedUsername]);
+        const userId = userResult.rows[0]?.id;
+        if (!userId) return false;
+        await client.query(`DELETE FROM ${TABLES.recoveryCodes} WHERE user_id = $1`, [userId]);
+        await client.query(`DELETE FROM ${TABLES.mfaChallenges} WHERE user_id = $1`, [userId]);
+        const result = await client.query(`DELETE FROM ${TABLES.mfaConfig} WHERE user_id = $1`, [userId]);
+        return result.rowCount > 0;
+      });
+    }
+    const data = readMfaFile();
+    const existed = Boolean(data[normalizedUsername]);
+    delete data[normalizedUsername];
+    writeMfaFile(data);
+    for (const [hash, challenge] of fileChallenges.entries()) {
+      if (challenge.username === normalizedUsername) fileChallenges.delete(hash);
+    }
+    return existed;
+  };
+
+  const markTotpUsed = async (username, counter) => {
+    const normalizedUsername = normalizeText(username);
+    if (pool) {
+      const result = await pool.query(`
+        UPDATE ${TABLES.mfaConfig} mf
+        SET last_used_counter = $2, failed_attempts = 0, locked_until = NULL, updated_at = now()
+        FROM ${TABLES.users} u
+        WHERE mf.user_id = u.id
+          AND u.username = $1
+          AND (mf.last_used_counter IS NULL OR mf.last_used_counter < $2)
+        RETURNING mf.user_id
+      `, [normalizedUsername, counter]);
+      return result.rowCount > 0;
+    }
+    const data = readMfaFile();
+    const entry = data[normalizedUsername];
+    if (!entry || (entry.lastUsedCounter !== null && Number(entry.lastUsedCounter) >= Number(counter))) return false;
+    entry.lastUsedCounter = counter;
+    entry.failedAttempts = 0;
+    entry.lockedUntil = '';
+    writeMfaFile(data);
+    return true;
+  };
+
+  const recordMfaFailure = async (username) => {
+    const normalizedUsername = normalizeText(username);
+    if (pool) {
+      const { rows } = await pool.query(`
+        UPDATE ${TABLES.mfaConfig} mf
+        SET
+          failed_attempts = mf.failed_attempts + 1,
+          locked_until = CASE
+            WHEN mf.failed_attempts + 1 >= 10 THEN now() + interval '15 minutes'
+            ELSE mf.locked_until
+          END,
+          updated_at = now()
+        FROM ${TABLES.users} u
+        WHERE mf.user_id = u.id AND u.username = $1
+        RETURNING mf.failed_attempts, mf.locked_until
+      `, [normalizedUsername]);
+      return rows[0] ? {
+        failedAttempts: Number(rows[0].failed_attempts || 0),
+        lockedUntil: toIsoString(rows[0].locked_until)
+      } : null;
+    }
+    const data = readMfaFile();
+    const entry = data[normalizedUsername];
+    if (!entry) return null;
+    entry.failedAttempts = Number(entry.failedAttempts || 0) + 1;
+    if (entry.failedAttempts >= 10) entry.lockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    writeMfaFile(data);
+    return { failedAttempts: entry.failedAttempts, lockedUntil: entry.lockedUntil || '' };
+  };
+
+  const resetMfaFailures = async (username) => {
+    const normalizedUsername = normalizeText(username);
+    if (pool) {
+      await pool.query(`
+        UPDATE ${TABLES.mfaConfig} mf
+        SET failed_attempts = 0, locked_until = NULL, updated_at = now()
+        FROM ${TABLES.users} u
+        WHERE mf.user_id = u.id AND u.username = $1
+      `, [normalizedUsername]);
+      return;
+    }
+    const data = readMfaFile();
+    if (!data[normalizedUsername]) return;
+    data[normalizedUsername].failedAttempts = 0;
+    data[normalizedUsername].lockedUntil = '';
+    writeMfaFile(data);
+  };
+
+  const consumeRecoveryCode = async (username, codeHash) => {
+    const normalizedUsername = normalizeText(username);
+    if (pool) {
+      return withTransaction(async (client) => {
+        const result = await client.query(`
+          UPDATE ${TABLES.recoveryCodes} rc
+          SET used_at = now()
+          FROM ${TABLES.users} u
+          WHERE rc.user_id = u.id
+            AND u.username = $1
+            AND rc.code_hash = $2
+            AND rc.used_at IS NULL
+          RETURNING rc.user_id
+        `, [normalizedUsername, codeHash]);
+        if (result.rowCount === 0) return null;
+        const remaining = await client.query(`
+          SELECT count(*)::int AS count FROM ${TABLES.recoveryCodes}
+          WHERE user_id = $1 AND used_at IS NULL
+        `, [result.rows[0].user_id]);
+        return Number(remaining.rows[0]?.count || 0);
+      });
+    }
+    const data = readMfaFile();
+    const entry = data[normalizedUsername];
+    const code = entry?.recoveryCodes?.find(item => item.codeHash === codeHash && !item.usedAt);
+    if (!code) return null;
+    code.usedAt = new Date().toISOString();
+    writeMfaFile(data);
+    return entry.recoveryCodes.filter(item => !item.usedAt).length;
+  };
+
+  const createMfaChallenge = async ({ id, username, purpose, tokenHash, payload = {}, expiresAt }) => {
+    const normalizedUsername = normalizeText(username);
+    if (pool) {
+      const result = await pool.query(`
+        INSERT INTO ${TABLES.mfaChallenges} (id, user_id, purpose, token_hash, payload, expires_at)
+        SELECT $1, u.id, $3, $4, $5::jsonb, $6
+        FROM ${TABLES.users} u
+        WHERE u.username = $2
+        RETURNING id
+      `, [id, normalizedUsername, purpose, tokenHash, JSON.stringify(payload), new Date(expiresAt)]);
+      return result.rowCount > 0;
+    }
+    fileChallenges.set(tokenHash, {
+      id,
+      username: normalizedUsername,
+      purpose,
+      payload,
+      attemptCount: 0,
+      expiresAt,
+      consumedAt: ''
+    });
+    return true;
+  };
+
+  const getMfaChallenge = async (tokenHash, purpose) => {
+    if (pool) {
+      const { rows } = await pool.query(`
+        SELECT c.id, u.username, c.purpose, c.payload, c.attempt_count, c.expires_at, c.consumed_at
+        FROM ${TABLES.mfaChallenges} c
+        JOIN ${TABLES.users} u ON u.id = c.user_id
+        WHERE c.token_hash = $1 AND c.purpose = $2
+          AND c.consumed_at IS NULL AND c.expires_at > now()
+        LIMIT 1
+      `, [tokenHash, purpose]);
+      if (!rows[0]) return null;
+      return {
+        id: rows[0].id,
+        username: rows[0].username,
+        purpose: rows[0].purpose,
+        payload: rows[0].payload || {},
+        attemptCount: Number(rows[0].attempt_count || 0),
+        expiresAt: toIsoString(rows[0].expires_at),
+        consumedAt: toIsoString(rows[0].consumed_at)
+      };
+    }
+    const challenge = fileChallenges.get(tokenHash);
+    if (!challenge || challenge.purpose !== purpose || challenge.consumedAt || Date.parse(challenge.expiresAt) <= Date.now()) return null;
+    return { ...challenge };
+  };
+
+  const recordMfaChallengeFailure = async (tokenHash) => {
+    if (pool) {
+      const { rows } = await pool.query(`
+        UPDATE ${TABLES.mfaChallenges}
+        SET attempt_count = attempt_count + 1,
+            consumed_at = CASE WHEN attempt_count + 1 >= 5 THEN now() ELSE consumed_at END
+        WHERE token_hash = $1 AND consumed_at IS NULL
+        RETURNING attempt_count, consumed_at
+      `, [tokenHash]);
+      return rows[0] ? {
+        attemptCount: Number(rows[0].attempt_count || 0),
+        consumed: Boolean(rows[0].consumed_at)
+      } : null;
+    }
+    const challenge = fileChallenges.get(tokenHash);
+    if (!challenge || challenge.consumedAt) return null;
+    challenge.attemptCount += 1;
+    if (challenge.attemptCount >= 5) challenge.consumedAt = new Date().toISOString();
+    fileChallenges.set(tokenHash, challenge);
+    return { attemptCount: challenge.attemptCount, consumed: Boolean(challenge.consumedAt) };
+  };
+
+  const consumeMfaChallenge = async (tokenHash) => {
+    if (pool) {
+      const result = await pool.query(`
+        UPDATE ${TABLES.mfaChallenges}
+        SET consumed_at = now()
+        WHERE token_hash = $1 AND consumed_at IS NULL AND expires_at > now()
+      `, [tokenHash]);
+      return result.rowCount > 0;
+    }
+    const challenge = fileChallenges.get(tokenHash);
+    if (!challenge || challenge.consumedAt || Date.parse(challenge.expiresAt) <= Date.now()) return false;
+    challenge.consumedAt = new Date().toISOString();
+    fileChallenges.set(tokenHash, challenge);
+    return true;
+  };
+
   const saveAuditEvent = async ({ actorUsername = '', targetUsername = '', action, metadata = {} }) => {
     if (!action) return;
     if (pool) {
@@ -589,7 +1037,21 @@ function createAuthStore({ dataDir, hashPassword }) {
     recordLogin,
     createSession,
     revokeSession,
+    revokeUserSessions,
     getActiveSession,
+    updateEmail,
+    updatePassword,
+    getMfaConfig,
+    saveMfaConfig,
+    clearMfa,
+    markTotpUsed,
+    recordMfaFailure,
+    resetMfaFailures,
+    consumeRecoveryCode,
+    createMfaChallenge,
+    getMfaChallenge,
+    recordMfaChallengeFailure,
+    consumeMfaChallenge,
     saveAuditEvent,
     buildPublicUser,
     normalizeUserRecord,

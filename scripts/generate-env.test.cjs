@@ -26,6 +26,7 @@ test('environment generator creates strong values and preserves completed files 
     'AUTH_PG_PASSWORD=',
     'JWT_SECRET=',
     'AUTH_SERVICE_TOKEN=',
+    'MFA_ENCRYPTION_KEY=',
     'AUTH_BOOTSTRAP_ADMIN_PASSWORD=',
     'GATEWAY_PORT=80'
   ].join('\n'));
@@ -36,6 +37,7 @@ test('environment generator creates strong values and preserves completed files 
     'AUTH_PG_PASSWORD',
     'AUTH_SERVICE_TOKEN',
     'JWT_SECRET',
+    'MFA_ENCRYPTION_KEY',
     'PG_PASSWORD'
   ]);
 
@@ -45,10 +47,13 @@ test('environment generator creates strong values and preserves completed files 
     'AUTH_PG_PASSWORD',
     'JWT_SECRET',
     'AUTH_SERVICE_TOKEN',
+    'MFA_ENCRYPTION_KEY',
     'AUTH_BOOTSTRAP_ADMIN_PASSWORD'
   ]) {
     assert.match(content, new RegExp(`^${key}=.{32,}$`, 'm'));
   }
+  const mfaKey = content.match(/^MFA_ENCRYPTION_KEY=(.+)$/m)?.[1];
+  assert.equal(Buffer.from(mfaKey, 'base64').length, 32);
   assert.match(content, /^GATEWAY_PORT=80$/m);
 
   const secondResult = generateEnvironment({ templatePath, outputPath });
@@ -67,6 +72,7 @@ test('environment generator fills only blank or missing managed values in existi
     'AUTH_PG_PASSWORD=',
     'JWT_SECRET=',
     'AUTH_SERVICE_TOKEN=',
+    'MFA_ENCRYPTION_KEY=',
     'AUTH_BOOTSTRAP_ADMIN_PASSWORD='
   ].join('\n'));
 
@@ -74,6 +80,7 @@ test('environment generator fills only blank or missing managed values in existi
     'PG_PASSWORD=keep-app-password',
     'AUTH_PG_PASSWORD=',
     'JWT_SECRET=keep-jwt-secret',
+    'MFA_ENCRYPTION_KEY=',
     'AUTH_BOOTSTRAP_ADMIN_PASSWORD=',
     'GATEWAY_PORT=80'
   ].join('\n'));
@@ -82,7 +89,8 @@ test('environment generator fills only blank or missing managed values in existi
   assert.deepEqual(result.generatedKeys.sort(), [
     'AUTH_BOOTSTRAP_ADMIN_PASSWORD',
     'AUTH_PG_PASSWORD',
-    'AUTH_SERVICE_TOKEN'
+    'AUTH_SERVICE_TOKEN',
+    'MFA_ENCRYPTION_KEY'
   ]);
 
   const content = fs.readFileSync(outputPath, 'utf8');
@@ -91,6 +99,7 @@ test('environment generator fills only blank or missing managed values in existi
   assert.match(content, /^AUTH_PG_PASSWORD=.{32,}$/m);
   assert.match(content, /^AUTH_BOOTSTRAP_ADMIN_PASSWORD=.{32,}$/m);
   assert.match(content, /^AUTH_SERVICE_TOKEN=.{32,}$/m);
+  assert.equal(Buffer.from(content.match(/^MFA_ENCRYPTION_KEY=(.+)$/m)?.[1], 'base64').length, 32);
   assert.match(content, /^GATEWAY_PORT=80$/m);
 });
 
@@ -105,6 +114,7 @@ test('environment generator replaces unsafe auth placeholders without rotating d
     'AUTH_PG_PASSWORD=',
     'JWT_SECRET=',
     'AUTH_SERVICE_TOKEN=',
+    'MFA_ENCRYPTION_KEY=',
     'AUTH_BOOTSTRAP_ADMIN_PASSWORD='
   ].join('\n'));
 
@@ -113,6 +123,7 @@ test('environment generator replaces unsafe auth placeholders without rotating d
     'AUTH_PG_PASSWORD=change-me',
     'JWT_SECRET=dev-secret-key-change-me-in-production',
     'AUTH_SERVICE_TOKEN=dev-internal-auth-service-token',
+    `MFA_ENCRYPTION_KEY=${Buffer.from('development-mfa-encryption-key-change-me', 'utf8').subarray(0, 32).toString('base64')}`,
     'AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-me'
   ].join('\n'));
 
@@ -120,7 +131,8 @@ test('environment generator replaces unsafe auth placeholders without rotating d
   assert.deepEqual(result.generatedKeys.sort(), [
     'AUTH_BOOTSTRAP_ADMIN_PASSWORD',
     'AUTH_SERVICE_TOKEN',
-    'JWT_SECRET'
+    'JWT_SECRET',
+    'MFA_ENCRYPTION_KEY'
   ]);
 
   const content = fs.readFileSync(outputPath, 'utf8');
@@ -128,6 +140,7 @@ test('environment generator replaces unsafe auth placeholders without rotating d
   assert.match(content, /^AUTH_PG_PASSWORD=change-me$/m);
   assert.doesNotMatch(content, /^JWT_SECRET=dev-secret-key-change-me-in-production$/m);
   assert.doesNotMatch(content, /^AUTH_SERVICE_TOKEN=dev-internal-auth-service-token$/m);
+  assert.equal(Buffer.from(content.match(/^MFA_ENCRYPTION_KEY=(.+)$/m)?.[1], 'base64').length, 32);
   assert.doesNotMatch(content, /^AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-me$/m);
 });
 
@@ -151,5 +164,6 @@ test('environment generator CLI works when launched from the scripts directory',
   assert.match(content, /^AUTH_PG_PASSWORD=.{32,}$/m);
   assert.match(content, /^JWT_SECRET=.{32,}$/m);
   assert.match(content, /^AUTH_SERVICE_TOKEN=.{32,}$/m);
+  assert.equal(Buffer.from(content.match(/^MFA_ENCRYPTION_KEY=(.+)$/m)?.[1], 'base64').length, 32);
   assert.match(content, /^AUTH_BOOTSTRAP_ADMIN_PASSWORD=.{32,}$/m);
 });

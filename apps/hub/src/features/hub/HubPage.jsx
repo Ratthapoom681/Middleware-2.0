@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { BookOpen, ShieldAlert, Radar, Users, LogOut, Shield } from 'lucide-react';
+import { BookOpen, ShieldAlert, Radar, Users, Shield } from 'lucide-react';
+import HubProfileMenu from './HubProfileMenu';
 import './HubPage.css';
 
 const APPS = [
@@ -21,7 +22,7 @@ const APPS = [
   },
 ];
 
-export default function HubPage({ user, onOpenDocs, onLogout }) {
+export default function HubPage({ user, authNotice, onOpenDocs, onLogout, onOpenProfile }) {
   const isAdmin = user?.role === 'admin';
   const [appStatuses, setAppStatuses] = useState({
     defectdojo: 'healthy',
@@ -64,17 +65,19 @@ export default function HubPage({ user, onOpenDocs, onLogout }) {
             <BookOpen size={16} />
             <span>Documentation</span>
           </button>
-          <span className="user-name">{user?.username}</span>
-          <span className={`role-badge ${user?.role}`}>{user?.role}</span>
-          <button className="btn-logout" onClick={onLogout} title="Sign Out">
-            <LogOut size={16} />
-            <span>Sign Out</span>
-          </button>
+          <HubProfileMenu user={user} onOpenProfile={onOpenProfile} onLogout={onLogout} />
         </div>
       </header>
 
       {/* Main Content */}
       <main className="hub-content">
+        {authNotice?.type === 'recovery-code-used' && (
+          <div className="hub-auth-notice" role="status">
+            <Shield size={18} />
+            <span>You signed in with a recovery code. {authNotice.recoveryCodesRemaining} codes remain.</span>
+            <button type="button" onClick={onOpenProfile}>Review security</button>
+          </div>
+        )}
         <div className="welcome-section">
           <p className="welcome-back">Welcome back, {user?.username}</p>
           <h1 className="select-workspace-heading">Select a workspace</h1>
