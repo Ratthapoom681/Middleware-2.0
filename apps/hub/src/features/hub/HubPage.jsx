@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react';
-import { BookOpen, ShieldAlert, Radar, Users, Shield } from 'lucide-react';
-import HubProfileMenu from './HubProfileMenu';
+import { useEffect, useState } from 'react';
+import { ArrowRight, ArrowUpRight, Radar, Shield, ShieldAlert, Users } from 'lucide-react';
+import HubTopbar from './HubTopbar/HubTopbar';
 import './HubPage.css';
 
 const APPS = [
   {
     id: 'defectdojo',
     name: 'DefectDojo Viewer',
+    category: 'Vulnerability management',
     description: 'Vulnerability workflow — pull findings, sync with Redmine, manage mitigations',
     path: '/defectdojo/',
     icon: ShieldAlert,
@@ -15,6 +16,7 @@ const APPS = [
   {
     id: 'wazuh',
     name: 'Wazuh Viewer',
+    category: 'Security monitoring',
     description: 'Incident & SIEM workflow — alerts, agents, incident management',
     path: '/wazuh/',
     icon: Radar,
@@ -22,11 +24,17 @@ const APPS = [
   },
 ];
 
+const STATUS_LABELS = {
+  checking: 'Checking',
+  healthy: 'Operational',
+  offline: 'Unavailable',
+};
+
 export default function HubPage({ user, authNotice, onOpenDocs, onLogout, onOpenProfile }) {
   const isAdmin = user?.role === 'admin';
   const [appStatuses, setAppStatuses] = useState({
-    defectdojo: 'healthy',
-    wazuh: 'healthy'
+    defectdojo: 'checking',
+    wazuh: 'checking'
   });
 
   useEffect(() => {
@@ -47,100 +55,130 @@ export default function HubPage({ user, authNotice, onOpenDocs, onLogout, onOpen
       });
   }, []);
 
-  const handleCardClick = (path) => {
-    window.location.href = path;
-  };
-
+  const statuses = APPS.map(app => appStatuses[app.id] || 'checking');
+  const checkingCount = statuses.filter(status => status === 'checking').length;
+  const healthyCount = statuses.filter(status => status === 'healthy').length;
+  const readinessMessage = checkingCount > 0
+    ? `Checking ${checkingCount} workspace${checkingCount === 1 ? '' : 's'}`
+    : `${healthyCount} of ${APPS.length} operational`;
 
   return (
     <div className="hub-page">
-      {/* Top Bar */}
-      <header className="hub-topbar">
-        <div className="topbar-brand">
-          <Shield className="brand-logo-icon" size={20} />
-          <span className="brand-text">Internal Security Middleware Hub</span>
-        </div>
-        <div className="topbar-user">
-          <button className="btn-docs" onClick={onOpenDocs} title="Documentation">
-            <BookOpen size={16} />
-            <span>Documentation</span>
-          </button>
-          <HubProfileMenu user={user} onOpenProfile={onOpenProfile} onLogout={onLogout} />
-        </div>
-      </header>
+      <HubTopbar
+        user={user}
+        onOpenDocs={onOpenDocs}
+        onOpenProfile={onOpenProfile}
+        onLogout={onLogout}
+      />
 
       {/* Main Content */}
       <main className="hub-content">
         {authNotice?.type === 'recovery-code-used' && (
-          <div className="hub-auth-notice" role="status">
-            <Shield size={18} />
-            <span>You signed in with a recovery code. {authNotice.recoveryCodesRemaining} codes remain.</span>
-            <button type="button" onClick={onOpenProfile}>Review security</button>
-          </div>
-        )}
-        <div className="welcome-section">
-          <p className="welcome-back">Welcome back, {user?.username}</p>
-          <h1 className="select-workspace-heading">Select a workspace</h1>
-        </div>
-
-        {/* App Grid */}
-        <div className="app-grid">
-          {APPS.map((app) => {
-            const IconComponent = app.icon;
-            return (
-              <div
-                key={app.id}
-                className="app-card"
-                onClick={() => handleCardClick(app.path)}
-                style={{ '--accent-color': app.accentColor }}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    handleCardClick(app.path);
-                  }
-                }}
-              >
-                <div className="card-top">
-                  <div
-                    className="icon-container"
-                    style={{
-                      backgroundColor: `${app.accentColor}1f`,
-                      color: app.accentColor,
-                    }}
-                  >
-                    <IconComponent size={24} />
-                  </div>
-                  <h3 className="app-name">{app.name}</h3>
-                </div>
-                <p className="app-description">{app.description}</p>
-                <div className="card-status">
-                  <span className={`status-dot ${appStatuses[app.id] || 'offline'}`} />
-                  <span className="status-text">
-                    {(appStatuses[app.id] || 'offline') === 'healthy' ? 'Healthy' : 'Offline'}
-                  </span>
-                </div>
-
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Admin Section */}
-        {isAdmin && (
-          <section className="admin-section">
-            <div className="admin-divider" />
-            <span className="admin-label">Administration</span>
-            <div className="admin-actions">
-              <a
-                href="#users"
-                className="btn-admin-nav"
-                role="button"
-              >
-                <Users size={16} />
-                <span>User Management</span>
-              </a>
+          <aside className="hub-auth-notice" role="status">
+            <span className="hub-auth-notice-icon" aria-hidden="true">
+              <Shield size={18} />
+            </span>
+            <div className="hub-auth-notice-copy">
+              <strong>Recovery code used</strong>
+              <span>You signed in with a recovery code. {authNotice.recoveryCodesRemaining} codes remain.</span>
             </div>
+            <button className="hub-auth-notice-action" type="button" onClick={onOpenProfile}>
+              Review security
+            </button>
+          </aside>
+        )}
+
+        <section className="hub-hero" aria-labelledby="hub-page-title">
+          <div className="hub-hero-copy">
+            <span className="hub-eyebrow">Welcome back, {user?.username || 'User'}</span>
+            <h1 className="hub-hero-title" id="hub-page-title">Choose your security workspace</h1>
+            <p className="hub-hero-description">
+              Launch vulnerability management or incident monitoring from one secure hub.
+            </p>
+          </div>
+
+          <div className="hub-readiness" aria-live="polite">
+            <div className="hub-readiness-summary">
+              <span>Workspace availability</span>
+              <strong>{readinessMessage}</strong>
+            </div>
+            <ul className="hub-readiness-list">
+              {APPS.map((app) => {
+                const status = appStatuses[app.id] || 'checking';
+                return (
+                  <li className="hub-readiness-item" key={app.id}>
+                    <span className="hub-readiness-workspace">
+                      <span className={`hub-status-dot ${status}`} aria-hidden="true" />
+                      <span>{app.name}</span>
+                    </span>
+                    <span className={`hub-readiness-status ${status}`}>{STATUS_LABELS[status]}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </section>
+
+        <section className="hub-workspaces" aria-labelledby="hub-workspaces-heading">
+          <header className="hub-section-heading">
+            <div>
+              <span className="hub-section-kicker">Active environments</span>
+              <h2 id="hub-workspaces-heading">Workspaces</h2>
+            </div>
+            <span className="hub-workspace-count">{APPS.length} secure workspaces</span>
+          </header>
+
+          <div className="hub-workspace-grid">
+            {APPS.map((app) => {
+              const IconComponent = app.icon;
+              const status = appStatuses[app.id] || 'checking';
+
+              return (
+                <a
+                  key={app.id}
+                  className="hub-workspace-card"
+                  href={app.path}
+                  style={{ '--accent-color': app.accentColor }}
+                  aria-label={`Open ${app.name}`}
+                >
+                  <div className="hub-workspace-card-header">
+                    <span className="hub-workspace-icon" aria-hidden="true">
+                      <IconComponent size={26} />
+                    </span>
+                    <span className="hub-workspace-category">{app.category}</span>
+                  </div>
+                  <h3 className="hub-workspace-name">{app.name}</h3>
+                  <p className="hub-workspace-description">{app.description}</p>
+                  <footer className="hub-workspace-footer">
+                    <span className={`hub-status-pill ${status}`}>
+                      <span className="hub-status-dot" aria-hidden="true" />
+                      {STATUS_LABELS[status]}
+                    </span>
+                    <span className="hub-launch-label">
+                      Open workspace
+                      <ArrowUpRight size={16} aria-hidden="true" />
+                    </span>
+                  </footer>
+                </a>
+              );
+            })}
+          </div>
+        </section>
+
+        {isAdmin && (
+          <section className="hub-admin-panel" aria-labelledby="hub-admin-heading">
+            <span className="hub-admin-icon" aria-hidden="true">
+              <Users size={20} />
+            </span>
+            <div className="hub-admin-copy">
+              <span className="hub-admin-eyebrow">Administration</span>
+              <h2 id="hub-admin-heading">User management</h2>
+              <p>Manage Hub identities, roles, and product access.</p>
+            </div>
+            <a href="#users" className="hub-admin-action">
+              <span>Manage users</span>
+              <ArrowRight size={16} aria-hidden="true" />
+            </a>
           </section>
         )}
       </main>
