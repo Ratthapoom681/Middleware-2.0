@@ -35,9 +35,20 @@ test('protected file storage persists identity, policy, temporary credentials, s
   assert.equal((await reopened.getEmailSettings()).host, 'tamarind.beenets.com');
   const claimed = await reopened.claimNextEmail();
   assert.equal(claimed.id, first.id);
+  assert.equal((await reopened.getMfaPolicy('analyst')).notificationStatus, 'sending');
   await reopened.finishEmail(claimed, { error: 'MAIL_NOT_CONFIGURED', permanent: true });
   assert.equal((await reopened.getEmailDelivery(first.id)).status, 'failed');
   assert.equal((await reopened.getMfaPolicy('analyst')).notificationStatus, 'failed');
+  const sentSetup = await reopened.enqueueEmail({
+    type: 'mfa_setup', targetUsername: 'analyst', recipient: 'analyst@example.test', subject: 'Replacement setup', metadata: {}
+  });
+  assert.equal((await reopened.getMfaPolicy('analyst')).notificationStatus, 'queued');
+  const sentClaim = await reopened.claimNextEmail();
+  assert.equal(sentClaim.id, sentSetup.id);
+  await reopened.finishEmail(sentClaim);
+  const sentPolicy = await reopened.getMfaPolicy('analyst');
+  assert.equal(sentPolicy.notificationStatus, 'sent');
+  assert.equal(sentPolicy.mode, 'authenticator', 'email status changes must not change the pending MFA policy');
   const retryJob = await reopened.enqueueEmail({ type: 'temporary_password', recipient: 'admin@example.test', subject: 'Retry', metadata: {} });
   const retryClaim = await reopened.claimNextEmail();
   await reopened.finishEmail(retryClaim, { error: 'ETIMEDOUT' });

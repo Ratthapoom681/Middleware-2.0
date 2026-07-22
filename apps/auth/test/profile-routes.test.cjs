@@ -247,6 +247,9 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
     method: 'POST', body: JSON.stringify({ invitationToken: invitationIssuedBeforeSuspension })
   })).response.status, 410, 'suspension permanently invalidates an issued setup link');
   assert.equal((await request('/api/profile', { token: analystToken })).response.status, 401);
+  const suspendedResend = await request('/api/users/analyst/mfa/resend', { token: adminToken, method: 'POST' });
+  assert.equal(suspendedResend.response.status, 409);
+  assert.match(suspendedResend.data.error, /reactivate/i);
   const reactivated = await request('/api/users/analyst', {
     token: adminToken, method: 'PATCH', body: JSON.stringify({
       email: 'analyst-updated@example.test', fullName: 'Test Analyst', company: 'Beenets', department: 'SOC',

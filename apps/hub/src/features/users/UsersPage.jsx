@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  Clock3,
   Clipboard,
   KeyRound,
+  LoaderCircle,
   MailCheck,
+  MailX,
   Pencil,
   Plus,
   Save,
@@ -29,6 +32,14 @@ import {
   SearchOptionsSearch,
 } from '../../shared/ui/SearchOptions/SearchOptions.jsx';
 import { formatBangkokIntl } from '../../shared/time.js';
+import {
+  getMfaDeliveryView,
+  getMfaProvider,
+  getMfaProviderLabel,
+  getMfaStatus,
+  hasDeliverableEmail,
+  MFA_PROVIDER_OPTIONS,
+} from './mfaDeliveryStatus.js';
 import './UsersPage.css';
 
 const EMPTY_USER = {
@@ -42,13 +53,6 @@ const EMPTY_USER = {
   status: 'active',
   mfaProvider: 'disabled',
 };
-
-const MFA_PROVIDER_OPTIONS = [
-  { value: 'disabled', label: 'Disabled' },
-  { value: 'google', label: 'Google Authenticator' },
-  { value: 'microsoft', label: 'Microsoft Authenticator' },
-  { value: 'other', label: 'Other authenticator' },
-];
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30,40, 50];
 
@@ -165,21 +169,6 @@ const getRowTone = (user) => {
   return 'mapped';
 };
 
-const getMfaStatus = user => {
-  const status = normalize(user.mfaStatus);
-  if (['disabled', 'pending', 'enabled'].includes(status)) return status;
-  return user.mfaEnabled ? 'enabled' : user.mfaMode === 'authenticator' ? 'pending' : 'disabled';
-};
-
-const getMfaProvider = user => {
-  if (getMfaStatus(user) === 'disabled') return 'disabled';
-  const provider = normalize(user.mfaProvider);
-  return ['google', 'microsoft', 'other'].includes(provider) ? provider : 'other';
-};
-
-const getMfaProviderLabel = provider => MFA_PROVIDER_OPTIONS.find(option => option.value === provider)?.label || 'Other authenticator';
-const hasDeliverableEmail = value => /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(String(value || '').trim());
-
 const redirectAfterSelfSecurityChange = () => {
   localStorage.removeItem('middleware_token');
   localStorage.removeItem('middleware_user');
@@ -205,9 +194,23 @@ function useDialogFocus(open, onClose) {
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     };
     document.addEventListener('keydown', handleKey);
-    return () => { document.removeEventListener('keydown', handleKey); requestAnimationFrame(() => previous?.focus()); };
+    return () => {
+      document.removeEventListener('keydown', handleKey);
+      requestAnimationFrame(() => {
+        if (previous?.isConnected && (!document.activeElement || document.activeElement === document.body)) previous.focus();
+      });
+    };
   }, [open]);
   return ref;
+}
+
+function MfaDeliveryIcon({ view }) {
+  if (view.mfaStatus === 'enabled') return <ShieldCheck size={13} aria-hidden="true" />;
+  if (view.mfaStatus === 'disabled') return <ShieldOff size={13} aria-hidden="true" />;
+  if (view.deliveryStatus === 'queued') return <Clock3 size={13} aria-hidden="true" />;
+  if (view.deliveryStatus === 'sending') return <LoaderCircle className="mfa-delivery-spinner" size={13} aria-hidden="true" />;
+  if (view.deliveryStatus === 'sent') return <MailCheck size={13} aria-hidden="true" />;
+  return <MailX size={13} aria-hidden="true" />;
 }
 
 export default function UsersPage({ token, currentUser, onBack, onUserUpdated }) {
@@ -229,10 +232,20 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
   const [passwordResetUser, setPasswordResetUser] = useState(null);
   const [securityAction, setSecurityAction] = useState(null);
   const [oneTimeCredential, setOneTimeCredential] = useState(null);
+  const [mfaDeliveryUsername, setMfaDeliveryUsername] = useState('');
+  const mfaDeliveryUser = useMemo(
+    () => users.find(user => user.username === mfaDeliveryUsername) || null,
+    [mfaDeliveryUsername, users],
+  );
+  const mfaDeliveryView = useMemo(
+    () => mfaDeliveryUser ? getMfaDeliveryView(mfaDeliveryUser) : null,
+    [mfaDeliveryUser],
+  );
   const editorDialogRef = useDialogFocus(editorOpen, () => setEditorOpen(false));
   const passwordDialogRef = useDialogFocus(Boolean(passwordResetUser), () => setPasswordResetUser(null));
   const securityDialogRef = useDialogFocus(Boolean(securityAction), () => setSecurityAction(null));
   const credentialDialogRef = useDialogFocus(Boolean(oneTimeCredential), () => {});
+  const deliveryDialogRef = useDialogFocus(Boolean(mfaDeliveryUser), () => setMfaDeliveryUsername(''));
 
   const authHeaders = useMemo(() => ({
     'Content-Type': 'application/json',
@@ -270,13 +283,23 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
     if (token) loadUsers();
   }, [loadUsers, token]);
 
+  const hasActiveMfaDelivery = useMemo(
+    () => users.some(user => getMfaStatus(user) === 'pending'
+      && ['queued', 'sending'].includes(normalize(user.mfaNotificationStatus))),
+    [users],
+  );
+
   useEffect(() => {
-    if (!users.some(user => ['queued', 'sending'].includes(normalize(user.mfaNotificationStatus)))) return undefined;
+    if (!hasActiveMfaDelivery) return undefined;
     const timer = window.setInterval(() => {
       request('/users').then(setUsers).catch(() => {});
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [request, users]);
+  }, [hasActiveMfaDelivery, request]);
+
+  useEffect(() => {
+    if (mfaDeliveryUsername && (!mfaDeliveryUser || !mfaDeliveryView?.pending)) setMfaDeliveryUsername('');
+  }, [mfaDeliveryUser, mfaDeliveryUsername, mfaDeliveryView?.pending]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -292,6 +315,7 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
       const accessStatus = getAccessStatus(user);
       const products = getUserProducts(user);
       const accessSummary = getAccessSummary(user);
+      const mfaDelivery = getMfaDeliveryView(user);
       const searchableText = [
         user.username,
         user.fullName,
@@ -303,6 +327,8 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
         accountStatus,
         `mfa ${getMfaStatus(user)}`,
         user.mfaProvider,
+        mfaDelivery.label,
+        user.mfaNotificationStatus,
         accessStatus,
         accessSummary.title,
         accessSummary.details,
@@ -592,9 +618,8 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
                 const accessStatus = getAccessStatus(user);
                 const accessSummary = getAccessSummary(user);
                 const email = user.email || 'No email';
-                const mfaStatus = getMfaStatus(user);
-                const mfaProvider = getMfaProvider(user);
-                const mailStatus = normalize(user.mfaNotificationStatus);
+                const mfaView = getMfaDeliveryView(user);
+                const mfaStatus = mfaView.mfaStatus;
 
                 return (
                   <DataTableRow key={user.username} tone={getRowTone(user)} ariaLabel={`User ${user.username}`}>
@@ -617,12 +642,23 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
                       <span className={`account-badge ${accountStatus}`}>{formatLabel(accountStatus)}</span>
                     </DataTableCell>
                     <DataTableCell className="cell-mfa" label="MFA">
-                      <span className={`mfa-badge ${mfaStatus}`} title={mailStatus === 'failed' ? user.mfaNotificationError || 'Setup email failed' : undefined}>
-                        {mfaStatus === 'enabled' ? <ShieldCheck size={13} /> : <ShieldOff size={13} />}
-                        {mfaStatus === 'enabled'
-                          ? getMfaProviderLabel(mfaProvider)
-                          : mfaStatus === 'pending' ? `${getMfaProviderLabel(mfaProvider)} · ${mailStatus || 'queued'}` : 'Disabled'}
-                      </span>
+                      {mfaView.pending ? (
+                        <button
+                          type="button"
+                          className={`mfa-badge mfa-delivery-badge ${mfaView.tone}`}
+                          onClick={() => setMfaDeliveryUsername(user.username)}
+                          title={`Assigned app: ${mfaView.providerLabel}. Open email details.`}
+                          aria-label={`${mfaView.label} for ${user.username}. Assigned app: ${mfaView.providerLabel}. Open email details.`}
+                        >
+                          <MfaDeliveryIcon view={mfaView} />
+                          {mfaView.label}
+                        </button>
+                      ) : (
+                        <span className={`mfa-badge ${mfaView.tone}`}>
+                          <MfaDeliveryIcon view={mfaView} />
+                          {mfaView.label}
+                        </span>
+                      )}
                     </DataTableCell>
                     <DataTableCell className="cell-access users-access-cell" label="Access" title={accessSummary.details}>
                       <strong>{accessSummary.title}</strong>
@@ -640,7 +676,7 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
                           <KeyRound size={15} />
                         </button>
                         {mfaStatus === 'disabled' && <button type="button" className="icon-btn" onClick={() => setSecurityAction({ type: 'enable', provider: 'google', user })} disabled={!hasDeliverableEmail(user.email)} title={hasDeliverableEmail(user.email) ? 'Enable Authenticator MFA' : 'Add a valid email first'} aria-label={`Enable Authenticator MFA for ${user.username}`}><ShieldCheck size={15} /></button>}
-                        {mfaStatus === 'pending' && <button type="button" className="icon-btn" onClick={() => setSecurityAction({ type: 'resend', user })} title="Resend setup email" aria-label={`Resend setup email to ${user.username}`}><MailCheck size={15} /></button>}
+                        {mfaStatus === 'pending' && <button type="button" className="icon-btn" onClick={() => setSecurityAction({ type: 'resend', user })} disabled={!mfaView.canResend} title={mfaView.canResend ? 'Resend setup email' : mfaView.resendDisabledReason} aria-label={mfaView.canResend ? `Resend setup email to ${user.username}` : `Cannot resend setup email to ${user.username}: ${mfaView.resendDisabledReason}`}><MailCheck size={15} /></button>}
                         {mfaStatus === 'enabled' && <button type="button" className="icon-btn warning" onClick={() => setSecurityAction({ type: 'reset', user })} title="Reset authenticator" aria-label={`Reset authenticator for ${user.username}`}><RefreshCw size={15} /></button>}
                         {mfaStatus !== 'disabled' && <button type="button" className="icon-btn warning" onClick={() => setSecurityAction({ type: 'disable', user })} title="Disable Authenticator MFA" aria-label={`Disable Authenticator MFA for ${user.username}`}><ShieldOff size={15} /></button>}
                         <button
@@ -744,6 +780,26 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
             </section>
           </div>
         )}
+
+        {mfaDeliveryUser && mfaDeliveryView?.pending && <div className="modal-backdrop" role="presentation" onMouseDown={() => setMfaDeliveryUsername('')}><section ref={deliveryDialogRef} className="user-modal mfa-delivery-modal" role="dialog" aria-modal="true" aria-labelledby="mfa-delivery-title" onMouseDown={event => event.stopPropagation()}>
+          <div className="modal-header"><div><h2 id="mfa-delivery-title">Authenticator email: {mfaDeliveryUser.username}</h2><p>Current setup-email status for {mfaDeliveryView.providerLabel}.</p></div><button type="button" className="icon-btn" onClick={() => setMfaDeliveryUsername('')} aria-label="Close authenticator email details"><X size={16} /></button></div>
+          <div className="user-form">
+            <div className={`mfa-delivery-summary ${mfaDeliveryView.tone}`} role="status" aria-live="polite">
+              <MfaDeliveryIcon view={mfaDeliveryView} />
+              <div><strong>{mfaDeliveryView.label}</strong><span>{mfaDeliveryView.deliveryStatus === 'sent' ? 'SMTP accepted the message. The user must still complete enrollment.' : mfaDeliveryView.deliveryStatus === 'sending' ? 'The email worker is contacting the configured SMTP server.' : mfaDeliveryView.deliveryStatus === 'queued' ? 'The message is waiting for the email worker.' : 'The user has not received a usable setup email from this attempt.'}</span></div>
+            </div>
+            <dl className="mfa-delivery-details">
+              <div><dt>Recipient</dt><dd>{mfaDeliveryUser.email || 'No valid email saved'}</dd></div>
+              <div><dt>Assigned app</dt><dd>{mfaDeliveryView.providerLabel}</dd></div>
+              <div><dt>Setup requested</dt><dd>{mfaDeliveryUser.mfaRequestedAt ? formatDate(mfaDeliveryUser.mfaRequestedAt) : 'Not recorded'}</dd></div>
+              <div><dt>Last attempt</dt><dd>{mfaDeliveryUser.mfaNotificationAttemptedAt ? formatDate(mfaDeliveryUser.mfaNotificationAttemptedAt) : 'Not attempted yet'}</dd></div>
+              <div><dt>Email sent</dt><dd>{mfaDeliveryUser.mfaNotificationSentAt ? formatDate(mfaDeliveryUser.mfaNotificationSentAt) : 'Not sent yet'}</dd></div>
+            </dl>
+            {mfaDeliveryView.failureMessage && <div className="mfa-delivery-guidance" role="alert"><MailX size={16} aria-hidden="true" /><span>{mfaDeliveryView.failureMessage}</span></div>}
+            {!mfaDeliveryView.canResend && mfaDeliveryView.resendDisabledReason && <p className="mfa-delivery-disabled-reason">{mfaDeliveryView.resendDisabledReason}</p>}
+            <div className="modal-actions"><button type="button" className="btn-secondary" onClick={() => setMfaDeliveryUsername('')}>Close</button><button type="button" className="btn-primary" disabled={!mfaDeliveryView.canResend} onClick={() => { const user = mfaDeliveryUser; setMfaDeliveryUsername(''); setSecurityAction({ type: 'resend', user }); }}><MailCheck size={15} />Resend setup email</button></div>
+          </div>
+        </section></div>}
 
         {passwordResetUser && <div className="modal-backdrop" role="presentation" onMouseDown={() => setPasswordResetUser(null)}><section ref={passwordDialogRef} className="user-modal" role="dialog" aria-modal="true" aria-labelledby="password-reset-title" onMouseDown={event => event.stopPropagation()}>
           <div className="modal-header"><div><h2 id="password-reset-title">Generate temporary password: {passwordResetUser.username}</h2><p>The password expires in 24 hours. All current sessions will be revoked.</p></div><button type="button" className="icon-btn" onClick={() => setPasswordResetUser(null)} aria-label="Close password reset"><X size={16} /></button></div>

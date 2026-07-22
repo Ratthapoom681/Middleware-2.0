@@ -548,6 +548,9 @@ function registerProfileRoutes({
     try {
       const [target, policy, config] = await Promise.all([authStore.getUserByUsername(username), securityStore.getMfaPolicy(username), authStore.getMfaConfig(username)]);
       if (!target) return res.status(404).json({ error: 'User not found' });
+      if (String(target.status || '').toLowerCase() === 'suspended') {
+        return res.status(409).json({ error: 'Reactivate this account before resending the setup email' });
+      }
       if (policy?.mode !== 'authenticator' || config) return res.status(409).json({ error: 'Authenticator enrollment is not pending' });
       if (!validEmail(target.email)) return res.status(400).json({ error: 'A valid email address is required to resend the setup email' });
       const provider = policy.provider || 'other';
