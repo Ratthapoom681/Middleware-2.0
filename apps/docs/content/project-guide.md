@@ -235,16 +235,17 @@ apps/auth/
     server.cjs           Auth API, JWTs, sessions, users, health, static serving
     auth-store.cjs       PostgreSQL/file auth adapter and legacy import
     mfa-service.cjs      TOTP, secret encryption, challenge hashes
-    profile-routes.cjs   Read-only Profile, admin security, enrollment, email APIs
+    profile-routes.cjs   Read-only Profile and admin security/email APIs
     admin-security-store.cjs  Identity policy, temporary credentials, settings, outbox
   web/src/
-    features/auth/       Login screen
+    features/auth/       Login and forced temporary-password change screens
+    features/enrollment/ Standalone email-only authenticator enrollment screen
 
 apps/hub/
   src/
     app/App.jsx          Portal state and hash route selection
     features/hub/        Workspace switcher and health badges
-    features/profile/    Read-only Profile and pending enrollment UX
+    features/profile/    Read-only Profile
     features/settings/   Runtime SMTP administration
     features/users/      Central user administration
     shared/ui/           Shared Hub UI components
@@ -254,7 +255,6 @@ Hub hash routes are intentionally small:
 
 - Empty hash: workspace switcher.
 - `#profile`: authenticated read-only profile; an encoded internal `returnTo` restores the originating workspace.
-- `#mfa-setup`: administrator-authorized pending authenticator enrollment.
 - `#settings`: administrator-only runtime email configuration.
 - `#users`: user administration for admins.
 - `#docs`: documentation reader. The technical documents are hidden from viewers by the backend, not only by the UI.
@@ -353,10 +353,12 @@ Mitigation review state is stored separately from the action history. Admins can
 
 ## 12. API Ownership
 
-Hub owns:
+Auth owns these identity APIs, which the gateway exposes for the Hub and the
+standalone Auth frontend:
 
 - `/api/login`, `/api/logout`
 - `/api/login/mfa`, `/api/profile`, `/api/profile/*`
+- `/api/mfa/enrollment/start`, `/api/mfa/enrollment/confirm`
 - `/api/auth/introspect`
 - `/api/users`
 - `/api/docs`

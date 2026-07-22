@@ -59,8 +59,7 @@ function createMfaService({ encryptionKey }) {
     secret: OTPAuth.Secret.fromBase32(secret)
   });
 
-  const generateEnrollment = ({ username, provider }) => {
-    const secret = new OTPAuth.Secret({ size: 20 }).base32;
+  const buildEnrollment = ({ username, provider, secret }) => {
     const totp = createTotp({ username, secret });
     return {
       provider: normalizeProvider(provider),
@@ -69,6 +68,12 @@ function createMfaService({ encryptionKey }) {
       manualKey: secret.match(/.{1,4}/g).join(' ')
     };
   };
+
+  const generateEnrollment = ({ username, provider }) => buildEnrollment({
+    username,
+    provider,
+    secret: new OTPAuth.Secret({ size: 20 }).base32
+  });
 
   const validateTotp = ({ secret, token, timestamp = Date.now() }) => {
     const cleanToken = normalizeOtp(token);
@@ -86,6 +91,7 @@ function createMfaService({ encryptionKey }) {
   const tokenHash = (token) => crypto.createHash('sha256').update(String(token || '')).digest('hex');
 
   return {
+    buildEnrollment,
     createOpaqueToken,
     decryptSecret,
     encryptSecret,

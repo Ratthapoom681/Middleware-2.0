@@ -21,7 +21,33 @@ const normalizeDeliveryStatus = value => {
   return ['queued', 'sending', 'sent', 'failed'].includes(status) ? status : 'none';
 };
 const EMAIL_TYPES = new Set(['mfa_setup', 'temporary_password']);
-const initialFileData = () => ({ version: 1, identities: {}, policies: {}, temporaryCredentials: {}, emailSettings: {}, outbox: {} });
+const MFA_INVITATION_MAX_ATTEMPTS = 5;
+const MFA_INVITATION_LIFETIME_MS = 24 * 60 * 60 * 1000;
+const initialFileData = () => ({
+  version: 2,
+  identities: {},
+  policies: {},
+  temporaryCredentials: {},
+  emailSettings: {},
+  outbox: {},
+  mfaInvitations: {}
+});
+
+const normalizeGeneration = value => clean(value);
+
+const invitationStatus = (invitation, policy = null) => {
+  if (!invitation) return '';
+  if (invitation.cancelledAt) return 'cancelled';
+  if (invitation.consumedAt) return 'consumed';
+  if (Date.parse(invitation.expiresAt || '') <= Date.now()) return 'expired';
+  if (invitation.attemptCount >= MFA_INVITATION_MAX_ATTEMPTS) return 'consumed';
+  if (policy && (
+    policy.mode !== 'authenticator'
+    || policy.provider !== invitation.provider
+    || policy.enrollmentGeneration !== invitation.generation
+  )) return 'superseded';
+  return 'active';
+};
 
 const poolConfig = () => {
   const connectionString = process.env.AUTH_DATABASE_URL || process.env.DATABASE_URL || '';
@@ -33,8 +59,11 @@ const poolConfig = () => {
 
 function createAdminSecurityStore({ dataDir }) {
   const filePath = path.join(dataDir, 'admin-security.json');
+  const mfaPath = path.join(dataDir, 'mfa.json');
+  const usersPath = path.join(dataDir, 'users.json');
   const dbConfigured = Boolean(process.env.AUTH_DATABASE_URL || process.env.DATABASE_URL || process.env.PGHOST || process.env.PGDATABASE);
   let pool = null;
+  const fileMfaLocks = new Map();
 
   const readFile = () => {
     if (!fs.existsSync(filePath)) return initialFileData();
@@ -58,6 +87,30 @@ function createAdminSecurityStore({ dataDir }) {
     writeFile(data);
     return result;
   };
+  const readFileMfa = () => {
+    if (!fs.existsSync(mfaPath)) return {};
+    try {
+      const parsed = JSON.parse(fs.readFileSync(mfaPath, 'utf8'));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (error) {
+      throw new Error(`Unable to read protected MFA data: ${error.message}`);
+    }
+  };
+  const writeFileMfa = data => {
+    const tempPath = `${mfaPath}.${process.pid}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(tempPath, mfaPath);
+    try { fs.chmodSync(mfaPath, 0o600); } catch { /* Windows does not implement POSIX modes. */ }
+  };
+  const isActiveFileUser = username => {
+    if (!fs.existsSync(usersPath)) return false;
+    try {
+      const users = JSON.parse(fs.readFileSync(usersPath, 'utf8'));
+      return Array.isArray(users) && users.some(user => clean(user?.username) === username && clean(user?.status).toLowerCase() === 'active');
+    } catch {
+      return false;
+    }
+  };
 
   const initialize = async () => {
     if (dbConfigured) {
@@ -65,7 +118,68 @@ function createAdminSecurityStore({ dataDir }) {
       await pool.query('SELECT 1');
       return;
     }
-    if (!fs.existsSync(filePath)) writeFile(initialFileData());
+    if (!fs.existsSync(filePath)) {
+      writeFile(initialFileData());
+      return;
+    }
+    if (Number(readFile().version || 0) < 2) {
+      const confirmedMfa = readFileMfa();
+      mutateFile(data => {
+        const migratedAt = new Date().toISOString();
+        data.version = 2;
+        data.mfaInvitations = data.mfaInvitations || {};
+        for (const job of Object.values(data.outbox || {})) {
+          if (job.type !== 'mfa_setup' || !['queued', 'sending'].includes(job.status)) continue;
+          Object.assign(job, {
+            status: 'cancelled',
+            secretCiphertext: '',
+            secretIv: '',
+            secretTag: '',
+            leaseExpiresAt: '',
+            updatedAt: migratedAt
+          });
+        }
+        for (const [username, policyValue] of Object.entries(data.policies || {})) {
+          const policy = policyFromRow(policyValue);
+          if (policy.mode !== 'authenticator' || confirmedMfa[username]?.secretCiphertext) continue;
+          data.policies[username] = policyFromRow({
+            ...policy,
+            enrollmentGeneration: '',
+            notificationStatus: 'failed',
+            notificationAttemptedAt: migratedAt,
+            notificationSentAt: '',
+            notificationError: 'Authenticator setup email must be resent'
+          });
+        }
+      });
+    }
+  };
+
+  const withMfaMutationLock = async (username, callback) => {
+    const key = clean(username);
+    if (!key) throw new Error('MFA mutation username is required');
+    if (pool) {
+      const client = await pool.connect();
+      try {
+        await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [key]);
+        return await callback();
+      } finally {
+        try { await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [key]); }
+        finally { client.release(); }
+      }
+    }
+
+    const previous = fileMfaLocks.get(key) || Promise.resolve();
+    let release;
+    const current = new Promise(resolve => { release = resolve; });
+    fileMfaLocks.set(key, current);
+    await previous;
+    try {
+      return await callback();
+    } finally {
+      release();
+      if (fileMfaLocks.get(key) === current) fileMfaLocks.delete(key);
+    }
   };
 
   const getIdentity = async username => {
@@ -100,13 +214,14 @@ function createAdminSecurityStore({ dataDir }) {
   const policyFromRow = row => row ? ({
     mode: normalizeMode(row.mode),
     provider: normalizeProvider(row.provider, row.mode),
+    enrollmentGeneration: normalizeGeneration(row.enrollment_generation ?? row.enrollmentGeneration),
     requestedAt: iso(row.requested_at ?? row.requestedAt),
     requestedBy: clean(row.requested_by ?? row.requestedBy),
     notificationStatus: normalizeDeliveryStatus(row.notification_status ?? row.notificationStatus),
     notificationAttemptedAt: iso(row.notification_attempted_at ?? row.notificationAttemptedAt),
     notificationSentAt: iso(row.notification_sent_at ?? row.notificationSentAt),
     notificationError: clean(row.notification_error ?? row.notificationError)
-  }) : ({ mode: 'disabled', provider: '', requestedAt: '', requestedBy: '', notificationStatus: 'none', notificationAttemptedAt: '', notificationSentAt: '', notificationError: '' });
+  }) : ({ mode: 'disabled', provider: '', enrollmentGeneration: '', requestedAt: '', requestedBy: '', notificationStatus: 'none', notificationAttemptedAt: '', notificationSentAt: '', notificationError: '' });
 
   const getMfaPolicy = async username => {
     const key = clean(username);
@@ -125,6 +240,7 @@ function createAdminSecurityStore({ dataDir }) {
     const next = policyFromRow({
       mode: Object.prototype.hasOwnProperty.call(changes, 'mode') ? changes.mode : current.mode,
       provider: Object.prototype.hasOwnProperty.call(changes, 'provider') ? changes.provider : current.provider,
+      enrollmentGeneration: Object.prototype.hasOwnProperty.call(changes, 'enrollmentGeneration') ? changes.enrollmentGeneration : current.enrollmentGeneration,
       requestedAt: Object.prototype.hasOwnProperty.call(changes, 'requestedAt') ? changes.requestedAt : current.requestedAt,
       requestedBy: Object.prototype.hasOwnProperty.call(changes, 'requestedBy') ? changes.requestedBy : current.requestedBy,
       notificationStatus: Object.prototype.hasOwnProperty.call(changes, 'notificationStatus') ? changes.notificationStatus : current.notificationStatus,
@@ -135,17 +251,18 @@ function createAdminSecurityStore({ dataDir }) {
     if (pool) {
       await pool.query(`
         INSERT INTO auth_mfa_policy (
-          user_id, mode, provider, requested_at, requested_by, notification_status,
+          user_id, mode, provider, enrollment_generation, requested_at, requested_by, notification_status,
           notification_attempted_at, notification_sent_at, notification_error
         )
-        SELECT id, $2, $3, $4, $5, $6, $7, $8, $9 FROM auth_users WHERE username = $1
+        SELECT id, $2, $3, $4, $5, $6, $7, $8, $9, $10 FROM auth_users WHERE username = $1
         ON CONFLICT (user_id) DO UPDATE SET
-          mode = EXCLUDED.mode, provider = EXCLUDED.provider, requested_at = EXCLUDED.requested_at,
+          mode = EXCLUDED.mode, provider = EXCLUDED.provider, enrollment_generation = EXCLUDED.enrollment_generation,
+          requested_at = EXCLUDED.requested_at,
           requested_by = EXCLUDED.requested_by, notification_status = EXCLUDED.notification_status,
           notification_attempted_at = EXCLUDED.notification_attempted_at,
           notification_sent_at = EXCLUDED.notification_sent_at,
           notification_error = EXCLUDED.notification_error, updated_at = now()
-      `, [key, next.mode, next.provider, next.requestedAt || null, next.requestedBy, next.notificationStatus,
+      `, [key, next.mode, next.provider, next.enrollmentGeneration, next.requestedAt || null, next.requestedBy, next.notificationStatus,
         next.notificationAttemptedAt || null, next.notificationSentAt || null, next.notificationError]);
     } else {
       mutateFile(data => { data.policies[key] = next; });
@@ -233,6 +350,51 @@ function createAdminSecurityStore({ dataDir }) {
     updatedAt: iso(row.updated_at ?? row.updatedAt), sentAt: iso(row.sent_at ?? row.sentAt)
   }) : null;
 
+  const updateMfaNotificationForJob = async (job, changes) => {
+    if (job?.type !== 'mfa_setup' || !job.targetUsername) return;
+    const jobGeneration = clean(job.metadata?.enrollmentGeneration);
+    const hasStatus = Object.prototype.hasOwnProperty.call(changes, 'notificationStatus');
+    const hasAttemptedAt = Object.prototype.hasOwnProperty.call(changes, 'notificationAttemptedAt');
+    const hasSentAt = Object.prototype.hasOwnProperty.call(changes, 'notificationSentAt');
+    const hasError = Object.prototype.hasOwnProperty.call(changes, 'notificationError');
+    if (pool) {
+      await pool.query(`
+        UPDATE auth_mfa_policy p SET
+          notification_status = CASE WHEN $3 THEN $4 ELSE p.notification_status END,
+          notification_attempted_at = CASE WHEN $5 THEN $6::timestamptz ELSE p.notification_attempted_at END,
+          notification_sent_at = CASE WHEN $7 THEN $8::timestamptz ELSE p.notification_sent_at END,
+          notification_error = CASE WHEN $9 THEN $10 ELSE p.notification_error END,
+          updated_at = now()
+        FROM auth_users u
+        WHERE p.user_id = u.id AND u.username = $1
+          AND ($2 = '' OR p.enrollment_generation = $2)
+      `, [
+        job.targetUsername,
+        jobGeneration,
+        hasStatus,
+        hasStatus ? normalizeDeliveryStatus(changes.notificationStatus) : 'none',
+        hasAttemptedAt,
+        hasAttemptedAt ? (iso(changes.notificationAttemptedAt) || null) : null,
+        hasSentAt,
+        hasSentAt ? (iso(changes.notificationSentAt) || null) : null,
+        hasError,
+        hasError ? clean(changes.notificationError).slice(0, 240) : ''
+      ]);
+      return;
+    }
+    mutateFile(data => {
+      const current = policyFromRow(data.policies[job.targetUsername]);
+      if (jobGeneration && current.enrollmentGeneration !== jobGeneration) return;
+      data.policies[job.targetUsername] = policyFromRow({
+        ...current,
+        ...(hasStatus ? { notificationStatus: changes.notificationStatus } : {}),
+        ...(hasAttemptedAt ? { notificationAttemptedAt: changes.notificationAttemptedAt } : {}),
+        ...(hasSentAt ? { notificationSentAt: changes.notificationSentAt } : {}),
+        ...(hasError ? { notificationError: clean(changes.notificationError).slice(0, 240) } : {})
+      });
+    });
+  };
+
   const enqueueEmail = async input => {
     const type = clean(input.type);
     if (!EMAIL_TYPES.has(type)) throw new Error('Unsupported email delivery type');
@@ -257,7 +419,7 @@ function createAdminSecurityStore({ dataDir }) {
       `, [job.id, job.type, job.targetUsername, job.recipient, job.subject, job.metadata,
         job.secretCiphertext, job.secretIv, job.secretTag]);
     } else mutateFile(data => { data.outbox[job.id] = job; });
-    if (type === 'mfa_setup') await setMfaPolicy(targetUsername, { notificationStatus: 'queued', notificationError: '' });
+    await updateMfaNotificationForJob(job, { notificationStatus: 'queued', notificationError: '' });
     return job;
   };
 
@@ -283,6 +445,7 @@ function createAdminSecurityStore({ dataDir }) {
   };
 
   const claimNextEmail = async () => {
+    await scrubExpiredMfaInvitations();
     const lease = new Date(Date.now() + 60_000).toISOString();
     if (pool) {
       const client = await pool.connect();
@@ -301,7 +464,7 @@ function createAdminSecurityStore({ dataDir }) {
         `, [rows[0].id, lease]);
         await client.query('COMMIT');
         const job = outboxFromRow(claimed[0]);
-        if (job.type === 'mfa_setup') await setMfaPolicy(job.targetUsername, { notificationStatus: 'sending', notificationAttemptedAt: new Date().toISOString() });
+        await updateMfaNotificationForJob(job, { notificationStatus: 'sending', notificationAttemptedAt: new Date().toISOString() });
         return job;
       } catch (error) {
         await client.query('ROLLBACK'); throw error;
@@ -321,7 +484,7 @@ function createAdminSecurityStore({ dataDir }) {
         job.updatedAt = new Date().toISOString(); claimed = outboxFromRow(job);
       }
     });
-    if (claimed?.type === 'mfa_setup') await setMfaPolicy(claimed.targetUsername, { notificationStatus: 'sending', notificationAttemptedAt: new Date().toISOString() });
+    await updateMfaNotificationForJob(claimed, { notificationStatus: 'sending', notificationAttemptedAt: new Date().toISOString() });
     return claimed;
   };
 
@@ -348,7 +511,7 @@ function createAdminSecurityStore({ dataDir }) {
       if (succeeded) item.sentAt = new Date().toISOString();
       if (scrub) Object.assign(item, { secretCiphertext: '', secretIv: '', secretTag: '' });
     });
-    if (job.type === 'mfa_setup') await setMfaPolicy(job.targetUsername, {
+    await updateMfaNotificationForJob(job, {
       notificationStatus: succeeded ? 'sent' : (finalFailure ? 'failed' : 'queued'),
       notificationSentAt: succeeded ? new Date().toISOString() : '',
       notificationError: succeeded ? '' : clean(error).slice(0, 240)
@@ -369,6 +532,450 @@ function createAdminSecurityStore({ dataDir }) {
     });
   };
 
+  const invitationFromRow = (row, policy = null) => {
+    if (!row) return null;
+    const invitation = {
+      id: clean(row.id),
+      username: clean(row.username),
+      tokenHash: clean(row.token_hash ?? row.tokenHash),
+      provider: normalizeProvider(row.provider, 'authenticator'),
+      generation: normalizeGeneration(row.generation),
+      secretCiphertext: clean(row.secret_ciphertext ?? row.secretCiphertext),
+      secretIv: clean(row.secret_iv ?? row.secretIv),
+      secretTag: clean(row.secret_tag ?? row.secretTag),
+      attemptCount: Number(row.attempt_count ?? row.attemptCount ?? 0),
+      expiresAt: iso(row.expires_at ?? row.expiresAt),
+      consumedAt: iso(row.consumed_at ?? row.consumedAt),
+      cancelledAt: iso(row.cancelled_at ?? row.cancelledAt),
+      createdAt: iso(row.created_at ?? row.createdAt),
+      updatedAt: iso(row.updated_at ?? row.updatedAt)
+    };
+    invitation.status = invitationStatus(invitation, policy);
+    return invitation;
+  };
+
+  const policyForInvitationRow = row => {
+    if (!row || !Object.prototype.hasOwnProperty.call(row, 'policy_mode')) return null;
+    return policyFromRow({
+      mode: row.policy_mode,
+      provider: row.policy_provider,
+      enrollment_generation: row.policy_generation
+    });
+  };
+
+  const validateInvitationInput = input => {
+    const username = clean(input.username);
+    const tokenHash = clean(input.tokenHash).toLowerCase();
+    const provider = clean(input.provider).toLowerCase();
+    const generation = normalizeGeneration(input.generation);
+    const expiresAt = iso(input.expiresAt || new Date(Date.now() + MFA_INVITATION_LIFETIME_MS));
+    if (!username) throw new Error('MFA invitation username is required');
+    if (!/^[a-f0-9]{64}$/.test(tokenHash)) throw new Error('MFA invitation token hash must be a SHA-256 hex digest');
+    if (!MFA_PROVIDERS.has(provider)) throw new Error('Unsupported MFA invitation provider');
+    if (!generation || generation.length > 200) throw new Error('MFA invitation generation is required');
+    if (!expiresAt || Date.parse(expiresAt) <= Date.now()) throw new Error('MFA invitation expiry must be in the future');
+    const encrypted = {
+      secretCiphertext: clean(input.secretCiphertext),
+      secretIv: clean(input.secretIv),
+      secretTag: clean(input.secretTag)
+    };
+    if (!encrypted.secretCiphertext || !encrypted.secretIv || !encrypted.secretTag) {
+      throw new Error('Encrypted MFA invitation secret is required');
+    }
+    return { username, tokenHash, provider, generation, expiresAt, ...encrypted };
+  };
+
+  const scrubExpiredMfaInvitations = async (username = '') => {
+    const key = clean(username);
+    if (pool) {
+      const result = await pool.query(`
+        UPDATE auth_mfa_enrollment_invitations i
+        SET secret_ciphertext = '', secret_iv = '', secret_tag = '', updated_at = now()
+        FROM auth_users u
+        WHERE i.user_id = u.id AND i.expires_at <= now()
+          AND i.consumed_at IS NULL AND i.cancelled_at IS NULL
+          AND (i.secret_ciphertext <> '' OR i.secret_iv <> '' OR i.secret_tag <> '')
+          AND ($1 = '' OR u.username = $1)
+      `, [key]);
+      return result.rowCount;
+    }
+    const snapshot = readFile();
+    const hasExpiredSecret = Object.values(snapshot.mfaInvitations).some(invitation => (
+      (!key || invitation.username === key)
+      && !invitation.consumedAt
+      && !invitation.cancelledAt
+      && Date.parse(invitation.expiresAt || '') <= Date.now()
+      && Boolean(invitation.secretCiphertext || invitation.secretIv || invitation.secretTag)
+    ));
+    if (!hasExpiredSecret) return 0;
+    let count = 0;
+    mutateFile(data => {
+      const updatedAt = new Date().toISOString();
+      for (const invitation of Object.values(data.mfaInvitations)) {
+        if ((key && invitation.username !== key) || invitation.consumedAt || invitation.cancelledAt) continue;
+        if (Date.parse(invitation.expiresAt || '') > Date.now()) continue;
+        if (!invitation.secretCiphertext && !invitation.secretIv && !invitation.secretTag) continue;
+        Object.assign(invitation, { secretCiphertext: '', secretIv: '', secretTag: '', updatedAt });
+        count += 1;
+      }
+    });
+    return count;
+  };
+
+  const createMfaInvitation = async input => {
+    const values = validateInvitationInput(input || {});
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    if (pool) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows: policies } = await client.query(`
+          SELECT u.id AS user_id, p.mode, p.provider, p.enrollment_generation
+          FROM auth_users u
+          JOIN auth_mfa_policy p ON p.user_id = u.id
+          WHERE u.username = $1
+          FOR UPDATE OF u, p
+        `, [values.username]);
+        const policy = policyFromRow(policies[0]);
+        if (!policies[0]) throw new Error('User not found');
+        if (policy.mode !== 'authenticator' || policy.provider !== values.provider || policy.enrollmentGeneration !== values.generation) {
+          throw new Error('MFA invitation does not match the current policy');
+        }
+        await client.query(`
+          UPDATE auth_mfa_enrollment_invitations
+          SET cancelled_at = COALESCE(cancelled_at, now()), secret_ciphertext = '', secret_iv = '', secret_tag = '', updated_at = now()
+          WHERE user_id = $1 AND consumed_at IS NULL AND cancelled_at IS NULL
+        `, [policies[0].user_id]);
+        await client.query(`
+          INSERT INTO auth_mfa_enrollment_invitations (
+            id, user_id, token_hash, provider, generation, secret_ciphertext, secret_iv, secret_tag, expires_at
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        `, [id, policies[0].user_id, values.tokenHash, values.provider, values.generation,
+          values.secretCiphertext, values.secretIv, values.secretTag, values.expiresAt]);
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+      return getMfaInvitation(values.tokenHash);
+    }
+    let created = null;
+    mutateFile(data => {
+      const policy = policyFromRow(data.policies[values.username]);
+      if (policy.mode !== 'authenticator' || policy.provider !== values.provider || policy.enrollmentGeneration !== values.generation) {
+        throw new Error('MFA invitation does not match the current policy');
+      }
+      for (const invitation of Object.values(data.mfaInvitations)) {
+        if (invitation.username !== values.username || invitation.consumedAt || invitation.cancelledAt) continue;
+        Object.assign(invitation, {
+          cancelledAt: now,
+          secretCiphertext: '',
+          secretIv: '',
+          secretTag: '',
+          updatedAt: now
+        });
+      }
+      const record = {
+        id,
+        username: values.username,
+        tokenHash: values.tokenHash,
+        provider: values.provider,
+        generation: values.generation,
+        secretCiphertext: values.secretCiphertext,
+        secretIv: values.secretIv,
+        secretTag: values.secretTag,
+        attemptCount: 0,
+        expiresAt: values.expiresAt,
+        consumedAt: '',
+        cancelledAt: '',
+        createdAt: now,
+        updatedAt: now
+      };
+      data.mfaInvitations[id] = record;
+      created = invitationFromRow(record, policy);
+    });
+    return created;
+  };
+
+  const getMfaInvitation = async tokenHash => {
+    const hash = clean(tokenHash).toLowerCase();
+    if (!hash) return null;
+    await scrubExpiredMfaInvitations();
+    if (pool) {
+      const { rows } = await pool.query(`
+        SELECT i.*, u.username, p.mode AS policy_mode, p.provider AS policy_provider,
+          p.enrollment_generation AS policy_generation
+        FROM auth_mfa_enrollment_invitations i
+        JOIN auth_users u ON u.id = i.user_id
+        LEFT JOIN auth_mfa_policy p ON p.user_id = i.user_id
+        WHERE i.token_hash = $1
+        LIMIT 1
+      `, [hash]);
+      return rows[0] ? invitationFromRow(rows[0], policyForInvitationRow(rows[0])) : null;
+    }
+    const data = readFile();
+    const row = Object.values(data.mfaInvitations).find(item => item.tokenHash === hash);
+    return row ? invitationFromRow(row, policyFromRow(data.policies[row.username])) : null;
+  };
+
+  const getActiveMfaInvitation = async username => {
+    const key = clean(username);
+    if (!key) return null;
+    await scrubExpiredMfaInvitations(key);
+    if (pool) {
+      const { rows } = await pool.query(`
+        SELECT i.*, u.username, p.mode AS policy_mode, p.provider AS policy_provider,
+          p.enrollment_generation AS policy_generation
+        FROM auth_mfa_enrollment_invitations i
+        JOIN auth_users u ON u.id = i.user_id
+        JOIN auth_mfa_policy p ON p.user_id = i.user_id
+        WHERE u.username = $1 AND i.consumed_at IS NULL AND i.cancelled_at IS NULL
+          AND i.expires_at > now() AND i.attempt_count < $2
+          AND p.mode = 'authenticator' AND p.provider = i.provider
+          AND p.enrollment_generation = i.generation
+        ORDER BY i.created_at DESC
+        LIMIT 1
+      `, [key, MFA_INVITATION_MAX_ATTEMPTS]);
+      return rows[0] ? invitationFromRow(rows[0], policyForInvitationRow(rows[0])) : null;
+    }
+    const data = readFile();
+    const policy = policyFromRow(data.policies[key]);
+    return Object.values(data.mfaInvitations)
+      .filter(item => item.username === key)
+      .map(item => invitationFromRow(item, policy))
+      .filter(item => item.status === 'active')
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0] || null;
+  };
+
+  const recordMfaInvitationFailure = async tokenHash => {
+    const hash = clean(tokenHash).toLowerCase();
+    if (!hash) return null;
+    if (pool) {
+      const update = await pool.query(`
+        UPDATE auth_mfa_enrollment_invitations i
+        SET attempt_count = i.attempt_count + 1,
+          consumed_at = CASE WHEN i.attempt_count + 1 >= $2 THEN now() ELSE i.consumed_at END,
+          secret_ciphertext = CASE WHEN i.attempt_count + 1 >= $2 THEN '' ELSE i.secret_ciphertext END,
+          secret_iv = CASE WHEN i.attempt_count + 1 >= $2 THEN '' ELSE i.secret_iv END,
+          secret_tag = CASE WHEN i.attempt_count + 1 >= $2 THEN '' ELSE i.secret_tag END,
+          updated_at = now()
+        FROM auth_mfa_policy p
+        WHERE i.user_id = p.user_id AND i.token_hash = $1
+          AND i.consumed_at IS NULL AND i.cancelled_at IS NULL AND i.expires_at > now()
+          AND i.attempt_count < $2 AND p.mode = 'authenticator'
+          AND p.provider = i.provider AND p.enrollment_generation = i.generation
+      `, [hash, MFA_INVITATION_MAX_ATTEMPTS]);
+      return getMfaInvitation(hash);
+    }
+    let result = null;
+    mutateFile(data => {
+      const invitation = Object.values(data.mfaInvitations).find(item => item.tokenHash === hash);
+      if (!invitation) return;
+      const policy = policyFromRow(data.policies[invitation.username]);
+      const current = invitationFromRow(invitation, policy);
+      if (current.status === 'active') {
+        invitation.attemptCount += 1;
+        invitation.updatedAt = new Date().toISOString();
+        if (invitation.attemptCount >= MFA_INVITATION_MAX_ATTEMPTS) {
+          invitation.consumedAt = invitation.updatedAt;
+          invitation.secretCiphertext = '';
+          invitation.secretIv = '';
+          invitation.secretTag = '';
+        }
+      }
+      result = invitationFromRow(invitation, policy);
+    });
+    return result;
+  };
+
+  const consumeMfaInvitation = async tokenHash => {
+    const hash = clean(tokenHash).toLowerCase();
+    if (!hash) return null;
+    if (pool) {
+      const update = await pool.query(`
+        UPDATE auth_mfa_enrollment_invitations i
+        SET consumed_at = now(), secret_ciphertext = '', secret_iv = '', secret_tag = '', updated_at = now()
+        FROM auth_mfa_policy p
+        WHERE i.user_id = p.user_id AND i.token_hash = $1
+          AND i.consumed_at IS NULL AND i.cancelled_at IS NULL AND i.expires_at > now()
+          AND i.attempt_count < $2 AND p.mode = 'authenticator'
+          AND p.provider = i.provider AND p.enrollment_generation = i.generation
+      `, [hash, MFA_INVITATION_MAX_ATTEMPTS]);
+      if (!update.rowCount) return null;
+      const result = await getMfaInvitation(hash);
+      return result;
+    }
+    let result = null;
+    mutateFile(data => {
+      const invitation = Object.values(data.mfaInvitations).find(item => item.tokenHash === hash);
+      if (!invitation) return;
+      const policy = policyFromRow(data.policies[invitation.username]);
+      if (invitationFromRow(invitation, policy).status !== 'active') return;
+      const consumedAt = new Date().toISOString();
+      Object.assign(invitation, {
+        consumedAt,
+        secretCiphertext: '',
+        secretIv: '',
+        secretTag: '',
+        updatedAt: consumedAt
+      });
+      result = invitationFromRow(invitation, policy);
+    });
+    return result;
+  };
+
+  const completeMfaInvitation = async ({ tokenHash, lastUsedCounter = null, enabledAt = new Date().toISOString() } = {}) => {
+    const hash = clean(tokenHash).toLowerCase();
+    const enabledAtIso = iso(enabledAt);
+    const counter = lastUsedCounter === null || lastUsedCounter === undefined ? null : Number(lastUsedCounter);
+    if (!hash || !enabledAtIso || (counter !== null && !Number.isSafeInteger(counter))) return null;
+    if (pool) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows } = await client.query(`
+          SELECT i.*, u.username, u.status AS user_status, p.mode AS policy_mode, p.provider AS policy_provider,
+            p.enrollment_generation AS policy_generation
+          FROM auth_mfa_enrollment_invitations i
+          JOIN auth_users u ON u.id = i.user_id
+          JOIN auth_mfa_policy p ON p.user_id = i.user_id
+          WHERE i.token_hash = $1
+          FOR UPDATE OF i, p, u
+        `, [hash]);
+        const invitation = rows[0] ? invitationFromRow(rows[0], policyForInvitationRow(rows[0])) : null;
+        if (!invitation || invitation.status !== 'active' || clean(rows[0].user_status).toLowerCase() !== 'active') {
+          await client.query('ROLLBACK');
+          return null;
+        }
+        await client.query(`
+          INSERT INTO auth_mfa_config (
+            user_id, provider, secret_ciphertext, secret_iv, secret_tag,
+            enabled_at, last_used_counter, failed_attempts, locked_until
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,0,NULL)
+          ON CONFLICT (user_id) DO UPDATE SET
+            provider = EXCLUDED.provider,
+            secret_ciphertext = EXCLUDED.secret_ciphertext,
+            secret_iv = EXCLUDED.secret_iv,
+            secret_tag = EXCLUDED.secret_tag,
+            enabled_at = EXCLUDED.enabled_at,
+            last_used_counter = EXCLUDED.last_used_counter,
+            failed_attempts = 0,
+            locked_until = NULL,
+            updated_at = now()
+        `, [rows[0].user_id, invitation.provider, invitation.secretCiphertext,
+          invitation.secretIv, invitation.secretTag, enabledAtIso, counter]);
+        await client.query('DELETE FROM auth_mfa_recovery_codes WHERE user_id = $1', [rows[0].user_id]);
+        await client.query(`
+          UPDATE auth_sessions SET revoked_at = COALESCE(revoked_at, now())
+          WHERE user_id = $1 AND revoked_at IS NULL
+        `, [rows[0].user_id]);
+        await client.query(`
+          UPDATE auth_mfa_enrollment_invitations
+          SET consumed_at = now(), secret_ciphertext = '', secret_iv = '', secret_tag = '', updated_at = now()
+          WHERE id = $1
+        `, [invitation.id]);
+        await client.query(`
+          UPDATE auth_mfa_policy SET enrollment_generation = '', updated_at = now()
+          WHERE user_id = $1 AND enrollment_generation = $2
+        `, [rows[0].user_id, invitation.generation]);
+        await client.query('COMMIT');
+        return getMfaInvitation(hash);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+    let result = null;
+    mutateFile(data => {
+      const invitation = Object.values(data.mfaInvitations).find(item => item.tokenHash === hash);
+      if (!invitation) return;
+      const policy = policyFromRow(data.policies[invitation.username]);
+      if (invitationFromRow(invitation, policy).status !== 'active' || !isActiveFileUser(invitation.username)) return;
+      const mfaData = readFileMfa();
+      mfaData[invitation.username] = {
+        provider: invitation.provider,
+        secretCiphertext: invitation.secretCiphertext,
+        secretIv: invitation.secretIv,
+        secretTag: invitation.secretTag,
+        enabledAt: enabledAtIso,
+        lastUsedCounter: counter,
+        failedAttempts: 0,
+        lockedUntil: '',
+        recoveryCodes: []
+      };
+      writeFileMfa(mfaData);
+      const consumedAt = new Date().toISOString();
+      Object.assign(invitation, {
+        consumedAt,
+        secretCiphertext: '',
+        secretIv: '',
+        secretTag: '',
+        updatedAt: consumedAt
+      });
+      data.policies[invitation.username] = policyFromRow({ ...policy, enrollmentGeneration: '' });
+      result = invitationFromRow(invitation, data.policies[invitation.username]);
+    });
+    return result;
+  };
+
+  const invalidateMfaInvitations = async username => {
+    const key = clean(username);
+    if (!key) return 0;
+    if (pool) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows } = await client.query(`
+          UPDATE auth_mfa_policy p
+          SET enrollment_generation = '', updated_at = now()
+          FROM auth_users u
+          WHERE p.user_id = u.id AND u.username = $1
+          RETURNING p.user_id
+        `, [key]);
+        if (!rows[0]) {
+          await client.query('COMMIT');
+          return 0;
+        }
+        const result = await client.query(`
+          UPDATE auth_mfa_enrollment_invitations
+          SET cancelled_at = now(), secret_ciphertext = '', secret_iv = '', secret_tag = '', updated_at = now()
+          WHERE user_id = $1 AND consumed_at IS NULL AND cancelled_at IS NULL
+        `, [rows[0].user_id]);
+        await client.query('COMMIT');
+        return result.rowCount;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+    let count = 0;
+    mutateFile(data => {
+      const cancelledAt = new Date().toISOString();
+      if (data.policies[key]) {
+        data.policies[key] = policyFromRow({ ...data.policies[key], enrollmentGeneration: '' });
+      }
+      for (const invitation of Object.values(data.mfaInvitations)) {
+        if (invitation.username !== key || invitation.consumedAt || invitation.cancelledAt) continue;
+        Object.assign(invitation, {
+          cancelledAt,
+          secretCiphertext: '',
+          secretIv: '',
+          secretTag: '',
+          updatedAt: cancelledAt
+        });
+        count += 1;
+      }
+    });
+    return count;
+  };
+
   const deleteUserData = async username => {
     const key = clean(username);
     await cancelEmails(key);
@@ -377,16 +984,22 @@ function createAdminSecurityStore({ dataDir }) {
       delete data.identities[key];
       delete data.policies[key];
       delete data.temporaryCredentials[key];
+      for (const [id, invitation] of Object.entries(data.mfaInvitations)) {
+        if (invitation.username === key) delete data.mfaInvitations[id];
+      }
     });
   };
 
   const close = async () => { if (pool) await pool.end(); };
 
   return {
-    initialize, close, getIdentity, setIdentity, getMfaPolicy, setMfaPolicy,
+    initialize, close, withMfaMutationLock, getIdentity, setIdentity, getMfaPolicy, setMfaPolicy,
     getTemporaryCredential, setTemporaryCredential, clearTemporaryCredential,
-    getEmailSettings, saveEmailSettings, enqueueEmail, getEmailDelivery,
-    claimNextEmail, finishEmail, cancelEmails, deleteUserData, isDbEnabled: () => Boolean(pool)
+    getEmailSettings, saveEmailSettings, enqueueEmail, findActiveEmail, getEmailDelivery,
+    claimNextEmail, finishEmail, cancelEmails,
+    createMfaInvitation, getMfaInvitation, getActiveMfaInvitation, scrubExpiredMfaInvitations,
+    recordMfaInvitationFailure, consumeMfaInvitation, completeMfaInvitation, invalidateMfaInvitations,
+    deleteUserData, isDbEnabled: () => Boolean(pool)
   };
 }
 

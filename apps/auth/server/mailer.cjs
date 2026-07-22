@@ -44,12 +44,20 @@ const buildMessage = (job, secret = '') => {
   const metadata = job.metadata || {};
   if (job.type === 'mfa_setup') {
     const name = clean(metadata.fullName) || clean(job.targetUsername) || 'user';
-    const setupUrl = clean(metadata.setupUrl);
+    const setupBaseUrl = clean(metadata.setupBaseUrl);
+    if (!setupBaseUrl || !secret) {
+      throw Object.assign(new Error('Authenticator invitation is incomplete'), {
+        code: 'INVALID_MFA_INVITATION',
+        permanent: true
+      });
+    }
+    const setupUrl = `${setupBaseUrl}#invite=${encodeURIComponent(secret)}`;
     const authenticator = providerLabel(metadata.provider);
     return {
       text: [`Hello ${name},`, '', `${authenticator} is ready to set up for ${job.targetUsername}.`,
-        `Sign in and complete enrollment: ${setupUrl}`, '', 'If you did not expect this change, contact your administrator.'].join('\n'),
-      html: `<p>Hello ${escapeHtml(name)},</p><p>${escapeHtml(authenticator)} is ready to set up for <strong>${escapeHtml(job.targetUsername)}</strong>.</p><p><a href="${escapeHtml(setupUrl)}">Sign in and complete enrollment</a></p><p>If you did not expect this change, contact your administrator.</p>`
+        `Open your secure setup page: ${setupUrl}`, 'This single-use link expires after 24 hours.', '',
+        'If you did not expect this change, contact your administrator.'].join('\n'),
+      html: `<p>Hello ${escapeHtml(name)},</p><p>${escapeHtml(authenticator)} is ready to set up for <strong>${escapeHtml(job.targetUsername)}</strong>.</p><p><a href="${escapeHtml(setupUrl)}">Open your secure setup page</a></p><p>This single-use link expires after 24 hours.</p><p>If you did not expect this change, contact your administrator.</p>`
     };
   }
   if (job.type === 'temporary_password') {
@@ -79,6 +87,13 @@ function createEmailWorker({ store, securityCrypto, saveAuditEvent, nodemailerCl
       if (!job) return false;
       if (job.type === 'temporary_password' && Date.parse(job.metadata?.expiresAt || '') <= Date.now()) {
         throw Object.assign(new Error('Temporary password expired before delivery'), { code: 'CREDENTIAL_EXPIRED', permanent: true });
+      }
+      if (job.type === 'mfa_setup' && Date.parse(job.metadata?.invitationExpiresAt || '') <= Date.now()) {
+        await store.scrubExpiredMfaInvitations?.(job.targetUsername);
+        throw Object.assign(new Error('Authenticator invitation expired before delivery'), {
+          code: 'INVITATION_EXPIRED',
+          permanent: true
+        });
       }
       const settings = await store.getEmailSettings();
       const validationError = validateEmailSettings(settings);

@@ -383,17 +383,18 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
       });
       setEditorOpen(false);
       if (data.user?.username === currentUser?.username) onUserUpdated?.(data.user);
-      if (mfaProviderChanged) {
-        setSecurityAction({
+      const followUpSecurityAction = mfaProviderChanged
+        ? {
           type: draftUser.mfaProvider === 'disabled' ? 'disable' : getMfaStatus(originalUser) === 'disabled' ? 'enable' : 'change',
           provider: draftUser.mfaProvider,
           user: data.user || originalUser
-        });
-      }
+        }
+        : null;
       if (data.temporaryPassword) setOneTimeCredential({
         username: draftUser.username.trim(), password: data.temporaryPassword, expiresAt: data.expiresAt,
-        deliveryMode: data.deliveryMode || 'manual_only'
+        deliveryMode: data.deliveryMode || 'manual_only', afterSecurityAction: followUpSecurityAction
       });
+      else if (followUpSecurityAction) setSecurityAction(followUpSecurityAction);
       setDraftUser({ ...EMPTY_USER });
       await loadUsers();
     } catch (err) {
@@ -762,7 +763,7 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
 
         {oneTimeCredential && <div className="modal-backdrop" role="presentation"><section ref={credentialDialogRef} className="user-modal" role="dialog" aria-modal="true" aria-labelledby="temporary-password-title">
           <div className="modal-header"><div><h2 id="temporary-password-title">Temporary password for {oneTimeCredential.username}</h2><p>This is displayed once and expires in 24 hours.</p></div></div>
-          <div className="user-form"><div className="temporary-password-value"><code>{oneTimeCredential.password}</code><button type="button" className="btn-secondary" onClick={() => navigator.clipboard.writeText(oneTimeCredential.password)}><Clipboard size={15} />Copy</button></div>{oneTimeCredential.deliveryMode === 'queued' ? <small>The email was queued automatically. Plain SMTP may expose this password in transit.</small> : <small>No deliverable email was available. Copy this password and provide it to the user manually.</small>}<div className="modal-actions"><button type="button" className="btn-primary" onClick={() => { if (oneTimeCredential.sessionEnded) redirectAfterSelfSecurityChange(); else setOneTimeCredential(null); }}>I saved it</button></div></div>
+          <div className="user-form"><div className="temporary-password-value"><code>{oneTimeCredential.password}</code><button type="button" className="btn-secondary" onClick={() => navigator.clipboard.writeText(oneTimeCredential.password)}><Clipboard size={15} />Copy</button></div>{oneTimeCredential.deliveryMode === 'queued' ? <small>The email was queued automatically. Plain SMTP may expose this password in transit.</small> : <small>No deliverable email was available. Copy this password and provide it to the user manually.</small>}<div className="modal-actions"><button type="button" className="btn-primary" onClick={() => { if (oneTimeCredential.sessionEnded) redirectAfterSelfSecurityChange(); else { const followUp = oneTimeCredential.afterSecurityAction; setOneTimeCredential(null); if (followUp) setSecurityAction(followUp); } }}>I saved it</button></div></div>
         </section></div>}
       </div>
     </div>

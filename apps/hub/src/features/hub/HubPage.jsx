@@ -22,7 +22,7 @@ const APPS = [
   },
 ];
 
-export default function HubPage({ user, onOpenDocs, onLogout, onOpenProfile, onOpenSettings, onOpenMfaSetup }) {
+export default function HubPage({ user, onOpenDocs, onLogout, onOpenProfile, onOpenSettings }) {
   const isAdmin = user?.role === 'admin';
   const [appStatuses, setAppStatuses] = useState({
     defectdojo: 'healthy',
@@ -63,7 +63,7 @@ export default function HubPage({ user, onOpenDocs, onLogout, onOpenProfile, onO
 
       {/* Main Content */}
       <main className="hub-content">
-        {user?.mfaStatus === 'pending' && <div className="hub-auth-notice" role="status"><MailWarning size={18} /><span>Authenticator setup is pending for your account.</span><button type="button" onClick={onOpenMfaSetup}>Set up now</button></div>}
+        {user?.mfaStatus === 'pending' && <div className="hub-auth-notice" role="status"><MailWarning size={18} /><span>Authenticator setup is pending. Check your email for the secure setup link, or contact an administrator to resend it.</span></div>}
         <div className="welcome-section">
           <p className="welcome-back">Welcome back, {user?.username}</p>
           <h1 className="select-workspace-heading">Select a workspace</h1>

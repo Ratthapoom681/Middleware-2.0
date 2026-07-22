@@ -532,7 +532,7 @@ CREATE TABLE defectdojo_viewer_mitigation_reviews (
 
 ## 16. Complete API Endpoint Reference
 
-All backend API requests require authorization, using JWT tokens sent in the HTTP headers. Endpoints marked **Admin** require the `role === 'admin'` claim.
+Backend API requests require JWT authorization unless the table describes a public sign-in or email-invitation endpoint. Endpoints marked **Admin** require the `role === 'admin'` claim.
 
 | HTTP Method | API URL Path | Admin | Payload / Parameters | Response Shape |
 |---|---|---|---|---|
@@ -541,8 +541,9 @@ All backend API requests require authorization, using JWT tokens sent in the HTT
 | **POST** | `/api/login/password-change` | No | `{challengeToken, newPassword}` | Session after temporary-password replacement |
 | **POST** | `/api/logout` | No | None (Token Header) | `{message: "Logged out"}` |
 | **GET** | `/api/profile` | No | None | Read-only identity and MFA status |
-| **POST** | `/api/profile/mfa/enrollment/start` | No | `{currentPassword}` | Setup data for the administrator-selected provider |
-| **POST** | `/api/profile/mfa/enrollment/confirm` | No | `{setupToken, code}` | Enabled MFA status |
+| **POST** | `/api/mfa/enrollment/start` | No (public) | `{invitationToken}` | Assigned provider, account/issuer labels, QR URI, manual key, and expiry |
+| **POST** | `/api/mfa/enrollment/confirm` | No (public) | `{invitationToken, code}` | Enabled MFA status and sign-in URL |
+| **POST** | `/api/profile/mfa/enrollment/start` or `/confirm` | No | Retired | `410 Gone`; enrollment is email-invitation-only |
 | **GET** | `/api/users` | **Yes** | None | `Array<{username, role, products: []}>` |
 | **POST** | `/api/users` | **Yes** | Identity, access, and `mfaProvider` | User, one-time temporary password, and automatic delivery mode |
 | **POST** | `/api/users/:username/password/reset` | **Yes** | None | One-time temporary password and automatic delivery mode |

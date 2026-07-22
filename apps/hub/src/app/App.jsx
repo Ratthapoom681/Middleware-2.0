@@ -1,7 +1,7 @@
 import { useCallback, useState, useEffect } from 'react';
 import HubPage from '../features/hub/HubPage';
 import UsersPage from '../features/users/UsersPage';
-import ProfilePage, { MfaEnrollmentPage } from '../features/profile/ProfilePage';
+import ProfilePage from '../features/profile/ProfilePage';
 import SettingsPage from '../features/settings/SettingsPage';
 
 const TOKEN_KEY = 'middleware_token';
@@ -54,7 +54,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const isHubRoute = !hash.startsWith('#profile') && !hash.startsWith('#mfa-setup') && hash !== '#users' && hash !== '#settings' && !hash.startsWith('#docs');
+    const isHubRoute = !hash.startsWith('#profile') && hash !== '#users' && hash !== '#settings' && !hash.startsWith('#docs');
     if (authNotice && isHubRoute) sessionStorage.removeItem(AUTH_NOTICE_KEY);
   }, [authNotice, hash]);
 
@@ -85,7 +85,7 @@ export default function App() {
 
   /* Authentication is served independently so Hub can fail without blocking login. */
   if (!token || !user) {
-    const returnTo = (hash.startsWith('#profile') || hash.startsWith('#mfa-setup')) ? `/${hash}` : '/';
+    const returnTo = hash.startsWith('#profile') ? `/${hash}` : '/';
     window.location.replace(`/login/?returnTo=${encodeURIComponent(returnTo)}`);
     return null;
   }
@@ -102,10 +102,6 @@ export default function App() {
 
   if (hash === '#settings' && user.role === 'admin') {
     return <SettingsPage token={token} currentUser={user} onBack={() => { window.location.hash = ''; }} />;
-  }
-
-  if (hash.startsWith('#mfa-setup')) {
-    return <MfaEnrollmentPage token={token} currentUser={user} onBack={() => { window.location.hash = ''; }} onLogout={handleLogout} onUserUpdated={handleUserUpdated} />;
   }
 
   if (hash.startsWith('#profile')) {
@@ -130,7 +126,6 @@ export default function App() {
       onOpenDocs={() => { window.location.href = '/docs/'; }}
       onOpenProfile={() => { window.location.hash = '#profile?returnTo=%2F'; }}
       onOpenSettings={() => { window.location.hash = '#settings'; }}
-      onOpenMfaSetup={() => { window.location.hash = '#mfa-setup'; }}
       onLogout={handleLogout}
     />
   );

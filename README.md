@@ -13,7 +13,7 @@ graph TB
     User["Browser (http://localhost or cloud host)"] --> Gateway["Nginx Gateway\n(Port :80)"]
     
     Gateway -->|"/"| Hub["Hub Portal\n(Port :3000)\nStatic React"]
-    Gateway -->|"/login + /api/auth"| Auth["Auth Service\n(Port :3004)"]
+    Gateway -->|"/login + /api/login + /api/mfa"| Auth["Auth Service\n(Port :3004)"]
     Gateway -->|"/defectdojo/*"| DDojo["DefectDojo Service\n(Port :3001)\nExpress + React"]
     Gateway -->|"/wazuh/*"| Wazuh["Wazuh Service\n(Port :3002)\nStatic React + Nginx"]
     Gateway -->|"/docs/*"| Docs["Docs Service\n(Port :3003)\nExpress + React"]
@@ -77,12 +77,16 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
 
 Profile information is read-only for users. Administrators manage identity,
 24-hour temporary-password resets, and Authenticator MFA from Hub User
-Management. Authenticator enrollment is password-only while pending and uses
-TOTP after confirmation; lost devices require an administrator reset because
-recovery codes are not supported. Administrators assign Google Authenticator,
-Microsoft Authenticator, or another compatible app. Temporary passwords are
-always shown once and are also queued for email automatically when the account
-has a valid address.
+Management. Administrators assign Google Authenticator, Microsoft
+Authenticator, or another compatible app. Pending accounts continue to use
+password-only sign-in, but enrollment can start only from the single-use
+`/login/mfa-setup#invite=...` link delivered to the user's email. The invitation
+expires after 24 hours and does not require an existing Middleware session or
+the user's current password. Successful enrollment revokes all existing
+sessions and sends the user to sign in with TOTP. Lost devices require an
+administrator reset because recovery codes are not supported. Administrators
+can resend a pending invitation. Temporary passwords are always shown once and
+are also queued for email automatically when the account has a valid address.
 
 SMTP is configured at runtime from **Administration → System Settings**, not
 from `.env`. Email is written to a durable outbox and delivered asynchronously,

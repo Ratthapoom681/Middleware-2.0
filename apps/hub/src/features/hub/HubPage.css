@@ -30,7 +30,6 @@
 }
 
 .hub-auth-notice span { flex: 1; }
-.hub-auth-notice button { min-height: 38px; padding: .35rem .6rem; border: 1px solid currentColor; border-radius: .4rem; background: transparent; color: inherit; cursor: pointer; }
 
 .welcome-section {
   margin-bottom: 2rem;

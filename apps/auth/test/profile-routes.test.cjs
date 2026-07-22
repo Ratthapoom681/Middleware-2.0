@@ -4,6 +4,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const OTPAuth = require('otpauth');
+const { createSecurityCrypto } = require('../server/security-crypto.cjs');
+const { loadRuntimeSecrets } = require('../server/runtime-config.cjs');
 
 test('admin-controlled identity, pending enrollment, TOTP-only login, and temporary passwords work end to end', async (t) => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-admin-flow-'));
@@ -12,7 +14,16 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   delete process.env.AUTH_DATABASE_URL;
   delete process.env.DATABASE_URL;
 
-  const { authStore, securityStore, emailWorker, start } = require('../server/server.cjs');
+  const { authStore, securityStore, emailWorker, getRequestOrigin, start } = require('../server/server.cjs');
+  const securityCrypto = createSecurityCrypto({ encryptionKey: loadRuntimeSecrets().mfaEncryptionKey });
+  assert.equal(getRequestOrigin({
+    headers: {
+      host: 'auth:3004',
+      'x-forwarded-host': '10.145.10.61:8443',
+      'x-forwarded-proto': 'https',
+      origin: 'https://10.145.10.61:8443'
+    }
+  }), 'https://10.145.10.61:8443');
   const server = await start(0);
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -61,26 +72,41 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   assert.equal(enable.data.mfa.provider, 'google');
   assert.equal(enable.data.delivery.status, 'queued');
   const setupDelivery = await securityStore.getEmailDelivery(enable.data.delivery.id);
-  assert.equal(setupDelivery.metadata.setupUrl, `${baseUrl}/#mfa-setup`);
+  assert.equal(setupDelivery.metadata.setupBaseUrl, `${baseUrl}/login/mfa-setup`);
   assert.equal(setupDelivery.metadata.provider, 'google');
-  assert.equal(JSON.stringify(setupDelivery.metadata).includes('setupToken'), false);
+  assert.equal(JSON.stringify(setupDelivery.metadata).includes('invitationToken'), false);
   assert.equal(JSON.stringify(setupDelivery.metadata).includes('otpauth'), false);
+  const invitationToken = securityCrypto.decryptOutboxSecret({
+    ciphertext: setupDelivery.secretCiphertext,
+    iv: setupDelivery.secretIv,
+    tag: setupDelivery.secretTag
+  });
+  assert.equal(fs.readFileSync(path.join(dataDir, 'admin-security.json'), 'utf8').includes(invitationToken), false);
 
   const pendingLogin = await request('/api/login', { method: 'POST', body: JSON.stringify({ username: 'admin', password: 'admin' }) });
   assert.ok(pendingLogin.data.token, 'pending MFA must still allow password-only login');
 
-  const setup = await request('/api/profile/mfa/enrollment/start', {
-    token: adminToken, method: 'POST', body: JSON.stringify({ provider: 'microsoft', currentPassword: 'admin' })
+  const retiredSetup = await request('/api/profile/mfa/enrollment/start', {
+    token: adminToken, method: 'POST', body: JSON.stringify({ currentPassword: 'admin' })
+  });
+  assert.equal(retiredSetup.response.status, 410);
+  const setup = await request('/api/mfa/enrollment/start', {
+    method: 'POST', body: JSON.stringify({ invitationToken })
   });
   assert.equal(setup.response.status, 200);
   assert.equal(setup.data.provider, 'google');
   const totp = OTPAuth.URI.parse(setup.data.otpauthUri);
-  const confirm = await request('/api/profile/mfa/enrollment/confirm', {
-    token: adminToken, method: 'POST', body: JSON.stringify({ setupToken: setup.data.setupToken, code: totp.generate() })
+  const confirm = await request('/api/mfa/enrollment/confirm', {
+    method: 'POST', body: JSON.stringify({ invitationToken, code: totp.generate() })
   });
   assert.equal(confirm.response.status, 200);
   assert.equal(confirm.data.mfa.status, 'enabled');
   assert.equal(confirm.data.recoveryCodes, undefined);
+  assert.equal(confirm.data.signInUrl, '/login/');
+  assert.equal((await request('/api/profile', { token: adminToken })).response.status, 401, 'email enrollment revokes every existing session');
+  assert.equal((await request('/api/mfa/enrollment/start', {
+    method: 'POST', body: JSON.stringify({ invitationToken })
+  })).response.status, 410, 'the invitation is single-use');
 
   await request('/api/logout', { token: adminToken, method: 'POST' });
   const challenged = await request('/api/login', { method: 'POST', body: JSON.stringify({ username: 'admin', password: 'admin' }) });
@@ -118,6 +144,23 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   assert.equal(copyOnly.response.status, 200);
   assert.equal(copyOnly.data.deliveryMode, 'manual_only');
   assert.equal(copyOnly.data.deliveries.length, 0);
+  const copyOnlyEmailUpdate = await request('/api/users/copyonly', {
+    token: adminToken, method: 'PATCH', body: JSON.stringify({
+      email: 'copyonly@example.test', fullName: '', company: '', department: '',
+      role: 'viewer', products: [], status: 'active'
+    })
+  });
+  assert.equal(copyOnlyEmailUpdate.response.status, 200);
+  assert.equal(copyOnlyEmailUpdate.response.headers.get('cache-control'), 'no-store');
+  assert.match(copyOnlyEmailUpdate.data.temporaryPassword, /^[A-Za-z0-9_-]{24}$/);
+  assert.notEqual(copyOnlyEmailUpdate.data.temporaryPassword, copyOnly.data.temporaryPassword);
+  assert.equal(copyOnlyEmailUpdate.data.deliveryMode, 'queued');
+  assert.equal((await request('/api/login', {
+    method: 'POST', body: JSON.stringify({ username: 'copyonly', password: copyOnly.data.temporaryPassword })
+  })).response.status, 401, 'changing the mailbox rotates an outstanding temporary password');
+  assert.equal((await request('/api/login', {
+    method: 'POST', body: JSON.stringify({ username: 'copyonly', password: copyOnlyEmailUpdate.data.temporaryPassword })
+  })).data.passwordChangeRequired, true);
   const legacyCopyOnlyUser = await authStore.getUserByUsername('copyonly');
   await authStore.upsertUser({ ...legacyCopyOnlyUser, email: 'legacy-invalid-address' });
   const legacyCopyOnlyReset = await request('/api/users/copyonly/password/reset', { token: adminToken, method: 'POST' });
@@ -151,21 +194,110 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
     token: adminToken, method: 'PATCH', body: JSON.stringify({ mfaProvider: 'google' })
   });
   assert.equal(analystGoogle.data.mfa.provider, 'google');
+  const analystGoogleDelivery = await securityStore.getEmailDelivery(analystGoogle.data.delivery.id);
+  const analystGoogleInvitation = securityCrypto.decryptOutboxSecret({
+    ciphertext: analystGoogleDelivery.secretCiphertext,
+    iv: analystGoogleDelivery.secretIv,
+    tag: analystGoogleDelivery.secretTag
+  });
   const analystMicrosoft = await request('/api/users/analyst/mfa', {
     token: adminToken, method: 'PATCH', body: JSON.stringify({ mfaProvider: 'microsoft' })
   });
   assert.equal(analystMicrosoft.data.mfa.status, 'pending');
   assert.equal(analystMicrosoft.data.mfa.provider, 'microsoft');
   assert.equal((await request('/api/profile', { token: analystToken })).response.status, 200, 'pending provider changes keep current sessions');
-  const analystSetup = await request('/api/profile/mfa/enrollment/start', {
-    token: analystToken, method: 'POST', body: JSON.stringify({ currentPassword: 'analyst-permanent-password', provider: 'google' })
+  assert.equal((await request('/api/mfa/enrollment/start', {
+    method: 'POST', body: JSON.stringify({ invitationToken: analystGoogleInvitation })
+  })).response.status, 410, 'changing the assigned provider invalidates the previous email link');
+  const analystDelivery = await securityStore.getEmailDelivery(analystMicrosoft.data.delivery.id);
+  const invitationSentToOldEmail = securityCrypto.decryptOutboxSecret({
+    ciphertext: analystDelivery.secretCiphertext,
+    iv: analystDelivery.secretIv,
+    tag: analystDelivery.secretTag
+  });
+  const changedMailbox = await request('/api/users/analyst', {
+    token: adminToken, method: 'PATCH', body: JSON.stringify({
+      email: 'analyst-updated@example.test', fullName: 'Test Analyst', company: 'Beenets', department: 'SOC',
+      role: 'viewer', products: ['Product A'], status: 'active'
+    })
+  });
+  assert.equal(changedMailbox.response.status, 200);
+  assert.equal(changedMailbox.data.user.mfaNotificationStatus, 'failed');
+  assert.equal((await request('/api/mfa/enrollment/start', {
+    method: 'POST', body: JSON.stringify({ invitationToken: invitationSentToOldEmail })
+  })).response.status, 410, 'changing the mailbox invalidates the link sent to the old address');
+  assert.equal((await request('/api/profile', { token: analystToken })).response.status, 200, 'mailbox correction preserves a permanent-password session');
+
+  const beforeSuspensionResend = await request('/api/users/analyst/mfa/resend', { token: adminToken, method: 'POST' });
+  const beforeSuspensionDelivery = await securityStore.getEmailDelivery(beforeSuspensionResend.data.delivery.id);
+  const invitationIssuedBeforeSuspension = securityCrypto.decryptOutboxSecret({
+    ciphertext: beforeSuspensionDelivery.secretCiphertext,
+    iv: beforeSuspensionDelivery.secretIv,
+    tag: beforeSuspensionDelivery.secretTag
+  });
+  const suspended = await request('/api/users/analyst', {
+    token: adminToken, method: 'PATCH', body: JSON.stringify({
+      email: 'analyst-updated@example.test', fullName: 'Test Analyst', company: 'Beenets', department: 'SOC',
+      role: 'viewer', products: ['Product A'], status: 'suspended'
+    })
+  });
+  assert.equal(suspended.response.status, 200);
+  assert.equal(suspended.data.user.mfaNotificationStatus, 'failed');
+  assert.equal((await request('/api/mfa/enrollment/start', {
+    method: 'POST', body: JSON.stringify({ invitationToken: invitationIssuedBeforeSuspension })
+  })).response.status, 410, 'suspension permanently invalidates an issued setup link');
+  assert.equal((await request('/api/profile', { token: analystToken })).response.status, 401);
+  const reactivated = await request('/api/users/analyst', {
+    token: adminToken, method: 'PATCH', body: JSON.stringify({
+      email: 'analyst-updated@example.test', fullName: 'Test Analyst', company: 'Beenets', department: 'SOC',
+      role: 'viewer', products: ['Product A'], status: 'active'
+    })
+  });
+  assert.equal(reactivated.response.status, 200);
+  assert.equal((await request('/api/mfa/enrollment/start', {
+    method: 'POST', body: JSON.stringify({ invitationToken: invitationIssuedBeforeSuspension })
+  })).response.status, 410, 'reactivation never restores the invalidated link');
+  const exhaustionDeliveryResponse = await request('/api/users/analyst/mfa/resend', { token: adminToken, method: 'POST' });
+  const exhaustionDelivery = await securityStore.getEmailDelivery(exhaustionDeliveryResponse.data.delivery.id);
+  const exhaustedInvitationToken = securityCrypto.decryptOutboxSecret({
+    ciphertext: exhaustionDelivery.secretCiphertext,
+    iv: exhaustionDelivery.secretIv,
+    tag: exhaustionDelivery.secretTag
+  });
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const rejected = await request('/api/mfa/enrollment/confirm', {
+      method: 'POST', body: JSON.stringify({ invitationToken: exhaustedInvitationToken, code: 'invalid' })
+    });
+    assert.equal(rejected.response.status, attempt === 5 ? 410 : 400);
+  }
+  const concurrentResends = await Promise.all([
+    request('/api/users/analyst/mfa/resend', { token: adminToken, method: 'POST' }),
+    request('/api/users/analyst/mfa/resend', { token: adminToken, method: 'POST' })
+  ]);
+  assert.equal(concurrentResends[0].response.status, 200);
+  assert.equal(concurrentResends[1].response.status, 200);
+  assert.equal(concurrentResends[0].data.delivery.id, concurrentResends[1].data.delivery.id, 'concurrent resend requests deduplicate to one invitation');
+  assert.deepEqual(concurrentResends.map(result => result.data.delivery.deduplicated).sort(), [false, true]);
+  const resend = concurrentResends.find(result => !result.data.delivery.deduplicated);
+  const resentDelivery = await securityStore.getEmailDelivery(resend.data.delivery.id);
+  const analystInvitationToken = securityCrypto.decryptOutboxSecret({
+    ciphertext: resentDelivery.secretCiphertext,
+    iv: resentDelivery.secretIv,
+    tag: resentDelivery.secretTag
+  });
+  assert.equal((await request('/api/mfa/enrollment/start', {
+    method: 'POST', body: JSON.stringify({ invitationToken: exhaustedInvitationToken })
+  })).response.status, 410);
+  const analystSetup = await request('/api/mfa/enrollment/start', {
+    method: 'POST', body: JSON.stringify({ invitationToken: analystInvitationToken })
   });
   assert.equal(analystSetup.data.provider, 'microsoft', 'the administrator-selected provider cannot be overridden by the user');
   const analystTotp = OTPAuth.URI.parse(analystSetup.data.otpauthUri);
-  const analystConfirm = await request('/api/profile/mfa/enrollment/confirm', {
-    token: analystToken, method: 'POST', body: JSON.stringify({ setupToken: analystSetup.data.setupToken, code: analystTotp.generate() })
+  const analystConfirm = await request('/api/mfa/enrollment/confirm', {
+    method: 'POST', body: JSON.stringify({ invitationToken: analystInvitationToken, code: analystTotp.generate() })
   });
   assert.equal(analystConfirm.data.mfa.status, 'enabled');
+  assert.equal((await request('/api/profile', { token: analystToken })).response.status, 401);
   const analystOther = await request('/api/users/analyst/mfa', {
     token: adminToken, method: 'PATCH', body: JSON.stringify({ mfaProvider: 'other' })
   });

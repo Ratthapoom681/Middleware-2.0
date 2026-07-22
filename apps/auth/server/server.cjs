@@ -10,7 +10,12 @@ const { createMfaService } = require('./mfa-service.cjs');
 const { createAdminSecurityStore } = require('./admin-security-store.cjs');
 const { createSecurityCrypto } = require('./security-crypto.cjs');
 const { createEmailWorker } = require('./mailer.cjs');
-const { isValidEmail, parseAdminMfaProvider, registerProfileRoutes } = require('./profile-routes.cjs');
+const {
+  isValidEmail,
+  parseAdminMfaProvider,
+  queueMfaEnrollmentInvitation,
+  registerProfileRoutes
+} = require('./profile-routes.cjs');
 
 const PORT = process.env.PORT || 3000;
 const {
@@ -90,22 +95,25 @@ function getRequestOrigin(req) {
   const forwardedHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
   const forwardedProto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim().toLowerCase();
   const protocol = forwardedProto === 'https' ? 'https' : 'http';
-  if (!forwardedHost || !/^[a-z0-9.\-:[\]]+(?::\d{1,5})?$/i.test(forwardedHost)) {
+  if (!forwardedHost || forwardedHost.length > 255 || !/^[a-z0-9.\-:[\]]+$/i.test(forwardedHost)) {
     throw new Error('Unable to determine the application origin');
   }
-  const derived = `${protocol}://${forwardedHost}`;
+  let derived;
+  try {
+    const parsed = new URL(`${protocol}://${forwardedHost}`);
+    if (parsed.username || parsed.password || !parsed.hostname) throw new Error('Invalid authority');
+    derived = parsed.origin;
+  } catch {
+    throw new Error('Unable to determine the application origin');
+  }
   try {
     const supplied = new URL(String(req.headers.origin || ''));
-    if (supplied.protocol === `${protocol}:` && supplied.host.toLowerCase() === forwardedHost.toLowerCase()) {
+    if (supplied.protocol === `${protocol}:` && supplied.origin.toLowerCase() === derived.toLowerCase()) {
       return supplied.origin;
     }
   } catch { /* Requests without Origin use validated proxy headers. */ }
   return derived;
 }
-
-const mfaProviderLabel = provider => provider === 'google'
-  ? 'Google Authenticator'
-  : provider === 'microsoft' ? 'Microsoft Authenticator' : 'Other authenticator';
 
 async function enrichPublicUser(user) {
   if (!user) return null;
@@ -461,13 +469,11 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
     if (!existingUser) {
       expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
       await securityStore.setTemporaryCredential(normalizedUsername, { expiresAt, createdBy: req.user.username });
-      await securityStore.setMfaPolicy(normalizedUsername, {
-        mode: requestedMfaMode,
-        provider: requestedMfaMode === 'authenticator' ? requestedMfaProvider : '',
-        requestedAt: requestedMfaMode === 'authenticator' ? new Date().toISOString() : '',
-        requestedBy: requestedMfaMode === 'authenticator' ? req.user.username : '',
-        notificationStatus: requestedMfaMode === 'authenticator' ? 'queued' : 'none'
-      });
+      if (requestedMfaMode === 'disabled') {
+        await securityStore.setMfaPolicy(normalizedUsername, {
+          mode: 'disabled', provider: '', enrollmentGeneration: '', requestedAt: '', requestedBy: '', notificationStatus: 'none'
+        });
+      }
       if (nextEmail) {
         const encrypted = securityCrypto.encryptOutboxSecret(temporaryPassword);
         deliveries.push(await securityStore.enqueueEmail({
@@ -478,10 +484,16 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
         }));
       }
       if (requestedMfaMode === 'authenticator') {
-        deliveries.push(await securityStore.enqueueEmail({
-          type: 'mfa_setup', targetUsername: normalizedUsername, recipient: nextEmail,
-          subject: `Set up ${mfaProviderLabel(requestedMfaProvider)}`,
-          metadata: { fullName: identity.fullName, provider: requestedMfaProvider, setupUrl: `${notificationOrigin}/#mfa-setup` }
+        deliveries.push(await queueMfaEnrollmentInvitation({
+          user: saved,
+          provider: requestedMfaProvider,
+          actorUsername: req.user.username,
+          request: req,
+          authStore,
+          securityStore,
+          securityCrypto,
+          mfaService,
+          getRequestOrigin
         }));
       }
     }
@@ -511,7 +523,13 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
 app.patch('/api/users/:username', authenticateJwt, requireAdmin, async (req, res) => {
   const username = String(req.params.username || '').trim();
   try {
-    const [target, users] = await Promise.all([authStore.getUserByUsername(username), authStore.listUsers()]);
+    const [target, users, mfaPolicy, mfaConfig, temporaryCredential] = await Promise.all([
+      authStore.getUserByUsername(username),
+      authStore.listUsers(),
+      securityStore.getMfaPolicy(username),
+      authStore.getMfaConfig(username),
+      securityStore.getTemporaryCredential(username)
+    ]);
     if (!target) return res.status(404).json({ error: 'User not found' });
     const email = String(req.body?.email ?? target.email).trim();
     const identity = {
@@ -522,19 +540,111 @@ app.patch('/api/users/:username', authenticateJwt, requireAdmin, async (req, res
     const role = String(req.body?.role || target.role).trim();
     const status = String(req.body?.status || target.status).trim().toLowerCase() === 'suspended' ? 'suspended' : 'active';
     if (!isValidEmail(email)) return res.status(400).json({ error: 'Enter a valid email address' });
+    if ((mfaPolicy?.mode === 'authenticator' || mfaConfig) && !email) {
+      return res.status(400).json({ error: 'A valid email address is required while Authenticator MFA is selected' });
+    }
     if (Object.values(identity).some(value => value.length > 120)) return res.status(400).json({ error: 'Identity fields must be 120 characters or fewer' });
     if (req.user.username === username && status === 'suspended') return res.status(400).json({ error: 'Cannot suspend your own account' });
     if (req.user.username === username && role !== req.user.role) return res.status(400).json({ error: 'Cannot change your own role' });
     if (target.role === 'admin' && role !== 'admin' && users.filter(user => user.role === 'admin').length <= 1) {
       return res.status(400).json({ error: 'Cannot demote the last administrator account' });
     }
-    const saved = await authStore.upsertUser({
+    const pendingEnrollment = mfaPolicy?.mode === 'authenticator' && !mfaConfig;
+    const emailChanged = email !== String(target.email || '').trim();
+    const suspending = target.status !== 'suspended' && status === 'suspended';
+    const invalidatePendingEnrollment = pendingEnrollment && (emailChanged || suspending);
+    const rotateTemporaryCredential = emailChanged && Boolean(temporaryCredential);
+    const temporaryNotificationOrigin = rotateTemporaryCredential && email ? getRequestOrigin(req) : '';
+    let replacementTemporaryPassword = '';
+    let replacementTemporaryExpiresAt = '';
+    let replacementTemporaryPasswordHash = null;
+    let replacementTemporaryDelivery = null;
+    const saveUser = () => authStore.upsertUser({
       ...target, email, role, status,
+      ...(replacementTemporaryPasswordHash ? {
+        salt: replacementTemporaryPasswordHash.salt,
+        hash: replacementTemporaryPasswordHash.hash,
+        passwordAlgorithm: replacementTemporaryPasswordHash.algorithm
+      } : {}),
       products: Array.isArray(req.body?.products) ? req.body.products : target.products
     });
+    const saved = invalidatePendingEnrollment || suspending || rotateTemporaryCredential
+      ? await securityStore.withMfaMutationLock(username, async () => {
+        if (invalidatePendingEnrollment) {
+          await securityStore.invalidateMfaInvitations(username);
+          await securityStore.cancelEmails(username, 'mfa_setup');
+        }
+        if (rotateTemporaryCredential) {
+          replacementTemporaryPassword = crypto.randomBytes(18).toString('base64url');
+          replacementTemporaryExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+          replacementTemporaryPasswordHash = hashPassword(replacementTemporaryPassword);
+          await securityStore.cancelEmails(username, 'temporary_password');
+        }
+        const updated = await saveUser();
+        if (rotateTemporaryCredential) {
+          await securityStore.setTemporaryCredential(username, {
+            expiresAt: replacementTemporaryExpiresAt,
+            createdBy: req.user.username
+          });
+        }
+        if (suspending || rotateTemporaryCredential) await authStore.revokeUserSessions(username);
+        if (invalidatePendingEnrollment) {
+          await securityStore.setMfaPolicy(username, {
+            notificationStatus: 'failed',
+            notificationSentAt: '',
+            notificationError: suspending
+              ? 'Authenticator setup email must be resent after the account is reactivated'
+              : 'Authenticator setup email must be resent after the email address changed'
+          });
+        }
+        if (rotateTemporaryCredential && email) {
+          try {
+            const encrypted = securityCrypto.encryptOutboxSecret(replacementTemporaryPassword);
+            replacementTemporaryDelivery = await securityStore.enqueueEmail({
+              type: 'temporary_password',
+              targetUsername: username,
+              recipient: email,
+              subject: 'Your temporary password',
+              metadata: {
+                fullName: identity.fullName,
+                loginUrl: `${temporaryNotificationOrigin}/login/`,
+                expiresAt: replacementTemporaryExpiresAt
+              },
+              secretCiphertext: encrypted.ciphertext,
+              secretIv: encrypted.iv,
+              secretTag: encrypted.tag
+            });
+          } catch (deliveryError) {
+            console.error('Temporary-password replacement email could not be queued:', deliveryError.message);
+          }
+        }
+        return updated;
+      })
+      : await saveUser();
     await securityStore.setIdentity(username, identity);
-    await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: username, action: 'user.identity_updated', metadata: { role, status } });
-    res.json({ message: 'User updated', user: await enrichPublicUser(saved) });
+    await authStore.saveAuditEvent({
+      actorUsername: req.user.username,
+      targetUsername: username,
+      action: 'user.identity_updated',
+      metadata: {
+        role,
+        status,
+        emailChanged,
+        pendingInvitationInvalidated: invalidatePendingEnrollment,
+        temporaryCredentialRotated: rotateTemporaryCredential,
+        temporaryPasswordEmailQueued: Boolean(replacementTemporaryDelivery)
+      }
+    });
+    if (replacementTemporaryPassword) res.set('Cache-Control', 'no-store');
+    res.json({
+      message: 'User updated',
+      user: await enrichPublicUser(saved),
+      ...(replacementTemporaryPassword ? {
+        temporaryPassword: replacementTemporaryPassword,
+        expiresAt: replacementTemporaryExpiresAt,
+        deliveryMode: replacementTemporaryDelivery ? 'queued' : 'manual_only'
+      } : {})
+    });
   } catch (error) {
     console.error('Update user error:', error.message);
     res.status(500).json({ error: 'Unable to update user' });
@@ -559,8 +669,10 @@ app.delete('/api/users/:username', authenticateJwt, requireAdmin, async (req, re
       return res.status(400).json({ error: 'Cannot delete your own account' });
     }
 
-    await securityStore.deleteUserData(username);
-    const deleted = await authStore.deleteUser(username);
+    const deleted = await securityStore.withMfaMutationLock(username, async () => {
+      await securityStore.deleteUserData(username);
+      return authStore.deleteUser(username);
+    });
     if (!deleted) {
       return res.status(404).json({ error: 'User not found' });
     }

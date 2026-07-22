@@ -40,7 +40,13 @@ Auth writes MFA setup and temporary-password messages to a durable outbox.
 The worker retries transient failures after 1, 5, 15, and 60 minutes, recovers
 stale leases after restart, and never holds an administrator HTTP request open
 while SMTP connects. Setup links are derived from the validated gateway-facing
-host, protocol, and port of the request that queued the message.
+host, protocol, and port of the request that queued the message. Authenticator
+invitations use `/login/mfa-setup#invite=...`; placing the token in the fragment
+keeps it out of gateway request logs. Each invitation is single-use, expires
+after 24 hours, and can bootstrap enrollment without a Middleware session or
+the user's current password. Administrators can resend pending setup mail.
+Successful confirmation revokes all of the user's sessions and directs them to
+sign in again with TOTP.
 
 ## Stable Names and Storage
 

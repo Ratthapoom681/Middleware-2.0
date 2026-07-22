@@ -162,11 +162,11 @@ Click a card (DefectDojo Viewer or Wazuh Viewer) to open that workspace. Use **B
 ### Sign Out
 Click **Sign Out** in the Hub top bar, or inside a workspace.
 
-### View Your Profile and Enroll an Authenticator
+### View Your Profile and Enroll an Authenticator from Email
 
 Open the profile menu from the Hub, DefectDojo Viewer, Wazuh Viewer, or Documentation and select **Your profile**. Profile is read-only and shows identity, access, account status, last login, and MFA status. Ask an administrator to change identity information, reset a password, or enable/reset/disable MFA.
 
-After an administrator assigns **Google Authenticator**, **Microsoft Authenticator**, or **Other authenticator**, the account remains password-only and shows **Pending setup**. Open the Hub banner or the setup link from email, confirm your password, scan the QR code with the assigned app (or enter the manual key), and verify one six-digit code. Enabled accounts require TOTP at sign-in. Recovery codes are not supported; a lost device requires an administrator reset.
+After an administrator assigns **Google Authenticator**, **Microsoft Authenticator**, or **Other authenticator**, the account remains password-only and shows **Pending setup**. Enrollment is available only through the single-use link sent to your email. The link opens `/login/mfa-setup`, expires after 24 hours, and does not require an existing Middleware session or your current password. Scan the QR code with the assigned app (or enter the manual key), then verify one six-digit code. Successful enrollment revokes all existing sessions; use **Go to sign in** and sign in again with TOTP. If the link expires or cannot be used, ask an administrator to resend it. Recovery codes are not supported; a lost device requires an administrator reset.
 
 Administrator-created and reset passwords are temporary, expire after 24 hours, and must be replaced with a 12–128 character password before a session is issued.
 
@@ -179,7 +179,7 @@ Admins can manage identities from the Hub.
 1. Find the **Administration** section on the Hub page and click **User Management**.
 2. **Add a User**: Enter identity details, choose Role, Allowed Products, and Disabled, Google Authenticator, Microsoft Authenticator, or Other authenticator. The system generates and displays a one-time temporary password. When a valid email is saved, delivery is queued automatically; otherwise copy it manually.
 3. **Edit/Delete/Reset**: Use table actions to update identity, generate a new temporary password, or delete an account.
-4. **Manage MFA**: Assign the user’s authenticator app, resend pending setup, reset a lost authenticator, change providers, or disable MFA. Changing an enabled provider, resetting, and disabling revoke target sessions. These actions rely on the active administrator session and do not request the administrator password again.
+4. **Manage MFA**: Assign the user’s authenticator app, resend a pending 24-hour email invitation, reset a lost authenticator, change providers, or disable MFA. Users cannot enroll from Hub or Profile and do not enter their current password; the single-use email link is the enrollment bootstrap factor. Changing an enabled provider, resetting, and disabling revoke target sessions, and successful enrollment revokes all remaining sessions. These actions rely on the active administrator session and do not request the administrator password again.
 5. **Configure Email**: Open **System Settings → Email Delivery**. SMTP settings are saved at runtime, so no image rebuild is required. Plain port 25 relays are supported but do not protect temporary passwords in transit.
 
 ---

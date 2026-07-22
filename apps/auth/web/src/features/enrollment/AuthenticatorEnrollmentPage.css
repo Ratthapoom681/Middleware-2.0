@@ -1,0 +1,285 @@
+.authenticator-enrollment-page {
+  min-height: 100svh;
+  padding: 32px 0;
+  align-items: flex-start;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.authenticator-enrollment-page .enrollment-card-wrapper {
+  position: relative;
+  z-index: 2;
+  width: min(880px, calc(100% - 32px));
+  margin: auto;
+}
+
+.authenticator-enrollment-page .enrollment-card {
+  width: 100%;
+  padding: 32px 36px 28px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-card);
+}
+
+.authenticator-enrollment-page .enrollment-card-header {
+  margin-bottom: 28px;
+  padding-bottom: 22px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid var(--border-card);
+}
+
+.authenticator-enrollment-page .enrollment-card-header .card-tagline {
+  margin-bottom: 6px;
+  text-align: left;
+}
+
+.authenticator-enrollment-page .enrollment-card-header .card-title {
+  margin: 0;
+}
+
+.authenticator-enrollment-page .enrollment-shield {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(92, 156, 255, 0.28);
+  border-radius: var(--radius-md);
+  background: rgba(41, 121, 255, 0.08);
+  color: var(--accent);
+}
+
+.authenticator-enrollment-page .enrollment-shield svg,
+.authenticator-enrollment-page .enrollment-success > svg {
+  width: 28px;
+  height: 28px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.authenticator-enrollment-page .success-icon { color: #86efac; }
+
+.authenticator-enrollment-page .enrollment-intro {
+  margin-bottom: 22px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.authenticator-enrollment-page .enrollment-provider-label {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.authenticator-enrollment-page .enrollment-intro h2,
+.authenticator-enrollment-page .enrollment-instructions h2,
+.authenticator-enrollment-page .enrollment-status h2 {
+  margin: 4px 0 0;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.authenticator-enrollment-page .enrollment-intro p,
+.authenticator-enrollment-page .enrollment-status p {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.authenticator-enrollment-page .enrollment-expiry {
+  padding: 7px 10px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.authenticator-enrollment-page .enrollment-grid {
+  display: grid;
+  grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
+  gap: 30px;
+}
+
+.authenticator-enrollment-page .enrollment-qr-box {
+  aspect-ratio: 1;
+  width: 100%;
+  padding: 12px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: #fff;
+}
+
+.authenticator-enrollment-page .enrollment-qr-box img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.authenticator-enrollment-page .enrollment-qr-fallback {
+  max-width: 210px;
+  color: #3e4656;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.authenticator-enrollment-page .enrollment-labels {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.authenticator-enrollment-page .enrollment-labels div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.authenticator-enrollment-page .enrollment-labels dt {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.authenticator-enrollment-page .enrollment-labels dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.authenticator-enrollment-page .enrollment-instructions > h2 { margin-top: 0; }
+
+.authenticator-enrollment-page .enrollment-instructions ol {
+  margin: 10px 0 18px;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.authenticator-enrollment-page .enrollment-instructions li + li { margin-top: 6px; }
+
+.authenticator-enrollment-page .enrollment-manual-key {
+  margin-bottom: 18px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 10px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.authenticator-enrollment-page .enrollment-manual-key > span:first-child {
+  grid-column: 1 / -1;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.authenticator-enrollment-page .enrollment-manual-key code {
+  min-width: 0;
+  align-self: center;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+  letter-spacing: .08em;
+  user-select: all;
+}
+
+.authenticator-enrollment-page .enrollment-manual-key button {
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input-hover);
+  color: var(--text-link);
+  cursor: pointer;
+}
+
+.authenticator-enrollment-page .enrollment-manual-key button:hover { border-color: var(--border-input-focus); }
+
+.authenticator-enrollment-page .enrollment-code-group small {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-placeholder);
+  font-size: 11px;
+}
+
+.authenticator-enrollment-page .enrollment-status {
+  min-height: 330px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.authenticator-enrollment-page .enrollment-status > .spinner { margin-bottom: 18px; }
+.authenticator-enrollment-page .enrollment-status p { max-width: 510px; margin-top: 10px; }
+.authenticator-enrollment-page .enrollment-status > p[tabindex] { outline: none; }
+.authenticator-enrollment-page .enrollment-success > svg { width: 48px; height: 48px; margin-bottom: 12px; }
+
+.authenticator-enrollment-page .enrollment-single-action,
+.authenticator-enrollment-page .enrollment-link-button {
+  width: auto;
+  min-width: 160px;
+  margin-top: 22px;
+  padding: 0 20px;
+}
+
+.authenticator-enrollment-page .enrollment-link-button { text-decoration: none; }
+
+.authenticator-enrollment-page .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 720px) {
+  .authenticator-enrollment-page { padding: 16px 0; }
+  .authenticator-enrollment-page .enrollment-card-wrapper { width: calc(100% - 24px); }
+  .authenticator-enrollment-page .enrollment-card { padding: 26px 20px 22px; }
+  .authenticator-enrollment-page .enrollment-card-header { align-items: flex-start; }
+  .authenticator-enrollment-page .enrollment-card-header .card-title { font-size: 23px; }
+  .authenticator-enrollment-page .enrollment-intro { flex-direction: column; }
+  .authenticator-enrollment-page .enrollment-expiry { white-space: normal; }
+  .authenticator-enrollment-page .enrollment-grid { grid-template-columns: 1fr; }
+  .authenticator-enrollment-page .enrollment-qr-column { width: min(300px, 100%); margin: 0 auto; }
+}
+
+@media (max-width: 420px) {
+  .authenticator-enrollment-page .enrollment-shield { width: 44px; height: 44px; }
+  .authenticator-enrollment-page .enrollment-manual-key { grid-template-columns: 1fr; }
+  .authenticator-enrollment-page .enrollment-manual-key button { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .authenticator-enrollment-page .spinner { animation: none; }
+}
