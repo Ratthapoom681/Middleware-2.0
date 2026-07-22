@@ -17,7 +17,7 @@ test('protected file storage persists identity, policy, temporary credentials, s
   t.after(async () => { await store.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
 
   await store.setIdentity('analyst', { fullName: ' Test Analyst ', company: 'Beenets', department: 'SOC' });
-  await store.setMfaPolicy('analyst', { mode: 'authenticator', requestedAt: new Date().toISOString(), notificationStatus: 'queued' });
+  await store.setMfaPolicy('analyst', { mode: 'authenticator', provider: 'microsoft', requestedAt: new Date().toISOString(), notificationStatus: 'queued' });
   await store.setTemporaryCredential('analyst', { expiresAt: new Date(Date.now() + 60_000), createdBy: 'admin' });
   await store.saveEmailSettings({ host: 'tamarind.beenets.com', port: 25, security: 'plain', username: '', fromAddress: 'security@example.test', updatedBy: 'admin' });
   const first = await store.enqueueEmail({ type: 'mfa_setup', targetUsername: 'analyst', recipient: 'analyst@example.test', subject: 'Setup', metadata: { setupUrl: 'http://10.0.0.5/#mfa-setup' } });
@@ -29,6 +29,7 @@ test('protected file storage persists identity, policy, temporary credentials, s
   await reopened.initialize();
   assert.equal((await reopened.getIdentity('analyst')).fullName, 'Test Analyst');
   assert.equal((await reopened.getMfaPolicy('analyst')).mode, 'authenticator');
+  assert.equal((await reopened.getMfaPolicy('analyst')).provider, 'microsoft');
   assert.equal((await reopened.getTemporaryCredential('analyst')).createdBy, 'admin');
   assert.equal((await reopened.getEmailSettings()).host, 'tamarind.beenets.com');
   const claimed = await reopened.claimNextEmail();
@@ -36,7 +37,7 @@ test('protected file storage persists identity, policy, temporary credentials, s
   await reopened.finishEmail(claimed, { error: 'MAIL_NOT_CONFIGURED', permanent: true });
   assert.equal((await reopened.getEmailDelivery(first.id)).status, 'failed');
   assert.equal((await reopened.getMfaPolicy('analyst')).notificationStatus, 'failed');
-  const retryJob = await reopened.enqueueEmail({ type: 'test', recipient: 'admin@example.test', subject: 'Retry', metadata: {} });
+  const retryJob = await reopened.enqueueEmail({ type: 'temporary_password', recipient: 'admin@example.test', subject: 'Retry', metadata: {} });
   const retryClaim = await reopened.claimNextEmail();
   await reopened.finishEmail(retryClaim, { error: 'ETIMEDOUT' });
   const retryState = await reopened.getEmailDelivery(retryJob.id);

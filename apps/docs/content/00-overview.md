@@ -541,13 +541,14 @@ All backend API requests require authorization, using JWT tokens sent in the HTT
 | **POST** | `/api/login/password-change` | No | `{challengeToken, newPassword}` | Session after temporary-password replacement |
 | **POST** | `/api/logout` | No | None (Token Header) | `{message: "Logged out"}` |
 | **GET** | `/api/profile` | No | None | Read-only identity and MFA status |
-| **POST** | `/api/profile/mfa/enrollment/start` | No | `{provider, currentPassword}` | Pending-only setup token, QR URI, manual key |
+| **POST** | `/api/profile/mfa/enrollment/start` | No | `{currentPassword}` | Setup data for the administrator-selected provider |
 | **POST** | `/api/profile/mfa/enrollment/confirm` | No | `{setupToken, code}` | Enabled MFA status |
 | **GET** | `/api/users` | **Yes** | None | `Array<{username, role, products: []}>` |
-| **POST** | `/api/users` | **Yes** | Identity, access, MFA mode, admin password | User plus one-time temporary password |
-| **POST** | `/api/users/:username/password/reset` | **Yes** | Admin password and optional email flag | One-time temporary password |
-| **PATCH/POST** | `/api/users/:username/mfa` | **Yes** | Admin password and mode/action | Pending/enabled/disabled MFA state |
-| **GET/PATCH** | `/api/settings/email` | **Yes** | Runtime SMTP settings and admin password | Redacted saved settings |
+| **POST** | `/api/users` | **Yes** | Identity, access, and `mfaProvider` | User, one-time temporary password, and automatic delivery mode |
+| **POST** | `/api/users/:username/password/reset` | **Yes** | None | One-time temporary password and automatic delivery mode |
+| **PATCH** | `/api/users/:username/mfa` | **Yes** | `{mfaProvider: disabled\|google\|microsoft\|other}` | Pending/enabled/disabled MFA state |
+| **POST** | `/api/users/:username/mfa/reset` or `/resend` | **Yes** | None | Updated policy and queued setup delivery |
+| **GET/PATCH** | `/api/settings/email` | **Yes** | Runtime SMTP settings | Redacted saved settings |
 | **DELETE** | `/api/users/:username` | **Yes** | None | `{message: "User deleted"}` |
 | **GET** | `/api/config` | No | None | `{defectDojoUrl, redmineUrl, trackers, ...}` |
 | **POST** | `/api/config` | **Yes** | Configuration Object | `{message: "Config saved successfully"}` |

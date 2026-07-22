@@ -6,6 +6,9 @@ const escapeHtml = value => clean(value)
   .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
   .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 const validEmail = value => /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(clean(value)) && clean(value).length <= 254;
+const providerLabel = provider => clean(provider).toLowerCase() === 'google'
+  ? 'Google Authenticator'
+  : clean(provider).toLowerCase() === 'microsoft' ? 'Microsoft Authenticator' : 'Other authenticator';
 
 const publicEmailSettings = settings => ({
   host: clean(settings?.host),
@@ -42,10 +45,11 @@ const buildMessage = (job, secret = '') => {
   if (job.type === 'mfa_setup') {
     const name = clean(metadata.fullName) || clean(job.targetUsername) || 'user';
     const setupUrl = clean(metadata.setupUrl);
+    const authenticator = providerLabel(metadata.provider);
     return {
-      text: [`Hello ${name},`, '', `Authenticator MFA is ready to set up for ${job.targetUsername}.`,
+      text: [`Hello ${name},`, '', `${authenticator} is ready to set up for ${job.targetUsername}.`,
         `Sign in and complete enrollment: ${setupUrl}`, '', 'If you did not expect this change, contact your administrator.'].join('\n'),
-      html: `<p>Hello ${escapeHtml(name)},</p><p>Authenticator MFA is ready to set up for <strong>${escapeHtml(job.targetUsername)}</strong>.</p><p><a href="${escapeHtml(setupUrl)}">Sign in and complete enrollment</a></p><p>If you did not expect this change, contact your administrator.</p>`
+      html: `<p>Hello ${escapeHtml(name)},</p><p>${escapeHtml(authenticator)} is ready to set up for <strong>${escapeHtml(job.targetUsername)}</strong>.</p><p><a href="${escapeHtml(setupUrl)}">Sign in and complete enrollment</a></p><p>If you did not expect this change, contact your administrator.</p>`
     };
   }
   if (job.type === 'temporary_password') {
@@ -58,10 +62,7 @@ const buildMessage = (job, secret = '') => {
       html: `<p>Hello ${escapeHtml(name)},</p><p>A temporary password was generated for <strong>${escapeHtml(job.targetUsername)}</strong>.</p><p>Temporary password: <code>${escapeHtml(secret)}</code></p><p>It expires in 24 hours and must be changed when you sign in.</p><p><a href="${escapeHtml(loginUrl)}">Sign in</a></p><p>If you did not expect this change, contact your administrator.</p>`
     };
   }
-  return {
-    text: 'This is a test message from Internal Security Middleware email settings.',
-    html: '<p>This is a test message from Internal Security Middleware email settings.</p>'
-  };
+  throw Object.assign(new Error('Unsupported email delivery type'), { code: 'UNSUPPORTED_DELIVERY_TYPE', permanent: true });
 };
 
 function createEmailWorker({ store, securityCrypto, saveAuditEvent, nodemailerClient = nodemailer, pollIntervalMs = 5000 }) {

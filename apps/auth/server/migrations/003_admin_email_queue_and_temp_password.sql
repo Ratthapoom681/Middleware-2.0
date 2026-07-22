@@ -86,7 +86,7 @@ INSERT INTO auth_email_settings (singleton) VALUES (true) ON CONFLICT (singleton
 
 CREATE TABLE IF NOT EXISTS auth_email_outbox (
     id text PRIMARY KEY,
-    type text NOT NULL CHECK (type IN ('mfa_setup', 'temporary_password', 'test')),
+    type text NOT NULL CHECK (type IN ('mfa_setup', 'temporary_password')),
     target_username text NOT NULL DEFAULT '',
     recipient text NOT NULL,
     subject text NOT NULL,

@@ -4,6 +4,22 @@ const { publicEmailSettings, validateEmailSettings, validEmail } = require('./ma
 const PASSWORD_MIN_LENGTH = 12;
 const PASSWORD_MAX_LENGTH = 128;
 const TEMPORARY_PASSWORD_TTL_MS = 24 * 60 * 60 * 1000;
+const ADMIN_MFA_PROVIDERS = new Set(['disabled', 'google', 'microsoft', 'other']);
+
+const parseAdminMfaProvider = (body = {}, fallback = '') => {
+  if (Object.prototype.hasOwnProperty.call(body, 'mfaProvider') || Object.prototype.hasOwnProperty.call(body, 'provider')) {
+    const provider = String(body.mfaProvider ?? body.provider ?? '').trim().toLowerCase();
+    return ADMIN_MFA_PROVIDERS.has(provider) ? provider : '';
+  }
+  const legacyMode = String(body.mfaMode ?? body.mode ?? '').trim().toLowerCase();
+  if (legacyMode === 'disabled') return 'disabled';
+  if (legacyMode === 'authenticator') return 'other';
+  return fallback;
+};
+
+const providerLabel = provider => provider === 'google'
+  ? 'Google Authenticator'
+  : provider === 'microsoft' ? 'Microsoft Authenticator' : 'Other authenticator';
 
 const validateNewPassword = password => {
   const value = String(password || '');
@@ -24,7 +40,7 @@ const buildMfaSummary = (policy, config) => {
     mode,
     status,
     enabled: status === 'enabled',
-    provider: config?.provider || '',
+    provider: config?.provider || policy?.provider || '',
     requestedAt: policy?.requestedAt || '',
     enabledAt: config?.enabledAt || '',
     notificationStatus: policy?.notificationStatus || 'none',
@@ -68,14 +84,6 @@ function registerProfileRoutes({
     await authStore.getMfaConfig(username)
   );
 
-  const verifyAdminAction = async req => {
-    const admin = await authStore.getUserByUsername(req.user.username);
-    if (!admin || !verifyPassword(String(req.body?.adminPassword || ''), admin)) {
-      return { ok: false, status: 400, error: 'Administrator password is incorrect' };
-    }
-    return { ok: true };
-  };
-
   const verifyTotpFactor = async (username, code) => {
     const config = await authStore.getMfaConfig(username);
     if (!config) return { ok: false, status: 400, error: 'Authenticator is not enabled' };
@@ -104,15 +112,16 @@ function registerProfileRoutes({
     return { ok: true };
   };
 
-  const enqueueSetupEmail = async ({ user, actorUsername, request }) => {
+  const enqueueSetupEmail = async ({ user, provider, actorUsername, request }) => {
     const origin = getRequestOrigin(request);
     const job = await securityStore.enqueueEmail({
       type: 'mfa_setup',
       targetUsername: user.username,
       recipient: user.email,
-      subject: 'Set up Authenticator MFA',
+      subject: `Set up ${providerLabel(provider)}`,
       metadata: {
         fullName: (await securityStore.getIdentity(user.username))?.fullName || '',
+        provider,
         setupUrl: `${origin}/#mfa-setup`
       }
     });
@@ -245,7 +254,10 @@ function registerProfileRoutes({
       if (!user || !verifyPassword(String(req.body?.currentPassword || ''), user)) {
         return res.status(400).json({ error: 'Current password is incorrect' });
       }
-      const provider = mfaService.normalizeProvider(req.body?.provider);
+      const provider = parseAdminMfaProvider({ mfaProvider: policy?.provider });
+      if (!provider || provider === 'disabled') {
+        return res.status(409).json({ error: 'An administrator must select an authenticator app first' });
+      }
       const enrollment = mfaService.generateEnrollment({ username: user.username, provider });
       const encrypted = mfaService.encryptSecret(enrollment.secret);
       const setupToken = mfaService.createOpaqueToken();
@@ -276,6 +288,9 @@ function registerProfileRoutes({
       if (!challenge || challenge.username !== req.user.username || challenge.attemptCount >= 5) {
         return res.status(400).json({ error: 'Setup expired. Start again.' });
       }
+      if (policy.provider !== challenge.payload?.provider) {
+        return res.status(409).json({ error: 'Your administrator changed the assigned authenticator app. Start setup again.' });
+      }
       const secret = mfaService.decryptSecret(challenge.payload);
       const counter = mfaService.validateTotp({ secret, token: req.body?.code });
       if (counter === null) {
@@ -292,7 +307,7 @@ function registerProfileRoutes({
         enabledAt,
         lastUsedCounter: counter
       }, []);
-      await securityStore.setMfaPolicy(req.user.username, { mode: 'authenticator' });
+      await securityStore.setMfaPolicy(req.user.username, { mode: 'authenticator', provider: challenge.payload.provider });
       await securityStore.cancelEmails(req.user.username, 'mfa_setup');
       await authStore.revokeUserSessions(req.user.username, { exceptSid: req.user.sid });
       await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: req.user.username, action: 'mfa.enrolled', metadata: { provider: challenge.payload.provider } });
@@ -315,13 +330,10 @@ function registerProfileRoutes({
   app.post('/api/users/:username/password/reset', authenticateJwt, requireAdmin, async (req, res) => {
     const username = String(req.params.username || '').trim();
     try {
-      const proof = await verifyAdminAction(req);
-      if (!proof.ok) return res.status(proof.status).json({ error: proof.error });
       const target = await authStore.getUserByUsername(username);
       if (!target) return res.status(404).json({ error: 'User not found' });
-      const emailRequested = Boolean(req.body?.emailTemporaryPassword);
-      if (emailRequested && !validEmail(target.email)) return res.status(400).json({ error: 'A valid email address is required to email the temporary password' });
-      if (emailRequested) getRequestOrigin(req);
+      const emailAvailable = validEmail(target.email);
+      if (emailAvailable) getRequestOrigin(req);
       const temporaryPassword = crypto.randomBytes(18).toString('base64url');
       const next = hashPassword(temporaryPassword);
       await authStore.updatePassword(username, { salt: next.salt, hash: next.hash, passwordAlgorithm: next.algorithm });
@@ -329,46 +341,65 @@ function registerProfileRoutes({
       await securityStore.setTemporaryCredential(username, { expiresAt, createdBy: req.user.username });
       await authStore.revokeUserSessions(username);
       await securityStore.cancelEmails(username, 'temporary_password');
-      const delivery = emailRequested
+      const delivery = emailAvailable
         ? await enqueueTemporaryPasswordEmail({ user: target, temporaryPassword, expiresAt, actorUsername: req.user.username, request: req })
         : null;
       await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: username, action: 'user.password_reset', metadata: { expiresAt, emailQueued: Boolean(delivery) } });
       res.set('Cache-Control', 'no-store');
-      res.json({ message: `Temporary password generated for ${username}`, temporaryPassword, expiresAt, delivery, sessionEnded: username === req.user.username });
+      res.json({
+        message: `Temporary password generated for ${username}`,
+        temporaryPassword,
+        expiresAt,
+        delivery,
+        deliveryMode: delivery ? 'queued' : 'manual_only',
+        sessionEnded: username === req.user.username
+      });
     } catch (error) {
-      console.error('Administrator password reset error:', error.message);
+      console.error('Password reset error:', error.message);
       res.status(500).json({ error: 'Unable to reset password' });
     }
   });
 
   app.patch('/api/users/:username/mfa', authenticateJwt, requireAdmin, async (req, res) => {
     const username = String(req.params.username || '').trim();
-    const mode = String(req.body?.mode || '').trim().toLowerCase();
-    if (!['disabled', 'authenticator'].includes(mode)) return res.status(400).json({ error: 'MFA mode must be disabled or authenticator' });
+    const provider = parseAdminMfaProvider(req.body);
+    if (!provider) return res.status(400).json({ error: 'MFA provider must be disabled, google, microsoft, or other' });
     try {
-      const proof = await verifyAdminAction(req);
-      if (!proof.ok) return res.status(proof.status).json({ error: proof.error });
       const [target, config, policy] = await Promise.all([
         authStore.getUserByUsername(username), authStore.getMfaConfig(username), securityStore.getMfaPolicy(username)
       ]);
       if (!target) return res.status(404).json({ error: 'User not found' });
+      const currentProvider = config?.provider || policy?.provider || '';
       let delivery = null;
       let sessionEnded = false;
-      if (mode === 'authenticator') {
+      let action = 'mfa.admin_disabled';
+      if (provider !== 'disabled') {
         if (!validEmail(target.email)) return res.status(400).json({ error: 'A valid email address is required for Authenticator MFA' });
         getRequestOrigin(req);
-        if (config) return res.status(409).json({ error: 'Authenticator MFA is already enabled' });
-        if (policy?.mode === 'authenticator') return res.status(409).json({ error: 'Authenticator enrollment is already pending. Use Resend email.' });
+        if (config && currentProvider === provider) return res.status(409).json({ error: `${providerLabel(provider)} is already enabled. Use Reset MFA to replace it.` });
+        if (!config && policy?.mode === 'authenticator' && currentProvider === provider) {
+          return res.status(409).json({ error: `${providerLabel(provider)} enrollment is already pending. Use Resend email.` });
+        }
+        const replacingEnrollment = Boolean(config || policy?.mode === 'authenticator');
+        if (replacingEnrollment) {
+          await authStore.clearMfa(username);
+          await securityStore.cancelEmails(username, 'mfa_setup');
+        }
         await securityStore.setMfaPolicy(username, {
-          mode: 'authenticator', requestedAt: new Date().toISOString(), requestedBy: req.user.username,
+          mode: 'authenticator', provider, requestedAt: new Date().toISOString(), requestedBy: req.user.username,
           notificationStatus: 'queued', notificationAttemptedAt: '', notificationSentAt: '', notificationError: ''
         });
-        delivery = await enqueueSetupEmail({ user: target, actorUsername: req.user.username, request: req });
+        if (config) {
+          await authStore.revokeUserSessions(username);
+          sessionEnded = username === req.user.username;
+        }
+        delivery = await enqueueSetupEmail({ user: target, provider, actorUsername: req.user.username, request: req });
+        action = replacingEnrollment ? 'mfa.admin_provider_changed' : 'mfa.admin_enabled';
       } else {
         await authStore.clearMfa(username);
         await securityStore.cancelEmails(username, 'mfa_setup');
         await securityStore.setMfaPolicy(username, {
-          mode: 'disabled', requestedAt: '', requestedBy: '', notificationStatus: 'none',
+          mode: 'disabled', provider: '', requestedAt: '', requestedBy: '', notificationStatus: 'none',
           notificationAttemptedAt: '', notificationSentAt: '', notificationError: ''
         });
         if (config || policy?.mode === 'authenticator') {
@@ -376,8 +407,14 @@ function registerProfileRoutes({
           sessionEnded = username === req.user.username;
         }
       }
-      await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: username, action: mode === 'authenticator' ? 'mfa.admin_enabled' : 'mfa.admin_disabled' });
-      res.json({ message: mode === 'authenticator' ? 'Authenticator enrollment requested' : 'Authenticator MFA disabled', user: await enrichPublicUser(await authStore.getUserByUsername(username)), mfa: await loadMfaSummary(username), delivery, sessionEnded });
+      await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: username, action, metadata: { provider } });
+      res.json({
+        message: provider === 'disabled' ? 'Authenticator MFA disabled' : `${providerLabel(provider)} enrollment requested`,
+        user: await enrichPublicUser(await authStore.getUserByUsername(username)),
+        mfa: await loadMfaSummary(username),
+        delivery,
+        sessionEnded
+      });
     } catch (error) {
       console.error('Administrator MFA update error:', error.message);
       res.status(500).json({ error: 'Unable to update Authenticator MFA' });
@@ -387,20 +424,21 @@ function registerProfileRoutes({
   app.post('/api/users/:username/mfa/reset', authenticateJwt, requireAdmin, async (req, res) => {
     const username = String(req.params.username || '').trim();
     try {
-      const proof = await verifyAdminAction(req);
-      if (!proof.ok) return res.status(proof.status).json({ error: proof.error });
-      const [target, config] = await Promise.all([authStore.getUserByUsername(username), authStore.getMfaConfig(username)]);
+      const [target, config, policy] = await Promise.all([
+        authStore.getUserByUsername(username), authStore.getMfaConfig(username), securityStore.getMfaPolicy(username)
+      ]);
       if (!target) return res.status(404).json({ error: 'User not found' });
       if (!config) return res.status(400).json({ error: 'Authenticator MFA is not enabled for this user' });
       if (!validEmail(target.email)) return res.status(400).json({ error: 'A valid email address is required to reset Authenticator MFA' });
       getRequestOrigin(req);
+      const provider = config.provider || policy?.provider || 'other';
       await authStore.clearMfa(username);
       await securityStore.cancelEmails(username, 'mfa_setup');
-      await securityStore.setMfaPolicy(username, { mode: 'authenticator', requestedAt: new Date().toISOString(), requestedBy: req.user.username, notificationStatus: 'queued', notificationAttemptedAt: '', notificationSentAt: '', notificationError: '' });
+      await securityStore.setMfaPolicy(username, { mode: 'authenticator', provider, requestedAt: new Date().toISOString(), requestedBy: req.user.username, notificationStatus: 'queued', notificationAttemptedAt: '', notificationSentAt: '', notificationError: '' });
       await authStore.revokeUserSessions(username);
-      const delivery = await enqueueSetupEmail({ user: target, actorUsername: req.user.username, request: req });
-      await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: username, action: 'mfa.admin_reset' });
-      res.json({ message: `Authenticator enrollment reset for ${username}`, mfa: await loadMfaSummary(username), delivery, sessionEnded: username === req.user.username });
+      const delivery = await enqueueSetupEmail({ user: target, provider, actorUsername: req.user.username, request: req });
+      await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: username, action: 'mfa.admin_reset', metadata: { provider } });
+      res.json({ message: `${providerLabel(provider)} enrollment reset for ${username}`, mfa: await loadMfaSummary(username), delivery, sessionEnded: username === req.user.username });
     } catch (error) {
       console.error('Administrator MFA reset error:', error.message);
       res.status(500).json({ error: 'Unable to reset Authenticator MFA' });
@@ -410,15 +448,14 @@ function registerProfileRoutes({
   app.post('/api/users/:username/mfa/resend', authenticateJwt, requireAdmin, async (req, res) => {
     const username = String(req.params.username || '').trim();
     try {
-      const proof = await verifyAdminAction(req);
-      if (!proof.ok) return res.status(proof.status).json({ error: proof.error });
       const [target, policy, config] = await Promise.all([authStore.getUserByUsername(username), securityStore.getMfaPolicy(username), authStore.getMfaConfig(username)]);
       if (!target) return res.status(404).json({ error: 'User not found' });
       if (policy?.mode !== 'authenticator' || config) return res.status(409).json({ error: 'Authenticator enrollment is not pending' });
       if (!validEmail(target.email)) return res.status(400).json({ error: 'A valid email address is required to resend the setup email' });
       getRequestOrigin(req);
-      const delivery = await enqueueSetupEmail({ user: target, actorUsername: req.user.username, request: req });
-      await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: username, action: 'mfa.notification_resent', metadata: { deliveryId: delivery.id } });
+      const provider = policy.provider || 'other';
+      const delivery = await enqueueSetupEmail({ user: target, provider, actorUsername: req.user.username, request: req });
+      await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: username, action: 'mfa.notification_resent', metadata: { deliveryId: delivery.id, provider } });
       res.json({ message: delivery.deduplicated ? 'Setup email is already queued' : 'Setup email queued', delivery, mfa: await loadMfaSummary(username) });
     } catch (error) {
       console.error('MFA notification resend error:', error.message);
@@ -433,8 +470,6 @@ function registerProfileRoutes({
 
   app.patch('/api/settings/email', authenticateJwt, requireAdmin, async (req, res) => {
     try {
-      const proof = await verifyAdminAction(req);
-      if (!proof.ok) return res.status(proof.status).json({ error: proof.error });
       const current = await securityStore.getEmailSettings();
       const clearPassword = Boolean(req.body?.clearPassword);
       let passwordFields = { passwordCiphertext: current.passwordCiphertext, passwordIv: current.passwordIv, passwordTag: current.passwordTag };
@@ -459,31 +494,6 @@ function registerProfileRoutes({
     }
   });
 
-  app.post('/api/settings/email/test', authenticateJwt, requireAdmin, async (req, res) => {
-    try {
-      const proof = await verifyAdminAction(req);
-      if (!proof.ok) return res.status(proof.status).json({ error: proof.error });
-      const recipient = String(req.body?.recipient || '').trim();
-      if (!validEmail(recipient)) return res.status(400).json({ error: 'Enter a valid test recipient' });
-      const job = await securityStore.enqueueEmail({ type: 'test', recipient, subject: 'Internal Security Middleware email test', metadata: {} });
-      await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: '', action: 'email.test_queued', metadata: { deliveryId: job.id } });
-      res.json({ message: 'Test email queued', delivery: publicDelivery(job) });
-    } catch (error) {
-      console.error('Test email queue error:', error.message);
-      res.status(500).json({ error: 'Unable to queue test email' });
-    }
-  });
-
-  app.get('/api/settings/email/deliveries/:id', authenticateJwt, requireAdmin, async (req, res) => {
-    try {
-      const delivery = await securityStore.getEmailDelivery(req.params.id);
-      if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
-      res.json({ delivery: publicDelivery(delivery) });
-    } catch (error) {
-      console.error('Email delivery lookup error:', error.message);
-      res.status(500).json({ error: 'Unable to load delivery status' });
-    }
-  });
 }
 
 module.exports = {
@@ -492,6 +502,7 @@ module.exports = {
   TEMPORARY_PASSWORD_TTL_MS,
   buildMfaSummary,
   isValidEmail,
+  parseAdminMfaProvider,
   registerProfileRoutes,
   validateNewPassword
 };

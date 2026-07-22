@@ -40,10 +40,15 @@ const EMPTY_USER = {
   role: 'viewer',
   products: '',
   status: 'active',
-  mfaMode: 'disabled',
-  adminPassword: '',
-  emailTemporaryPassword: false,
+  mfaProvider: 'disabled',
 };
+
+const MFA_PROVIDER_OPTIONS = [
+  { value: 'disabled', label: 'Disabled' },
+  { value: 'google', label: 'Google Authenticator' },
+  { value: 'microsoft', label: 'Microsoft Authenticator' },
+  { value: 'other', label: 'Other authenticator' },
+];
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30,40, 50];
 
@@ -166,6 +171,15 @@ const getMfaStatus = user => {
   return user.mfaEnabled ? 'enabled' : user.mfaMode === 'authenticator' ? 'pending' : 'disabled';
 };
 
+const getMfaProvider = user => {
+  if (getMfaStatus(user) === 'disabled') return 'disabled';
+  const provider = normalize(user.mfaProvider);
+  return ['google', 'microsoft', 'other'].includes(provider) ? provider : 'other';
+};
+
+const getMfaProviderLabel = provider => MFA_PROVIDER_OPTIONS.find(option => option.value === provider)?.label || 'Other authenticator';
+const hasDeliverableEmail = value => /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(String(value || '').trim());
+
 const redirectAfterSelfSecurityChange = () => {
   localStorage.removeItem('middleware_token');
   localStorage.removeItem('middleware_user');
@@ -213,9 +227,7 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
   const [passwordResetUser, setPasswordResetUser] = useState(null);
-  const [passwordResetDraft, setPasswordResetDraft] = useState({ adminPassword: '', emailTemporaryPassword: false });
   const [securityAction, setSecurityAction] = useState(null);
-  const [securityPassword, setSecurityPassword] = useState('');
   const [oneTimeCredential, setOneTimeCredential] = useState(null);
   const editorDialogRef = useDialogFocus(editorOpen, () => setEditorOpen(false));
   const passwordDialogRef = useDialogFocus(Boolean(passwordResetUser), () => setPasswordResetUser(null));
@@ -337,9 +349,7 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
       role: user.role || 'viewer',
       products: getUserProducts(user).join(', '),
       status: user.accountStatus || 'active',
-      mfaMode: user.mfaMode || 'disabled',
-      adminPassword: '',
-      emailTemporaryPassword: false,
+      mfaProvider: getMfaProvider(user),
     });
     setEditorMode('edit');
     setEditorOpen(true);
@@ -347,14 +357,13 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
 
   function openReset(user) {
     setPasswordResetUser(user);
-    setPasswordResetDraft({ adminPassword: '', emailTemporaryPassword: false });
   }
 
   async function saveUser(event) {
     event.preventDefault();
     const originalUser = users.find(user => user.username === draftUser.username);
-    const mfaModeChanged = editorMode === 'edit' && originalUser
-      && (originalUser.mfaMode || (getMfaStatus(originalUser) === 'disabled' ? 'disabled' : 'authenticator')) !== draftUser.mfaMode;
+    const mfaProviderChanged = editorMode === 'edit' && originalUser
+      && getMfaProvider(originalUser) !== draftUser.mfaProvider;
     setSaving(true);
     setError('');
     try {
@@ -369,18 +378,22 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
           role: draftUser.role,
           products: parseProducts(draftUser.products),
           status: draftUser.status,
-          mfaMode: draftUser.mfaMode,
-          adminPassword: draftUser.adminPassword,
-          emailTemporaryPassword: draftUser.emailTemporaryPassword,
+          mfaProvider: draftUser.mfaProvider,
         }),
       });
       setEditorOpen(false);
       if (data.user?.username === currentUser?.username) onUserUpdated?.(data.user);
-      if (mfaModeChanged) {
-        setSecurityAction({ type: draftUser.mfaMode === 'authenticator' ? 'enable' : 'disable', user: data.user || originalUser });
-        setSecurityPassword('');
+      if (mfaProviderChanged) {
+        setSecurityAction({
+          type: draftUser.mfaProvider === 'disabled' ? 'disable' : getMfaStatus(originalUser) === 'disabled' ? 'enable' : 'change',
+          provider: draftUser.mfaProvider,
+          user: data.user || originalUser
+        });
       }
-      if (data.temporaryPassword) setOneTimeCredential({ username: draftUser.username.trim(), password: data.temporaryPassword, expiresAt: data.expiresAt, emailed: draftUser.emailTemporaryPassword });
+      if (data.temporaryPassword) setOneTimeCredential({
+        username: draftUser.username.trim(), password: data.temporaryPassword, expiresAt: data.expiresAt,
+        deliveryMode: data.deliveryMode || 'manual_only'
+      });
       setDraftUser({ ...EMPTY_USER });
       await loadUsers();
     } catch (err) {
@@ -409,10 +422,12 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
     try {
       const data = await request(`/users/${encodeURIComponent(passwordResetUser.username)}/password/reset`, {
         method: 'POST',
-        body: JSON.stringify(passwordResetDraft),
       });
       setPasswordResetUser(null);
-      setOneTimeCredential({ username: passwordResetUser.username, password: data.temporaryPassword, expiresAt: data.expiresAt, emailed: passwordResetDraft.emailTemporaryPassword, sessionEnded: Boolean(data.sessionEnded) });
+      setOneTimeCredential({
+        username: passwordResetUser.username, password: data.temporaryPassword, expiresAt: data.expiresAt,
+        deliveryMode: data.deliveryMode || 'manual_only', sessionEnded: Boolean(data.sessionEnded)
+      });
       if (!data.sessionEnded) await loadUsers();
     } catch (err) {
       setError(err.message || 'Unable to reset password');
@@ -430,9 +445,11 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
       const path = securityAction.type === 'reset' ? `/users/${username}/mfa/reset`
         : securityAction.type === 'resend' ? `/users/${username}/mfa/resend` : `/users/${username}/mfa`;
       const method = ['reset', 'resend'].includes(securityAction.type) ? 'POST' : 'PATCH';
-      const body = { adminPassword: securityPassword, ...(['enable', 'disable'].includes(securityAction.type) ? { mode: securityAction.type === 'enable' ? 'authenticator' : 'disabled' } : {}) };
+      const body = ['enable', 'change', 'disable'].includes(securityAction.type)
+        ? { mfaProvider: securityAction.type === 'disable' ? 'disabled' : securityAction.provider }
+        : {};
       const data = await request(path, { method, body: JSON.stringify(body) });
-      setSecurityAction(null); setSecurityPassword('');
+      setSecurityAction(null);
       if (data.user?.username === currentUser?.username) onUserUpdated?.(data.user);
       if (data.sessionEnded) { redirectAfterSelfSecurityChange(); return; }
       await loadUsers();
@@ -575,6 +592,7 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
                 const accessSummary = getAccessSummary(user);
                 const email = user.email || 'No email';
                 const mfaStatus = getMfaStatus(user);
+                const mfaProvider = getMfaProvider(user);
                 const mailStatus = normalize(user.mfaNotificationStatus);
 
                 return (
@@ -600,7 +618,9 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
                     <DataTableCell className="cell-mfa" label="MFA">
                       <span className={`mfa-badge ${mfaStatus}`} title={mailStatus === 'failed' ? user.mfaNotificationError || 'Setup email failed' : undefined}>
                         {mfaStatus === 'enabled' ? <ShieldCheck size={13} /> : <ShieldOff size={13} />}
-                        {mfaStatus === 'enabled' ? 'Authenticator' : mfaStatus === 'pending' ? `Pending · ${mailStatus || 'queued'}` : 'Disabled'}
+                        {mfaStatus === 'enabled'
+                          ? getMfaProviderLabel(mfaProvider)
+                          : mfaStatus === 'pending' ? `${getMfaProviderLabel(mfaProvider)} · ${mailStatus || 'queued'}` : 'Disabled'}
                       </span>
                     </DataTableCell>
                     <DataTableCell className="cell-access users-access-cell" label="Access" title={accessSummary.details}>
@@ -618,10 +638,10 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
                         <button type="button" className="icon-btn" onClick={() => openReset(user)} title="Reset password" aria-label={`Reset password for ${user.username}`}>
                           <KeyRound size={15} />
                         </button>
-                        {mfaStatus === 'disabled' && <button type="button" className="icon-btn" onClick={() => { setSecurityAction({ type: 'enable', user }); setSecurityPassword(''); }} disabled={!user.email} title={user.email ? 'Enable Authenticator MFA' : 'Add an email first'} aria-label={`Enable Authenticator MFA for ${user.username}`}><ShieldCheck size={15} /></button>}
-                        {mfaStatus === 'pending' && <button type="button" className="icon-btn" onClick={() => { setSecurityAction({ type: 'resend', user }); setSecurityPassword(''); }} title="Resend setup email" aria-label={`Resend setup email to ${user.username}`}><MailCheck size={15} /></button>}
-                        {mfaStatus === 'enabled' && <button type="button" className="icon-btn warning" onClick={() => { setSecurityAction({ type: 'reset', user }); setSecurityPassword(''); }} title="Reset authenticator" aria-label={`Reset authenticator for ${user.username}`}><RefreshCw size={15} /></button>}
-                        {mfaStatus !== 'disabled' && <button type="button" className="icon-btn warning" onClick={() => { setSecurityAction({ type: 'disable', user }); setSecurityPassword(''); }} title="Disable Authenticator MFA" aria-label={`Disable Authenticator MFA for ${user.username}`}><ShieldOff size={15} /></button>}
+                        {mfaStatus === 'disabled' && <button type="button" className="icon-btn" onClick={() => setSecurityAction({ type: 'enable', provider: 'google', user })} disabled={!hasDeliverableEmail(user.email)} title={hasDeliverableEmail(user.email) ? 'Enable Authenticator MFA' : 'Add a valid email first'} aria-label={`Enable Authenticator MFA for ${user.username}`}><ShieldCheck size={15} /></button>}
+                        {mfaStatus === 'pending' && <button type="button" className="icon-btn" onClick={() => setSecurityAction({ type: 'resend', user })} title="Resend setup email" aria-label={`Resend setup email to ${user.username}`}><MailCheck size={15} /></button>}
+                        {mfaStatus === 'enabled' && <button type="button" className="icon-btn warning" onClick={() => setSecurityAction({ type: 'reset', user })} title="Reset authenticator" aria-label={`Reset authenticator for ${user.username}`}><RefreshCw size={15} /></button>}
+                        {mfaStatus !== 'disabled' && <button type="button" className="icon-btn warning" onClick={() => setSecurityAction({ type: 'disable', user })} title="Disable Authenticator MFA" aria-label={`Disable Authenticator MFA for ${user.username}`}><ShieldOff size={15} /></button>}
                         <button
                           type="button"
                           className="icon-btn danger"
@@ -675,6 +695,7 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
                     value={draftUser.email}
                     onChange={event => setDraftUser({ ...draftUser, email: event.target.value })}
                     maxLength={254}
+                    required={draftUser.mfaProvider !== 'disabled'}
                   />
                 </label>
                 <div className="form-grid"><label><span>Company <small>Optional</small></span><input maxLength={120} value={draftUser.company} onChange={event => setDraftUser({ ...draftUser, company: event.target.value })} /></label><label><span>Department <small>Optional</small></span><input maxLength={120} value={draftUser.department} onChange={event => setDraftUser({ ...draftUser, department: event.target.value })} /></label></div>
@@ -709,11 +730,8 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
                     placeholder="Product A, Product B"
                   />
                 </label>
-                <label><span>Authenticator MFA</span><select value={draftUser.mfaMode} onChange={event => setDraftUser({ ...draftUser, mfaMode: event.target.value })}><option value="disabled">Disabled</option><option value="authenticator">Authenticator MFA</option></select><small>Authenticator MFA requires a valid email. {editorMode === 'edit' ? 'Changing this opens an administrator-password confirmation.' : 'The user remains password-only while setup is pending.'}</small></label>
-                {editorMode === 'create' && <>
-                  <label className="users-checkbox"><input type="checkbox" checked={draftUser.emailTemporaryPassword} disabled={!draftUser.email} onChange={event => setDraftUser({ ...draftUser, emailTemporaryPassword: event.target.checked })} /><span>Email the temporary password</span></label>
-                  <label><span>Your administrator password</span><input type="password" autoComplete="current-password" value={draftUser.adminPassword} onChange={event => setDraftUser({ ...draftUser, adminPassword: event.target.value })} required /></label>
-                </>}
+                <label><span>Authenticator MFA</span><select value={draftUser.mfaProvider} onChange={event => setDraftUser({ ...draftUser, mfaProvider: event.target.value })}>{MFA_PROVIDER_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>An authenticator requires a valid email. {editorMode === 'edit' ? 'Changing an enabled app resets enrollment and revokes the user’s sessions.' : 'The user remains password-only while setup is pending.'}</small></label>
+                {editorMode === 'create' && <small>{hasDeliverableEmail(draftUser.email) ? `The temporary password will be emailed automatically to ${draftUser.email.trim()} and displayed once.` : 'The temporary password will be displayed once for manual copying. Add a valid email to send it automatically.'}</small>}
                 <div className="modal-actions">
                   <button type="button" className="btn-secondary" onClick={() => setEditorOpen(false)}>Cancel</button>
                   <button type="submit" className="btn-primary" disabled={saving}>
@@ -729,20 +747,22 @@ export default function UsersPage({ token, currentUser, onBack, onUserUpdated })
         {passwordResetUser && <div className="modal-backdrop" role="presentation" onMouseDown={() => setPasswordResetUser(null)}><section ref={passwordDialogRef} className="user-modal" role="dialog" aria-modal="true" aria-labelledby="password-reset-title" onMouseDown={event => event.stopPropagation()}>
           <div className="modal-header"><div><h2 id="password-reset-title">Generate temporary password: {passwordResetUser.username}</h2><p>The password expires in 24 hours. All current sessions will be revoked.</p></div><button type="button" className="icon-btn" onClick={() => setPasswordResetUser(null)} aria-label="Close password reset"><X size={16} /></button></div>
           <form className="user-form" onSubmit={resetPassword}>{error && <div className="modal-error" role="alert">{error}</div>}
-            {passwordResetUser.email && <label className="users-checkbox"><input type="checkbox" checked={passwordResetDraft.emailTemporaryPassword} onChange={event => setPasswordResetDraft(value => ({ ...value, emailTemporaryPassword: event.target.checked }))} /><span>Email the temporary password to {passwordResetUser.email}</span></label>}
-            <label><span>Your administrator password</span><input type="password" autoComplete="current-password" value={passwordResetDraft.adminPassword} onChange={event => setPasswordResetDraft(value => ({ ...value, adminPassword: event.target.value }))} required autoFocus /></label>
-            <div className="modal-actions"><button type="button" className="btn-secondary" onClick={() => setPasswordResetUser(null)}>Cancel</button><button type="submit" className="btn-danger" disabled={saving}>{saving ? 'Generating…' : 'Generate and revoke sessions'}</button></div>
+            <p>{hasDeliverableEmail(passwordResetUser.email) ? `The new password will be emailed automatically to ${passwordResetUser.email} and displayed once for copying.` : 'No deliverable email is saved. The new password will only be displayed once for manual copying.'}</p>
+            <div className="modal-actions"><button type="button" className="btn-secondary" onClick={() => setPasswordResetUser(null)}>Cancel</button><button type="submit" className="btn-danger" disabled={saving} autoFocus>{saving ? 'Generating…' : 'Generate and revoke sessions'}</button></div>
           </form>
         </section></div>}
 
         {securityAction && <div className="modal-backdrop" role="presentation" onMouseDown={() => setSecurityAction(null)}><section ref={securityDialogRef} className="user-modal" role="dialog" aria-modal="true" aria-labelledby="security-action-title" onMouseDown={event => event.stopPropagation()}>
-          <div className="modal-header"><div><h2 id="security-action-title">{formatLabel(securityAction.type)} Authenticator MFA: {securityAction.user.username}</h2><p>{securityAction.type === 'enable' ? 'Mark setup pending and queue the setup email.' : securityAction.type === 'resend' ? 'Queue the trusted setup link again.' : securityAction.type === 'reset' ? 'Clear the authenticator, revoke sessions, and queue new setup.' : 'Clear authenticator access and revoke sessions.'}</p></div><button type="button" className="icon-btn" onClick={() => setSecurityAction(null)} aria-label="Close authenticator action"><X size={16} /></button></div>
-          <form className="user-form" onSubmit={submitSecurityAction}><label><span>Your administrator password</span><input type="password" autoComplete="current-password" value={securityPassword} onChange={event => setSecurityPassword(event.target.value)} required autoFocus /></label><div className="modal-actions"><button type="button" className="btn-secondary" onClick={() => setSecurityAction(null)}>Cancel</button><button type="submit" className={['reset', 'disable'].includes(securityAction.type) ? 'btn-danger' : 'btn-primary'} disabled={saving}>{saving ? 'Saving…' : 'Confirm'}</button></div></form>
+          <div className="modal-header"><div><h2 id="security-action-title">{formatLabel(securityAction.type)} Authenticator MFA: {securityAction.user.username}</h2><p>{securityAction.type === 'enable' ? 'Select the app, mark setup pending, and queue its setup email.' : securityAction.type === 'change' ? 'Assign the selected app. Existing enrollment will be cleared and sessions revoked when necessary.' : securityAction.type === 'resend' ? `Queue the ${getMfaProviderLabel(getMfaProvider(securityAction.user))} setup link again.` : securityAction.type === 'reset' ? `Clear ${getMfaProviderLabel(getMfaProvider(securityAction.user))}, revoke sessions, and queue a new setup.` : 'Clear authenticator access and revoke sessions.'}</p></div><button type="button" className="icon-btn" onClick={() => setSecurityAction(null)} aria-label="Close authenticator action"><X size={16} /></button></div>
+          <form className="user-form" onSubmit={submitSecurityAction}>
+            {['enable', 'change'].includes(securityAction.type) && <label><span>Authenticator app</span><select value={securityAction.provider || 'google'} onChange={event => setSecurityAction(value => ({ ...value, provider: event.target.value }))} autoFocus>{MFA_PROVIDER_OPTIONS.filter(option => option.value !== 'disabled').map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>}
+            <div className="modal-actions"><button type="button" className="btn-secondary" onClick={() => setSecurityAction(null)}>Cancel</button><button type="submit" className={['reset', 'disable'].includes(securityAction.type) ? 'btn-danger' : 'btn-primary'} disabled={saving} autoFocus={!['enable', 'change'].includes(securityAction.type)}>{saving ? 'Saving…' : 'Confirm'}</button></div>
+          </form>
         </section></div>}
 
         {oneTimeCredential && <div className="modal-backdrop" role="presentation"><section ref={credentialDialogRef} className="user-modal" role="dialog" aria-modal="true" aria-labelledby="temporary-password-title">
           <div className="modal-header"><div><h2 id="temporary-password-title">Temporary password for {oneTimeCredential.username}</h2><p>This is displayed once and expires in 24 hours.</p></div></div>
-          <div className="user-form"><div className="temporary-password-value"><code>{oneTimeCredential.password}</code><button type="button" className="btn-secondary" onClick={() => navigator.clipboard.writeText(oneTimeCredential.password)}><Clipboard size={15} />Copy</button></div>{oneTimeCredential.emailed && <small>The email was queued. Plain SMTP may expose this password in transit.</small>}<div className="modal-actions"><button type="button" className="btn-primary" onClick={() => { if (oneTimeCredential.sessionEnded) redirectAfterSelfSecurityChange(); else setOneTimeCredential(null); }}>I saved it</button></div></div>
+          <div className="user-form"><div className="temporary-password-value"><code>{oneTimeCredential.password}</code><button type="button" className="btn-secondary" onClick={() => navigator.clipboard.writeText(oneTimeCredential.password)}><Clipboard size={15} />Copy</button></div>{oneTimeCredential.deliveryMode === 'queued' ? <small>The email was queued automatically. Plain SMTP may expose this password in transit.</small> : <small>No deliverable email was available. Copy this password and provide it to the user manually.</small>}<div className="modal-actions"><button type="button" className="btn-primary" onClick={() => { if (oneTimeCredential.sessionEnded) redirectAfterSelfSecurityChange(); else setOneTimeCredential(null); }}>I saved it</button></div></div>
         </section></div>}
       </div>
     </div>

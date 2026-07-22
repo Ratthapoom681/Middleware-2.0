@@ -46,25 +46,23 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   assert.equal(identity.response.status, 200);
   assert.equal(identity.data.user.fullName, 'Security Admin');
 
-  const wrongSettingsPassword = await request('/api/settings/email', {
-    token: adminToken, method: 'PATCH', body: JSON.stringify({ host: 'tamarind.beenets.com', port: 25, security: 'plain', fromAddress: 'security@example.test', adminPassword: 'wrong' })
-  });
-  assert.equal(wrongSettingsPassword.response.status, 400);
   const savedSettings = await request('/api/settings/email', {
-    token: adminToken, method: 'PATCH', body: JSON.stringify({ host: 'tamarind.beenets.com', port: 25, security: 'plain', username: '', fromAddress: 'security@example.test', adminPassword: 'admin' })
+    token: adminToken, method: 'PATCH', body: JSON.stringify({ host: 'tamarind.beenets.com', port: 25, security: 'plain', username: '', fromAddress: 'security@example.test' })
   });
   assert.equal(savedSettings.response.status, 200);
   assert.equal(savedSettings.data.settings.warning.includes('without transport encryption'), true);
   assert.equal(savedSettings.data.settings.password, undefined);
 
   const enable = await request('/api/users/admin/mfa', {
-    token: adminToken, method: 'PATCH', body: JSON.stringify({ mode: 'authenticator', adminPassword: 'admin' })
+    token: adminToken, method: 'PATCH', body: JSON.stringify({ mfaProvider: 'google' })
   });
   assert.equal(enable.response.status, 200);
   assert.equal(enable.data.mfa.status, 'pending');
+  assert.equal(enable.data.mfa.provider, 'google');
   assert.equal(enable.data.delivery.status, 'queued');
   const setupDelivery = await securityStore.getEmailDelivery(enable.data.delivery.id);
   assert.equal(setupDelivery.metadata.setupUrl, `${baseUrl}/#mfa-setup`);
+  assert.equal(setupDelivery.metadata.provider, 'google');
   assert.equal(JSON.stringify(setupDelivery.metadata).includes('setupToken'), false);
   assert.equal(JSON.stringify(setupDelivery.metadata).includes('otpauth'), false);
 
@@ -72,7 +70,7 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   assert.ok(pendingLogin.data.token, 'pending MFA must still allow password-only login');
 
   const setup = await request('/api/profile/mfa/enrollment/start', {
-    token: adminToken, method: 'POST', body: JSON.stringify({ provider: 'google', currentPassword: 'admin' })
+    token: adminToken, method: 'POST', body: JSON.stringify({ provider: 'microsoft', currentPassword: 'admin' })
   });
   assert.equal(setup.response.status, 200);
   assert.equal(setup.data.provider, 'google');
@@ -103,13 +101,35 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   const created = await request('/api/users', {
     token: adminToken, method: 'POST', body: JSON.stringify({
       username: 'analyst', email: 'analyst@example.test', fullName: 'Test Analyst', company: 'Beenets', department: 'SOC',
-      role: 'viewer', products: ['Product A'], status: 'active', mfaMode: 'disabled',
-      adminPassword: 'admin', emailTemporaryPassword: false
+      role: 'viewer', products: ['Product A'], status: 'active', mfaProvider: 'disabled'
     })
   });
   assert.equal(created.response.status, 200);
   assert.match(created.data.temporaryPassword, /^[A-Za-z0-9_-]{24}$/);
+  assert.equal(created.data.deliveryMode, 'queued');
+  assert.equal(created.data.deliveries.some(delivery => delivery.type === 'temporary_password'), true);
   assert.equal(created.response.headers.get('cache-control'), 'no-store');
+
+  const copyOnly = await request('/api/users', {
+    token: adminToken, method: 'POST', body: JSON.stringify({
+      username: 'copyonly', email: '', role: 'viewer', products: [], status: 'active', mfaProvider: 'disabled'
+    })
+  });
+  assert.equal(copyOnly.response.status, 200);
+  assert.equal(copyOnly.data.deliveryMode, 'manual_only');
+  assert.equal(copyOnly.data.deliveries.length, 0);
+  const legacyCopyOnlyUser = await authStore.getUserByUsername('copyonly');
+  await authStore.upsertUser({ ...legacyCopyOnlyUser, email: 'legacy-invalid-address' });
+  const legacyCopyOnlyReset = await request('/api/users/copyonly/password/reset', { token: adminToken, method: 'POST' });
+  assert.equal(legacyCopyOnlyReset.response.status, 200);
+  assert.equal(legacyCopyOnlyReset.data.deliveryMode, 'manual_only');
+
+  const invalidEmail = await request('/api/users', {
+    token: adminToken, method: 'POST', body: JSON.stringify({
+      username: 'invalid-email', email: 'not-an-email', role: 'viewer', products: [], status: 'active', mfaProvider: 'disabled'
+    })
+  });
+  assert.equal(invalidEmail.response.status, 400);
 
   const temporaryLogin = await request('/api/login', {
     method: 'POST', body: JSON.stringify({ username: 'analyst', password: created.data.temporaryPassword })
@@ -122,10 +142,42 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   assert.ok(changed.data.token);
   const analystToken = changed.data.token;
 
+  const nonAdminSettings = await request('/api/settings/email', {
+    token: analystToken, method: 'PATCH', body: JSON.stringify({ host: 'relay.example.test', port: 25, security: 'plain', fromAddress: 'security@example.test' })
+  });
+  assert.equal(nonAdminSettings.response.status, 403);
+
+  const analystGoogle = await request('/api/users/analyst/mfa', {
+    token: adminToken, method: 'PATCH', body: JSON.stringify({ mfaProvider: 'google' })
+  });
+  assert.equal(analystGoogle.data.mfa.provider, 'google');
+  const analystMicrosoft = await request('/api/users/analyst/mfa', {
+    token: adminToken, method: 'PATCH', body: JSON.stringify({ mfaProvider: 'microsoft' })
+  });
+  assert.equal(analystMicrosoft.data.mfa.status, 'pending');
+  assert.equal(analystMicrosoft.data.mfa.provider, 'microsoft');
+  assert.equal((await request('/api/profile', { token: analystToken })).response.status, 200, 'pending provider changes keep current sessions');
+  const analystSetup = await request('/api/profile/mfa/enrollment/start', {
+    token: analystToken, method: 'POST', body: JSON.stringify({ currentPassword: 'analyst-permanent-password', provider: 'google' })
+  });
+  assert.equal(analystSetup.data.provider, 'microsoft', 'the administrator-selected provider cannot be overridden by the user');
+  const analystTotp = OTPAuth.URI.parse(analystSetup.data.otpauthUri);
+  const analystConfirm = await request('/api/profile/mfa/enrollment/confirm', {
+    token: analystToken, method: 'POST', body: JSON.stringify({ setupToken: analystSetup.data.setupToken, code: analystTotp.generate() })
+  });
+  assert.equal(analystConfirm.data.mfa.status, 'enabled');
+  const analystOther = await request('/api/users/analyst/mfa', {
+    token: adminToken, method: 'PATCH', body: JSON.stringify({ mfaProvider: 'other' })
+  });
+  assert.equal(analystOther.data.mfa.status, 'pending');
+  assert.equal(analystOther.data.mfa.provider, 'other');
+  assert.equal((await request('/api/profile', { token: analystToken })).response.status, 401, 'changing an enabled provider revokes target sessions');
+
   const reset = await request('/api/users/analyst/password/reset', {
-    token: adminToken, method: 'POST', body: JSON.stringify({ adminPassword: 'admin', emailTemporaryPassword: false })
+    token: adminToken, method: 'POST'
   });
   assert.equal(reset.response.status, 200);
+  assert.equal(reset.data.deliveryMode, 'queued');
   assert.notEqual(reset.data.temporaryPassword, created.data.temporaryPassword);
   assert.equal((await request('/api/profile', { token: analystToken })).response.status, 401);
   await securityStore.setTemporaryCredential('analyst', { expiresAt: new Date(Date.now() - 1000), createdBy: 'admin' });

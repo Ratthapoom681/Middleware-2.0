@@ -166,7 +166,7 @@ Click **Sign Out** in the Hub top bar, or inside a workspace.
 
 Open the profile menu from the Hub, DefectDojo Viewer, Wazuh Viewer, or Documentation and select **Your profile**. Profile is read-only and shows identity, access, account status, last login, and MFA status. Ask an administrator to change identity information, reset a password, or enable/reset/disable MFA.
 
-After an administrator enables **Authenticator MFA**, the account remains password-only and shows **Pending setup**. Open the Hub banner or the setup link from email, choose Google Authenticator, Microsoft Authenticator, or another RFC 6238 app, confirm your password, scan the QR code (or enter the manual key), and verify one six-digit code. Enabled accounts require TOTP at sign-in. Recovery codes are not supported; a lost device requires an administrator reset.
+After an administrator assigns **Google Authenticator**, **Microsoft Authenticator**, or **Other authenticator**, the account remains password-only and shows **Pending setup**. Open the Hub banner or the setup link from email, confirm your password, scan the QR code with the assigned app (or enter the manual key), and verify one six-digit code. Enabled accounts require TOTP at sign-in. Recovery codes are not supported; a lost device requires an administrator reset.
 
 Administrator-created and reset passwords are temporary, expire after 24 hours, and must be replaced with a 12–128 character password before a session is issued.
 
@@ -177,9 +177,9 @@ Administrator-created and reset passwords are temporary, expire after 24 hours, 
 Admins can manage identities from the Hub.
 
 1. Find the **Administration** section on the Hub page and click **User Management**.
-2. **Add a User**: Enter identity details, choose Role, Allowed Products, and Disabled or Authenticator MFA. The system generates a one-time temporary password.
+2. **Add a User**: Enter identity details, choose Role, Allowed Products, and Disabled, Google Authenticator, Microsoft Authenticator, or Other authenticator. The system generates and displays a one-time temporary password. When a valid email is saved, delivery is queued automatically; otherwise copy it manually.
 3. **Edit/Delete/Reset**: Use table actions to update identity, generate a new temporary password, or delete an account.
-4. **Manage MFA**: Enable, resend pending setup, reset a lost authenticator, or disable MFA. Every security action requires your administrator password. Reset and disable revoke target sessions.
+4. **Manage MFA**: Assign the user’s authenticator app, resend pending setup, reset a lost authenticator, change providers, or disable MFA. Changing an enabled provider, resetting, and disabling revoke target sessions. These actions rely on the active administrator session and do not request the administrator password again.
 5. **Configure Email**: Open **System Settings → Email Delivery**. SMTP settings are saved at runtime, so no image rebuild is required. Plain port 25 relays are supported but do not protect temporary passwords in transit.
 
 ---

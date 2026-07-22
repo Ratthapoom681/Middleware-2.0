@@ -97,13 +97,6 @@
 .profile-stepper span { padding: .28rem .35rem; border-radius: .35rem; color: var(--text-soft); font-size: .65rem; text-align: center; }
 .profile-stepper span.active { background: var(--bg-active); color: var(--primary); }
 .profile-stepper span.complete { color: var(--connected-text); }
-.provider-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .65rem; }
-.provider-grid button { min-height: 132px; padding: .85rem; display: flex; flex-direction: column; align-items: flex-start; gap: .45rem; border: 1px solid var(--border); border-radius: var(--rounded-sm); background: var(--bg-subtle); color: var(--text-main); cursor: pointer; text-align: left; }
-.provider-grid button:hover { border-color: var(--border-strong); background: var(--bg-subtle-hover); }
-.provider-grid button.selected { border-color: var(--primary); box-shadow: 0 0 0 2px var(--bg-active); }
-.provider-grid button svg { color: var(--primary); }
-.provider-grid button strong { font-size: .8rem; font-weight: 500; }
-.provider-grid button span { color: var(--text-muted); font-size: .68rem; line-height: 1.4; }
 .mfa-scan-layout { display: grid; grid-template-columns: 260px 1fr; gap: 1.1rem; }
 .mfa-qr-panel { padding: .65rem; display: flex; flex-direction: column; align-items: center; gap: .55rem; border: 1px solid var(--border); border-radius: var(--rounded-sm); background: #fff; color: #101421; }
 .mfa-qr-panel img { width: 240px; max-width: 100%; height: auto; image-rendering: pixelated; }
@@ -130,8 +123,6 @@
   .profile-layout { grid-template-columns: 1fr; }
   .profile-hero { align-items: flex-start; flex-wrap: wrap; }
   .profile-mfa-badge { margin-left: 80px; }
-  .provider-grid { grid-template-columns: 1fr; }
-  .provider-grid button { min-height: 96px; }
   .mfa-scan-layout { grid-template-columns: 1fr; }
   .mfa-qr-panel { width: min(280px, 100%); margin: 0 auto; }
 }

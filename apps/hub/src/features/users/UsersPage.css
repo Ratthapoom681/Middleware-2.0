@@ -405,8 +405,6 @@
   color: var(--text-muted);
   font-size: .68rem;
 }
-.user-form .users-checkbox { grid-template-columns: auto 1fr; align-items: center; }
-.user-form .users-checkbox input { width: 18px; min-height: 18px; }
 .temporary-password-value { padding: .75rem; display: flex; align-items: center; justify-content: space-between; gap: .75rem; border: 1px solid var(--warning-border); border-radius: var(--rounded-sm); background: var(--warning-bg); }
 .temporary-password-value code { overflow-wrap: anywhere; color: var(--warning-text); font-size: .9rem; letter-spacing: .04em; }
 

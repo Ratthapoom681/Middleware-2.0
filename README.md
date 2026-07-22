@@ -79,7 +79,10 @@ Profile information is read-only for users. Administrators manage identity,
 24-hour temporary-password resets, and Authenticator MFA from Hub User
 Management. Authenticator enrollment is password-only while pending and uses
 TOTP after confirmation; lost devices require an administrator reset because
-recovery codes are not supported.
+recovery codes are not supported. Administrators assign Google Authenticator,
+Microsoft Authenticator, or another compatible app. Temporary passwords are
+always shown once and are also queued for email automatically when the account
+has a valid address.
 
 SMTP is configured at runtime from **Administration → System Settings**, not
 from `.env`. Email is written to a durable outbox and delivered asynchronously,

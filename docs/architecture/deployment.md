@@ -34,9 +34,9 @@ SMTP is configured by an administrator at **Hub → System Settings → Email
 Delivery** and is stored encrypted in Auth storage. Updating SMTP does not
 require rebuilding or recreating containers. Unauthenticated Postfix on port 25
 is supported; Plain mode is allowed with an in-product warning because messages,
-including optional temporary-password mail, are not encrypted in transit.
+including automatically queued temporary-password mail, are not encrypted in transit.
 
-Auth writes setup, temporary-password, and test messages to a durable outbox.
+Auth writes MFA setup and temporary-password messages to a durable outbox.
 The worker retries transient failures after 1, 5, 15, and 60 minutes, recovers
 stale leases after restart, and never holds an administrator HTTP request open
 while SMTP connects. Setup links are derived from the validated gateway-facing

@@ -10,10 +10,17 @@ const iso = value => {
   return Number.isNaN(date.getTime()) ? '' : date.toISOString();
 };
 const normalizeMode = value => clean(value).toLowerCase() === 'authenticator' ? 'authenticator' : 'disabled';
+const MFA_PROVIDERS = new Set(['google', 'microsoft', 'other']);
+const normalizeProvider = (value, mode) => {
+  if (normalizeMode(mode) === 'disabled') return '';
+  const provider = clean(value).toLowerCase();
+  return MFA_PROVIDERS.has(provider) ? provider : 'other';
+};
 const normalizeDeliveryStatus = value => {
   const status = clean(value).toLowerCase();
   return ['queued', 'sending', 'sent', 'failed'].includes(status) ? status : 'none';
 };
+const EMAIL_TYPES = new Set(['mfa_setup', 'temporary_password']);
 const initialFileData = () => ({ version: 1, identities: {}, policies: {}, temporaryCredentials: {}, emailSettings: {}, outbox: {} });
 
 const poolConfig = () => {
@@ -92,13 +99,14 @@ function createAdminSecurityStore({ dataDir }) {
 
   const policyFromRow = row => row ? ({
     mode: normalizeMode(row.mode),
+    provider: normalizeProvider(row.provider, row.mode),
     requestedAt: iso(row.requested_at ?? row.requestedAt),
     requestedBy: clean(row.requested_by ?? row.requestedBy),
     notificationStatus: normalizeDeliveryStatus(row.notification_status ?? row.notificationStatus),
     notificationAttemptedAt: iso(row.notification_attempted_at ?? row.notificationAttemptedAt),
     notificationSentAt: iso(row.notification_sent_at ?? row.notificationSentAt),
     notificationError: clean(row.notification_error ?? row.notificationError)
-  }) : ({ mode: 'disabled', requestedAt: '', requestedBy: '', notificationStatus: 'none', notificationAttemptedAt: '', notificationSentAt: '', notificationError: '' });
+  }) : ({ mode: 'disabled', provider: '', requestedAt: '', requestedBy: '', notificationStatus: 'none', notificationAttemptedAt: '', notificationSentAt: '', notificationError: '' });
 
   const getMfaPolicy = async username => {
     const key = clean(username);
@@ -116,6 +124,7 @@ function createAdminSecurityStore({ dataDir }) {
     const current = await getMfaPolicy(key);
     const next = policyFromRow({
       mode: Object.prototype.hasOwnProperty.call(changes, 'mode') ? changes.mode : current.mode,
+      provider: Object.prototype.hasOwnProperty.call(changes, 'provider') ? changes.provider : current.provider,
       requestedAt: Object.prototype.hasOwnProperty.call(changes, 'requestedAt') ? changes.requestedAt : current.requestedAt,
       requestedBy: Object.prototype.hasOwnProperty.call(changes, 'requestedBy') ? changes.requestedBy : current.requestedBy,
       notificationStatus: Object.prototype.hasOwnProperty.call(changes, 'notificationStatus') ? changes.notificationStatus : current.notificationStatus,
@@ -126,17 +135,17 @@ function createAdminSecurityStore({ dataDir }) {
     if (pool) {
       await pool.query(`
         INSERT INTO auth_mfa_policy (
-          user_id, mode, requested_at, requested_by, notification_status,
+          user_id, mode, provider, requested_at, requested_by, notification_status,
           notification_attempted_at, notification_sent_at, notification_error
         )
-        SELECT id, $2, $3, $4, $5, $6, $7, $8 FROM auth_users WHERE username = $1
+        SELECT id, $2, $3, $4, $5, $6, $7, $8, $9 FROM auth_users WHERE username = $1
         ON CONFLICT (user_id) DO UPDATE SET
-          mode = EXCLUDED.mode, requested_at = EXCLUDED.requested_at,
+          mode = EXCLUDED.mode, provider = EXCLUDED.provider, requested_at = EXCLUDED.requested_at,
           requested_by = EXCLUDED.requested_by, notification_status = EXCLUDED.notification_status,
           notification_attempted_at = EXCLUDED.notification_attempted_at,
           notification_sent_at = EXCLUDED.notification_sent_at,
           notification_error = EXCLUDED.notification_error, updated_at = now()
-      `, [key, next.mode, next.requestedAt || null, next.requestedBy, next.notificationStatus,
+      `, [key, next.mode, next.provider, next.requestedAt || null, next.requestedBy, next.notificationStatus,
         next.notificationAttemptedAt || null, next.notificationSentAt || null, next.notificationError]);
     } else {
       mutateFile(data => { data.policies[key] = next; });
@@ -226,6 +235,7 @@ function createAdminSecurityStore({ dataDir }) {
 
   const enqueueEmail = async input => {
     const type = clean(input.type);
+    if (!EMAIL_TYPES.has(type)) throw new Error('Unsupported email delivery type');
     const targetUsername = clean(input.targetUsername);
     if (type === 'mfa_setup' && targetUsername) {
       const existing = await findActiveEmail(type, targetUsername);

@@ -10,7 +10,7 @@ const { createMfaService } = require('./mfa-service.cjs');
 const { createAdminSecurityStore } = require('./admin-security-store.cjs');
 const { createSecurityCrypto } = require('./security-crypto.cjs');
 const { createEmailWorker } = require('./mailer.cjs');
-const { isValidEmail, registerProfileRoutes } = require('./profile-routes.cjs');
+const { isValidEmail, parseAdminMfaProvider, registerProfileRoutes } = require('./profile-routes.cjs');
 
 const PORT = process.env.PORT || 3000;
 const {
@@ -103,6 +103,10 @@ function getRequestOrigin(req) {
   return derived;
 }
 
+const mfaProviderLabel = provider => provider === 'google'
+  ? 'Google Authenticator'
+  : provider === 'microsoft' ? 'Microsoft Authenticator' : 'Other authenticator';
+
 async function enrichPublicUser(user) {
   if (!user) return null;
   const [identity, policy, mfa] = await Promise.all([
@@ -119,7 +123,7 @@ async function enrichPublicUser(user) {
     department: identity?.department || '',
     mfaMode: mode,
     mfaStatus: mode === 'disabled' ? 'disabled' : (mfa ? 'enabled' : 'pending'),
-    mfaProvider: mfa?.provider || '',
+    mfaProvider: mfa?.provider || policy?.provider || '',
     mfaRequestedAt: policy?.requestedAt || '',
     mfaNotificationStatus: policy?.notificationStatus || 'none',
     mfaNotificationAttemptedAt: policy?.notificationAttemptedAt || '',
@@ -402,9 +406,11 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
       department: String(department || '').trim()
     };
     const nextProducts = Array.isArray(products) ? products : [];
-    const requestedMfaMode = String(req.body?.mfaMode || 'disabled').toLowerCase() === 'authenticator'
-      ? 'authenticator'
-      : 'disabled';
+    const requestedMfaProvider = parseAdminMfaProvider(req.body, 'disabled');
+    if (!requestedMfaProvider) {
+      return res.status(400).json({ error: 'MFA provider must be disabled, google, microsoft, or other' });
+    }
+    const requestedMfaMode = requestedMfaProvider === 'disabled' ? 'disabled' : 'authenticator';
 
     if (!isValidEmail(nextEmail)) return res.status(400).json({ error: 'Enter a valid email address' });
     if (Object.values(identity).some(value => value.length > 120)) {
@@ -419,24 +425,15 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Cannot change your own role' });
     }
 
-    if (!existingUser) {
-      const admin = await authStore.getUserByUsername(req.user.username);
-      if (!admin || !verifyPassword(String(req.body?.adminPassword || ''), admin)) {
-        return res.status(400).json({ error: 'Administrator password is incorrect' });
-      }
-      if (requestedMfaMode === 'authenticator' && !nextEmail) {
-        return res.status(400).json({ error: 'Email is required for Authenticator MFA' });
-      }
-      if (req.body?.emailTemporaryPassword && !nextEmail) {
-        return res.status(400).json({ error: 'Email is required to send the temporary password' });
-      }
+    if (!existingUser && requestedMfaMode === 'authenticator' && !nextEmail) {
+      return res.status(400).json({ error: 'Email is required for Authenticator MFA' });
     }
 
     if (existingUser?.role === 'admin' && role !== 'admin' && users.filter(u => u.role === 'admin').length <= 1) {
       return res.status(400).json({ error: 'Cannot demote the last administrator account' });
     }
 
-    const notificationOrigin = !existingUser && (req.body?.emailTemporaryPassword || requestedMfaMode === 'authenticator')
+    const notificationOrigin = !existingUser && (nextEmail || requestedMfaMode === 'authenticator')
       ? getRequestOrigin(req)
       : '';
     const temporaryPassword = existingUser ? '' : crypto.randomBytes(18).toString('base64url');
@@ -466,11 +463,12 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
       await securityStore.setTemporaryCredential(normalizedUsername, { expiresAt, createdBy: req.user.username });
       await securityStore.setMfaPolicy(normalizedUsername, {
         mode: requestedMfaMode,
+        provider: requestedMfaMode === 'authenticator' ? requestedMfaProvider : '',
         requestedAt: requestedMfaMode === 'authenticator' ? new Date().toISOString() : '',
         requestedBy: requestedMfaMode === 'authenticator' ? req.user.username : '',
         notificationStatus: requestedMfaMode === 'authenticator' ? 'queued' : 'none'
       });
-      if (req.body?.emailTemporaryPassword) {
+      if (nextEmail) {
         const encrypted = securityCrypto.encryptOutboxSecret(temporaryPassword);
         deliveries.push(await securityStore.enqueueEmail({
           type: 'temporary_password', targetUsername: normalizedUsername, recipient: nextEmail,
@@ -482,8 +480,8 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
       if (requestedMfaMode === 'authenticator') {
         deliveries.push(await securityStore.enqueueEmail({
           type: 'mfa_setup', targetUsername: normalizedUsername, recipient: nextEmail,
-          subject: 'Set up Authenticator MFA',
-          metadata: { fullName: identity.fullName, setupUrl: `${notificationOrigin}/#mfa-setup` }
+          subject: `Set up ${mfaProviderLabel(requestedMfaProvider)}`,
+          metadata: { fullName: identity.fullName, provider: requestedMfaProvider, setupUrl: `${notificationOrigin}/#mfa-setup` }
         }));
       }
     }
@@ -491,13 +489,18 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
       actorUsername: req.user.username,
       targetUsername: normalizedUsername,
       action: existingUser ? 'user.updated' : 'user.created',
-      metadata: { role, status: nextStatus, ...(existingUser ? {} : { mfaMode: requestedMfaMode, emailTemporaryPassword: Boolean(req.body?.emailTemporaryPassword) }) }
+      metadata: { role, status: nextStatus, ...(existingUser ? {} : { mfaMode: requestedMfaMode, mfaProvider: requestedMfaProvider, emailQueued: Boolean(nextEmail) }) }
     });
     if (!existingUser) res.set('Cache-Control', 'no-store');
     res.json({
       message: 'User saved successfully',
       user: await enrichPublicUser(saved),
-      ...(existingUser ? {} : { temporaryPassword, expiresAt, deliveries: deliveries.map(job => ({ id: job.id, type: job.type, status: job.status })) })
+      ...(existingUser ? {} : {
+        temporaryPassword,
+        expiresAt,
+        deliveryMode: nextEmail ? 'queued' : 'manual_only',
+        deliveries: deliveries.map(job => ({ id: job.id, type: job.type, status: job.status }))
+      })
     });
   } catch (err) {
     console.error('Save user error:', err);

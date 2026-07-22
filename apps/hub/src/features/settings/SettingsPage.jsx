@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Mail, Send, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, Mail, ShieldAlert } from 'lucide-react';
 import './SettingsPage.css';
 
 const EMPTY = { host: '', port: 25, security: 'plain', username: '', password: '', fromAddress: '', clearPassword: false };
 
-export default function SettingsPage({ token, currentUser, onBack }) {
+export default function SettingsPage({ token, onBack }) {
   const [settings, setSettings] = useState(EMPTY);
-  const [adminPassword, setAdminPassword] = useState('');
-  const [testRecipient, setTestRecipient] = useState(currentUser?.email || '');
-  const [testPassword, setTestPassword] = useState('');
-  const [delivery, setDelivery] = useState(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -28,30 +24,12 @@ export default function SettingsPage({ token, currentUser, onBack }) {
     request('/settings/email').then(data => setSettings({ ...EMPTY, ...data, password: '' })).catch(err => setError(err.message));
   }, [request]);
 
-  useEffect(() => {
-    if (!delivery?.id || ['sent', 'failed', 'cancelled'].includes(delivery.status)) return undefined;
-    const timer = window.setInterval(() => {
-      request(`/settings/email/deliveries/${encodeURIComponent(delivery.id)}`)
-        .then(data => setDelivery(data.delivery))
-        .catch(() => {});
-    }, 2500);
-    return () => window.clearInterval(timer);
-  }, [delivery?.id, delivery?.status, request]);
-
   const save = async event => {
     event.preventDefault(); setBusy(true); setError(''); setMessage('');
     try {
-      const data = await request('/settings/email', { method: 'PATCH', body: JSON.stringify({ ...settings, adminPassword }) });
+      const data = await request('/settings/email', { method: 'PATCH', body: JSON.stringify(settings) });
       setSettings(value => ({ ...value, ...data.settings, password: '', clearPassword: false }));
-      setAdminPassword(''); setMessage(data.message);
-    } catch (err) { setError(err.message); } finally { setBusy(false); }
-  };
-
-  const sendTest = async event => {
-    event.preventDefault(); setBusy(true); setError(''); setMessage('');
-    try {
-      const data = await request('/settings/email/test', { method: 'POST', body: JSON.stringify({ recipient: testRecipient, adminPassword: testPassword }) });
-      setDelivery(data.delivery); setTestPassword(''); setMessage(data.message);
+      setMessage(data.message);
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
 
@@ -69,13 +47,8 @@ export default function SettingsPage({ token, currentUser, onBack }) {
           <div className="settings-grid"><label><span>Username <small>Optional</small></span><input autoComplete="off" value={settings.username} onChange={e => setSettings({ ...settings, username: e.target.value })} /></label><label><span>Password <small>{settings.hasPassword ? 'Saved; blank preserves it' : 'Optional'}</small></span><input type="password" autoComplete="new-password" value={settings.password} onChange={e => setSettings({ ...settings, password: e.target.value, clearPassword: false })} /></label></div>
           {settings.hasPassword && <label className="settings-check"><input type="checkbox" checked={settings.clearPassword} onChange={e => setSettings({ ...settings, clearPassword: e.target.checked, password: '' })} /><span>Clear the saved SMTP password</span></label>}
           <label><span>From address</span><input type="email" value={settings.fromAddress} onChange={e => setSettings({ ...settings, fromAddress: e.target.value })} placeholder="security@example.com" required /></label>
-          <label><span>Your administrator password</span><input type="password" autoComplete="current-password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} required /></label>
           <div className="settings-actions"><button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save settings'}</button></div>
         </form>
-      </section>
-      <section className="settings-panel"><h2>Test delivery</h2><p>The request returns immediately and the durable worker sends the message in the background.</p>
-        <form onSubmit={sendTest} className="settings-form"><label><span>Recipient</span><input type="email" value={testRecipient} onChange={e => setTestRecipient(e.target.value)} required /></label><label><span>Your administrator password</span><input type="password" autoComplete="current-password" value={testPassword} onChange={e => setTestPassword(e.target.value)} required /></label><div className="settings-actions"><button type="submit" disabled={busy}><Send size={16} />Queue test email</button></div></form>
-        {delivery && <div className={`settings-delivery ${delivery.status}`} role="status"><strong>Delivery: {delivery.status}</strong><span>Attempts: {delivery.attemptCount}{delivery.lastError ? ` · ${delivery.lastError}` : ''}</span></div>}
       </section>
     </main>
   </div>;
