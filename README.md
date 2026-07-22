@@ -42,9 +42,6 @@ The main gateway of the system. It handles:
 - A single Express auth service uses `auth-db`, manages sessions/users, and issues one-hour HMAC-SHA256 JWTs.
 - The independent `/login/` React app and existing auth APIs stay available when the Hub portal is down.
 - Startup schema/seed work is serialized with a PostgreSQL advisory lock.
-- Auth sends authenticator-enrollment notices through SMTP when an administrator
-  configures mail delivery. The message links to the trusted gateway URL and
-  contains no MFA secret or setup token.
 
 ### 3. Hub Portal (`hub` · Port `3000`)
 - Static React workspace switcher and user-management frontend. It contains no authentication backend or database dependency.
@@ -78,6 +75,18 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
 4. Each service extracts `middleware_token` from `localStorage` and appends it to requests as `Authorization: Bearer <token>`.
 5. DefectDojo and Docs validate signature/issuer/audience/app claims locally and normally introspect through the auth service. If auth is unreachable, locally valid tokens continue until expiry; revocation, suspension, and role changes can therefore be delayed by at most one hour.
 
+Profile information is read-only for users. Administrators manage identity,
+24-hour temporary-password resets, and Authenticator MFA from Hub User
+Management. Authenticator enrollment is password-only while pending and uses
+TOTP after confirmation; lost devices require an administrator reset because
+recovery codes are not supported.
+
+SMTP is configured at runtime from **Administration → System Settings**, not
+from `.env`. Email is written to a durable outbox and delivered asynchronously,
+so a slow or unavailable Postfix relay cannot hold User Management requests
+open or cause a gateway timeout. Plain unauthenticated port 25 is supported with
+an in-product transport-security warning.
+
 ---
 
 ## Getting Started
@@ -98,20 +107,11 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
    secrets, and then runs `docker compose up -d --build`. Arguments are
    forwarded, so `node scripts/compose-up.cjs hub` rebuilds only Hub.
 
-   Direct Compose commands do not run `generate-env.cjs`. If Node.js is
-   unavailable, copy `.env.example`, fill every required secret, configure the
-   SMTP settings, then run Compose:
+   If Node.js is unavailable, copy `.env.example`, fill every blank secret, and
+   run Compose directly:
    ```powershell
    docker compose up -d --build
    ```
-
-   Enrollment notices automatically use the browser-facing gateway host or
-   private IP from the administrator's request. `APP_PUBLIC_URL` is an optional
-   fallback for unusual proxy deployments. To send enrollment notices,
-   set `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, and `SMTP_FROM`. Set
-   `SMTP_USER` and `SMTP_PASSWORD` together when the relay requires login.
-   Auth still starts without SMTP, but administrators must resend failed MFA
-   notices after mail delivery is configured.
 
    The Linux auth-log and Docker log collectors are part of the default stack.
    They start with the same command and report unavailable sources through Log

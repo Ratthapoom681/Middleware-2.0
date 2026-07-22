@@ -7,8 +7,10 @@ const { verifyJwt } = require('../../../packages/auth-client/index.cjs');
 const { createAuthStore, DEFAULT_APP_KEY } = require('./auth-store.cjs');
 const { loadRuntimeSecrets } = require('./runtime-config.cjs');
 const { createMfaService } = require('./mfa-service.cjs');
-const { createMailer } = require('./mailer.cjs');
-const { isValidEmail, registerProfileRoutes, validateNewPassword } = require('./profile-routes.cjs');
+const { createAdminSecurityStore } = require('./admin-security-store.cjs');
+const { createSecurityCrypto } = require('./security-crypto.cjs');
+const { createEmailWorker } = require('./mailer.cjs');
+const { isValidEmail, registerProfileRoutes } = require('./profile-routes.cjs');
 
 const PORT = process.env.PORT || 3000;
 const {
@@ -81,47 +83,69 @@ function verifyPassword(password, user = {}) {
 
 const authStore = createAuthStore({ dataDir: DATA_DIR, hashPassword });
 const mfaService = createMfaService({ encryptionKey: MFA_ENCRYPTION_KEY });
-const mailer = createMailer(process.env);
+const securityStore = createAdminSecurityStore({ dataDir: DATA_DIR });
+const securityCrypto = createSecurityCrypto({ encryptionKey: MFA_ENCRYPTION_KEY });
 
-function getRequestApplicationUrl(req) {
-  const parseUrl = value => {
-    try {
-      const candidate = new URL(String(value || '').trim());
-      if (
-        (candidate.protocol === 'http:' || candidate.protocol === 'https:')
-        && !candidate.username
-        && !candidate.password
-      ) return candidate.origin;
-    } catch {
-      // Fall through to the trusted proxy headers.
+function getRequestOrigin(req) {
+  const forwardedHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim().toLowerCase();
+  const protocol = forwardedProto === 'https' ? 'https' : 'http';
+  if (!forwardedHost || !/^[a-z0-9.\-:[\]]+(?::\d{1,5})?$/i.test(forwardedHost)) {
+    throw new Error('Unable to determine the application origin');
+  }
+  const derived = `${protocol}://${forwardedHost}`;
+  try {
+    const supplied = new URL(String(req.headers.origin || ''));
+    if (supplied.protocol === `${protocol}:` && supplied.host.toLowerCase() === forwardedHost.toLowerCase()) {
+      return supplied.origin;
     }
-    return '';
-  };
-
-  const forwardedProtocol = String(req?.headers?.['x-forwarded-proto'] || '')
-    .split(',')[0]
-    .trim()
-    .toLowerCase();
-  const protocol = forwardedProtocol === 'https' ? 'https' : 'http';
-  const host = String(
-    req?.headers?.['x-forwarded-host']
-      || req?.headers?.host
-      || ''
-  ).split(',')[0].trim();
-
-  // Browser requests provide the exact external origin, including a VPN-facing
-  // private IP and non-default port. Accept it only when it names the same host
-  // reached by the request; the gateway-derived value is the fallback.
-  const browserOrigin = parseUrl(req?.headers?.origin);
-  const requestHostUrl = parseUrl(host ? `http://${host}` : '');
-  if (
-    browserOrigin
-    && requestHostUrl
-    && new URL(browserOrigin).host === new URL(requestHostUrl).host
-  ) return browserOrigin;
-
-  return parseUrl(host ? `${protocol}://${host}` : '');
+  } catch { /* Requests without Origin use validated proxy headers. */ }
+  return derived;
 }
+
+async function enrichPublicUser(user) {
+  if (!user) return null;
+  const [identity, policy, mfa] = await Promise.all([
+    securityStore.getIdentity(user.username),
+    securityStore.getMfaPolicy(user.username),
+    authStore.getMfaConfig(user.username)
+  ]);
+  const base = authStore.buildPublicUser(user);
+  const mode = policy?.mode === 'authenticator' || mfa ? 'authenticator' : 'disabled';
+  return {
+    ...base,
+    fullName: identity?.fullName || '',
+    company: identity?.company || '',
+    department: identity?.department || '',
+    mfaMode: mode,
+    mfaStatus: mode === 'disabled' ? 'disabled' : (mfa ? 'enabled' : 'pending'),
+    mfaProvider: mfa?.provider || '',
+    mfaRequestedAt: policy?.requestedAt || '',
+    mfaNotificationStatus: policy?.notificationStatus || 'none',
+    mfaNotificationAttemptedAt: policy?.notificationAttemptedAt || '',
+    mfaNotificationSentAt: policy?.notificationSentAt || '',
+    mfaNotificationError: policy?.notificationError || ''
+  };
+}
+
+async function issuePasswordChangeChallenge(user) {
+  const challengeToken = mfaService.createOpaqueToken();
+  const expiresIn = 10 * 60;
+  await authStore.createMfaChallenge({
+    id: crypto.randomUUID(),
+    username: user.username,
+    purpose: 'password_change',
+    tokenHash: mfaService.tokenHash(challengeToken),
+    expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString()
+  });
+  return { passwordChangeRequired: true, challengeToken, expiresIn, user: await enrichPublicUser(user) };
+}
+
+const emailWorker = createEmailWorker({
+  store: securityStore,
+  securityCrypto,
+  saveAuditEvent: event => authStore.saveAuditEvent(event)
+});
 
 function buildTokenPayload(user, sid) {
   return {
@@ -131,9 +155,6 @@ function buildTokenPayload(user, sid) {
     sid,
     username: user.username,
     email: user.email,
-    fullName: user.fullName,
-    company: user.company,
-    department: user.department,
     role: user.role,
     products: user.products,
     status: user.status,
@@ -162,7 +183,7 @@ async function issueSession(user, req) {
   });
   return {
     token: signJwt(buildTokenPayload(loggedInUser, sid), JWT_SECRET, expiresInSeconds),
-    user: authStore.buildPublicUser(loggedInUser)
+    user: await enrichPublicUser(loggedInUser)
   };
 }
 
@@ -198,9 +219,6 @@ async function authenticateJwt(req, res, next) {
       sub: currentUser.id,
       username: currentUser.username,
       email: currentUser.email,
-      fullName: currentUser.fullName,
-      company: currentUser.company,
-      department: currentUser.department,
       role: currentUser.role,
       products: currentUser.products,
       status: currentUser.status
@@ -209,48 +227,6 @@ async function authenticateJwt(req, res, next) {
   } catch (err) {
     console.error('Session validation error:', err);
     res.status(500).json({ error: 'Internal server error' });
-  }
-}
-
-async function sendMfaSetupNotification({ user, requestedBy, request }) {
-  const attemptedAt = new Date().toISOString();
-  try {
-    await mailer.sendMfaSetupEmail({
-      to: user.email,
-      fullName: user.fullName,
-      username: user.username,
-      requestedBy,
-      applicationUrl: getRequestApplicationUrl(request)
-    });
-    await authStore.setMfaPolicy(user.username, {
-      mode: 'authenticator',
-      notificationStatus: 'sent',
-      notificationAttemptedAt: attemptedAt,
-      notificationSentAt: attemptedAt,
-      notificationError: ''
-    });
-    await authStore.saveAuditEvent({
-      actorUsername: requestedBy,
-      targetUsername: user.username,
-      action: 'mfa.notification_sent'
-    });
-    return { status: 'sent', attemptedAt, sentAt: attemptedAt };
-  } catch (error) {
-    const code = error?.code === 'MAIL_NOT_CONFIGURED' ? 'MAIL_NOT_CONFIGURED' : 'SMTP_DELIVERY_FAILED';
-    await authStore.setMfaPolicy(user.username, {
-      mode: 'authenticator',
-      notificationStatus: 'failed',
-      notificationAttemptedAt: attemptedAt,
-      notificationSentAt: '',
-      notificationError: code
-    });
-    await authStore.saveAuditEvent({
-      actorUsername: requestedBy,
-      targetUsername: user.username,
-      action: 'mfa.notification_failed',
-      metadata: { code }
-    });
-    return { status: 'failed', attemptedAt, code };
   }
 }
 
@@ -310,8 +286,17 @@ app.post('/api/login', async (req, res) => {
         mfaRequired: true,
         challengeToken,
         expiresIn,
-        authenticatorApp: 'authenticator'
+        authenticatorApp: mfa.provider
       });
+    }
+
+    const temporary = await securityStore.getTemporaryCredential(user.username);
+    if (temporary) {
+      if (Date.parse(temporary.expiresAt) <= Date.now()) {
+        return res.status(401).json({ error: 'Temporary password expired. Contact an administrator.' });
+      }
+      res.set('Cache-Control', 'no-store');
+      return res.json(await issuePasswordChangeChallenge(user));
     }
 
     res.json(await issueSession(user, req));
@@ -337,11 +322,15 @@ registerProfileRoutes({
   authenticateJwt,
   requireAdmin,
   authStore,
+  securityStore,
+  securityCrypto,
   mfaService,
   verifyPassword,
   hashPassword,
   issueSession,
-  sendMfaSetupNotification
+  issuePasswordChangeChallenge,
+  enrichPublicUser,
+  getRequestOrigin
 });
 
 // Auth - Internal token introspection for protected services
@@ -375,9 +364,6 @@ app.post('/api/auth/introspect', async (req, res) => {
       sub: currentUser.id,
       username: currentUser.username,
       email: currentUser.email,
-      fullName: currentUser.fullName,
-      company: currentUser.company,
-      department: currentUser.department,
       role: currentUser.role,
       products: currentUser.products,
       status: currentUser.status
@@ -389,7 +375,7 @@ app.post('/api/auth/introspect', async (req, res) => {
 app.get('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
   try {
     const users = await authStore.listUsers();
-    res.json(users.map(authStore.buildPublicUser));
+    res.json(await Promise.all(users.map(enrichPublicUser)));
   } catch (err) {
     console.error('List users error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -398,10 +384,7 @@ app.get('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
 
 // Users - Create or Update (Admins only)
 app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
-  const {
-    username, password, role, products, email, status,
-    fullName, company, department, mfaMode, adminPassword, reason
-  } = req.body;
+  const { username, role, products, email, status, fullName, company, department } = req.body;
   if (!username || !role) {
     return res.status(400).json({ error: 'Username and role are required' });
   }
@@ -413,16 +396,18 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
 
     const nextStatus = String(status || 'active').trim().toLowerCase() === 'suspended' ? 'suspended' : 'active';
     const nextEmail = String(email || '').trim();
-    const nextFullName = String(fullName || '').trim();
-    const nextCompany = String(company || '').trim();
-    const nextDepartment = String(department || '').trim();
+    const identity = {
+      fullName: String(fullName || '').trim(),
+      company: String(company || '').trim(),
+      department: String(department || '').trim()
+    };
     const nextProducts = Array.isArray(products) ? products : [];
-    const requestedMfaMode = String(mfaMode || 'disabled').trim().toLowerCase() === 'authenticator'
+    const requestedMfaMode = String(req.body?.mfaMode || 'disabled').toLowerCase() === 'authenticator'
       ? 'authenticator'
       : 'disabled';
 
     if (!isValidEmail(nextEmail)) return res.status(400).json({ error: 'Enter a valid email address' });
-    if ([nextFullName, nextCompany, nextDepartment].some(value => value.length > 120)) {
+    if (Object.values(identity).some(value => value.length > 120)) {
       return res.status(400).json({ error: 'Full name, company, and department must be 120 characters or fewer' });
     }
 
@@ -434,28 +419,16 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Cannot change your own role' });
     }
 
-    if (!existingUser && !password) {
-      return res.status(400).json({ error: 'Password is required for new users' });
-    }
-
-    if (existingUser && password) {
-      return res.status(400).json({ error: 'Use the administrator password-reset action for an existing user' });
-    }
-
-    if (password) {
-      const passwordError = validateNewPassword(password);
-      if (passwordError) return res.status(400).json({ error: passwordError });
-    }
-
-    if (!existingUser && requestedMfaMode === 'authenticator') {
-      if (!nextEmail) return res.status(400).json({ error: 'Email is required for Authenticator MFA' });
+    if (!existingUser) {
       const admin = await authStore.getUserByUsername(req.user.username);
-      if (!admin || !verifyPassword(String(adminPassword || ''), admin)) {
+      if (!admin || !verifyPassword(String(req.body?.adminPassword || ''), admin)) {
         return res.status(400).json({ error: 'Administrator password is incorrect' });
       }
-      const auditReason = String(reason || '').trim();
-      if (auditReason.length < 3 || auditReason.length > 500) {
-        return res.status(400).json({ error: 'Enter a reason between 3 and 500 characters' });
+      if (requestedMfaMode === 'authenticator' && !nextEmail) {
+        return res.status(400).json({ error: 'Email is required for Authenticator MFA' });
+      }
+      if (req.body?.emailTemporaryPassword && !nextEmail) {
+        return res.status(400).json({ error: 'Email is required to send the temporary password' });
       }
     }
 
@@ -463,64 +436,105 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Cannot demote the last administrator account' });
     }
 
+    const notificationOrigin = !existingUser && (req.body?.emailTemporaryPassword || requestedMfaMode === 'authenticator')
+      ? getRequestOrigin(req)
+      : '';
+    const temporaryPassword = existingUser ? '' : crypto.randomBytes(18).toString('base64url');
     const nextUser = {
       ...(existingUser || {}),
       username: normalizedUsername,
       email: nextEmail,
-      fullName: nextFullName,
-      company: nextCompany,
-      department: nextDepartment,
       role,
       products: nextProducts,
       status: nextStatus,
       lastLoginAt: existingUser?.lastLoginAt || ''
     };
 
-    if (password) {
-      const { salt, hash, algorithm } = hashPassword(password);
+    if (temporaryPassword) {
+      const { salt, hash, algorithm } = hashPassword(temporaryPassword);
       nextUser.salt = salt;
       nextUser.hash = hash;
       nextUser.passwordAlgorithm = algorithm;
     }
 
     const saved = await authStore.upsertUser(nextUser);
-    let notification = null;
+    await securityStore.setIdentity(normalizedUsername, identity);
+    let expiresAt = '';
+    const deliveries = [];
     if (!existingUser) {
-      await authStore.setMfaPolicy(normalizedUsername, {
+      expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      await securityStore.setTemporaryCredential(normalizedUsername, { expiresAt, createdBy: req.user.username });
+      await securityStore.setMfaPolicy(normalizedUsername, {
         mode: requestedMfaMode,
         requestedAt: requestedMfaMode === 'authenticator' ? new Date().toISOString() : '',
         requestedBy: requestedMfaMode === 'authenticator' ? req.user.username : '',
-        requestReason: requestedMfaMode === 'authenticator' ? String(reason || '').trim() : '',
-        notificationStatus: requestedMfaMode === 'authenticator' ? 'pending' : 'none'
+        notificationStatus: requestedMfaMode === 'authenticator' ? 'queued' : 'none'
       });
+      if (req.body?.emailTemporaryPassword) {
+        const encrypted = securityCrypto.encryptOutboxSecret(temporaryPassword);
+        deliveries.push(await securityStore.enqueueEmail({
+          type: 'temporary_password', targetUsername: normalizedUsername, recipient: nextEmail,
+          subject: 'Your temporary password',
+          metadata: { fullName: identity.fullName, loginUrl: `${notificationOrigin}/login/`, expiresAt },
+          secretCiphertext: encrypted.ciphertext, secretIv: encrypted.iv, secretTag: encrypted.tag
+        }));
+      }
       if (requestedMfaMode === 'authenticator') {
-        notification = await sendMfaSetupNotification({ user: saved, requestedBy: req.user.username, request: req });
-        await authStore.saveAuditEvent({
-          actorUsername: req.user.username,
-          targetUsername: normalizedUsername,
-          action: 'mfa.admin_enabled',
-          metadata: { reason: String(reason || '').trim(), source: 'user.create' }
-        });
+        deliveries.push(await securityStore.enqueueEmail({
+          type: 'mfa_setup', targetUsername: normalizedUsername, recipient: nextEmail,
+          subject: 'Set up Authenticator MFA',
+          metadata: { fullName: identity.fullName, setupUrl: `${notificationOrigin}/#mfa-setup` }
+        }));
       }
     }
     await authStore.saveAuditEvent({
       actorUsername: req.user.username,
       targetUsername: normalizedUsername,
       action: existingUser ? 'user.updated' : 'user.created',
-      metadata: {
-        role,
-        status: nextStatus,
-        ...(existingUser ? {} : { mfaMode: requestedMfaMode, reason: String(reason || '').trim() })
-      }
+      metadata: { role, status: nextStatus, ...(existingUser ? {} : { mfaMode: requestedMfaMode, emailTemporaryPassword: Boolean(req.body?.emailTemporaryPassword) }) }
     });
+    if (!existingUser) res.set('Cache-Control', 'no-store');
     res.json({
       message: 'User saved successfully',
-      user: authStore.buildPublicUser(await authStore.getUserByUsername(normalizedUsername)),
-      notification
+      user: await enrichPublicUser(saved),
+      ...(existingUser ? {} : { temporaryPassword, expiresAt, deliveries: deliveries.map(job => ({ id: job.id, type: job.type, status: job.status })) })
     });
   } catch (err) {
     console.error('Save user error:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.patch('/api/users/:username', authenticateJwt, requireAdmin, async (req, res) => {
+  const username = String(req.params.username || '').trim();
+  try {
+    const [target, users] = await Promise.all([authStore.getUserByUsername(username), authStore.listUsers()]);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+    const email = String(req.body?.email ?? target.email).trim();
+    const identity = {
+      fullName: String(req.body?.fullName || '').trim(),
+      company: String(req.body?.company || '').trim(),
+      department: String(req.body?.department || '').trim()
+    };
+    const role = String(req.body?.role || target.role).trim();
+    const status = String(req.body?.status || target.status).trim().toLowerCase() === 'suspended' ? 'suspended' : 'active';
+    if (!isValidEmail(email)) return res.status(400).json({ error: 'Enter a valid email address' });
+    if (Object.values(identity).some(value => value.length > 120)) return res.status(400).json({ error: 'Identity fields must be 120 characters or fewer' });
+    if (req.user.username === username && status === 'suspended') return res.status(400).json({ error: 'Cannot suspend your own account' });
+    if (req.user.username === username && role !== req.user.role) return res.status(400).json({ error: 'Cannot change your own role' });
+    if (target.role === 'admin' && role !== 'admin' && users.filter(user => user.role === 'admin').length <= 1) {
+      return res.status(400).json({ error: 'Cannot demote the last administrator account' });
+    }
+    const saved = await authStore.upsertUser({
+      ...target, email, role, status,
+      products: Array.isArray(req.body?.products) ? req.body.products : target.products
+    });
+    await securityStore.setIdentity(username, identity);
+    await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: username, action: 'user.identity_updated', metadata: { role, status } });
+    res.json({ message: 'User updated', user: await enrichPublicUser(saved) });
+  } catch (error) {
+    console.error('Update user error:', error.message);
+    res.status(500).json({ error: 'Unable to update user' });
   }
 });
 
@@ -542,6 +556,7 @@ app.delete('/api/users/:username', authenticateJwt, requireAdmin, async (req, re
       return res.status(400).json({ error: 'Cannot delete your own account' });
     }
 
+    await securityStore.deleteUserData(username);
     const deleted = await authStore.deleteUser(username);
     if (!deleted) {
       return res.status(404).json({ error: 'User not found' });
@@ -597,6 +612,8 @@ app.use((_req, res) => res.status(404).json({ error: 'Not Found' }));
 // Start Server
 async function start(port = PORT) {
   await authStore.initialize();
+  await securityStore.initialize();
+  emailWorker.start();
   if (String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
     const admin = await authStore.getUserByUsername('admin');
     if (admin && verifyPassword('admin', admin)) {
@@ -618,4 +635,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, authStore, getRequestApplicationUrl, start };
+module.exports = { app, authStore, securityStore, emailWorker, enrichPublicUser, getRequestOrigin, start };

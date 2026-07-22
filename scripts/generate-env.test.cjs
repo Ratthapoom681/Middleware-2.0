@@ -144,52 +144,6 @@ test('environment generator replaces unsafe auth placeholders without rotating d
   assert.doesNotMatch(content, /^AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-me$/m);
 });
 
-test('environment generator appends missing mail settings without overwriting operator values', t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'middleware-env-mail-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const templatePath = path.join(dir, '.env.example');
-  const outputPath = path.join(dir, '.env');
-
-  fs.writeFileSync(templatePath, [
-    'APP_PUBLIC_URL=http://localhost',
-    'SMTP_HOST=',
-    'SMTP_PORT=587',
-    'SMTP_SECURE=false',
-    'SMTP_USER=',
-    'SMTP_PASSWORD=',
-    'SMTP_FROM='
-  ].join('\n'));
-  fs.writeFileSync(outputPath, [
-    'PG_PASSWORD=keep-app-password',
-    'AUTH_PG_PASSWORD=keep-auth-password',
-    'JWT_SECRET=keep-jwt-secret',
-    'AUTH_SERVICE_TOKEN=keep-service-token',
-    'MFA_ENCRYPTION_KEY=keep-mfa-key',
-    'AUTH_BOOTSTRAP_ADMIN_PASSWORD=keep-admin-password',
-    'APP_PUBLIC_URL=https://security.example.test',
-    'SMTP_HOST=smtp.operator.example',
-    'SMTP_PASSWORD=keep-smtp-password'
-  ].join('\n'));
-
-  const result = generateEnvironment({ templatePath, outputPath });
-  assert.deepEqual(result.generatedKeys, []);
-  assert.deepEqual(result.addedKeys, [
-    'SMTP_PORT',
-    'SMTP_SECURE',
-    'SMTP_USER',
-    'SMTP_FROM'
-  ]);
-
-  const content = fs.readFileSync(outputPath, 'utf8');
-  assert.match(content, /^APP_PUBLIC_URL=https:\/\/security\.example\.test$/m);
-  assert.match(content, /^SMTP_HOST=smtp\.operator\.example$/m);
-  assert.match(content, /^SMTP_PASSWORD=keep-smtp-password$/m);
-  assert.match(content, /^SMTP_PORT=587$/m);
-  assert.match(content, /^SMTP_SECURE=false$/m);
-  assert.match(content, /^SMTP_USER=$/m);
-  assert.match(content, /^SMTP_FROM=$/m);
-});
-
 test('environment generator CLI works when launched from the scripts directory', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'middleware-env-cwd-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

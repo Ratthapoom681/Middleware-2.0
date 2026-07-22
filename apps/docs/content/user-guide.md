@@ -164,13 +164,11 @@ Click **Sign Out** in the Hub top bar, or inside a workspace.
 
 ### View Your Profile and Enroll an Authenticator
 
-Open the profile menu from the Hub, DefectDojo Viewer, Wazuh Viewer, or Documentation and select **Your profile**. Profile shows your contact details, role, workspace access, last login, and MFA status. Contact an administrator to change these details or reset your password.
+Open the profile menu from the Hub, DefectDojo Viewer, Wazuh Viewer, or Documentation and select **Your profile**. Profile is read-only and shows identity, access, account status, last login, and MFA status. Ask an administrator to change identity information, reset a password, or enable/reset/disable MFA.
 
-An administrator enables **Authenticator MFA** from User Management. Your account enters **Pending setup**, password-only access continues, and the system emails the setup link to your account address. The Hub also displays a setup banner.
+After an administrator enables **Authenticator MFA**, the account remains password-only and shows **Pending setup**. Open the Hub banner or the setup link from email, choose Google Authenticator, Microsoft Authenticator, or another RFC 6238 app, confirm your password, scan the QR code (or enter the manual key), and verify one six-digit code. Enabled accounts require TOTP at sign-in. Recovery codes are not supported; a lost device requires an administrator reset.
 
-Open the link or the Hub banner, re-enter your password, scan the QR code with Google Authenticator, Microsoft Authenticator, or another compatible TOTP app, and enter the current six-digit code. You can enter the manual setup key when scanning is unavailable.
-
-After enrollment, sign-in asks for a six-digit code after the password. The system does not issue recovery codes. Contact an administrator to reset MFA after losing or replacing the authenticator device.
+Administrator-created and reset passwords are temporary, expire after 24 hours, and must be replaced with a 12–128 character password before a session is issued.
 
 ---
 
@@ -179,9 +177,10 @@ After enrollment, sign-in asks for a six-digit code after the password. The syst
 Admins can manage identities from the Hub.
 
 1. Find the **Administration** section on the Hub page and click **User Management**.
-2. **Add a User**: Click Add User, enter the optional full name, company, and department, then choose Role, Allowed Products, and Disabled or Authenticator MFA. Authenticator MFA requires an email address.
-3. **Reset a Password**: Use the key action, enter the replacement password, confirm your administrator password, and record a reason. The system revokes the target's sessions.
-4. **Manage MFA**: Enable, resend a failed setup email, reset an enrolled authenticator, or disable MFA. Each action requires your administrator password and an audit reason. Reset and disable actions revoke the target's sessions. Administrators can manage their own security settings from User Management.
+2. **Add a User**: Enter identity details, choose Role, Allowed Products, and Disabled or Authenticator MFA. The system generates a one-time temporary password.
+3. **Edit/Delete/Reset**: Use table actions to update identity, generate a new temporary password, or delete an account.
+4. **Manage MFA**: Enable, resend pending setup, reset a lost authenticator, or disable MFA. Every security action requires your administrator password. Reset and disable revoke target sessions.
+5. **Configure Email**: Open **System Settings → Email Delivery**. SMTP settings are saved at runtime, so no image rebuild is required. Plain port 25 relays are supported but do not protect temporary passwords in transit.
 
 ---
 

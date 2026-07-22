@@ -30,7 +30,11 @@ export default function LoginPage({ onLoginSuccess }) {
   const [focusedField, setFocusedField] = useState(null);
   const [caretPosition, setCaretPosition] = useState(0.5);
   const [mfaChallenge, setMfaChallenge] = useState('');
+  const [authenticatorApp, setAuthenticatorApp] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
+  const [passwordChangeChallenge, setPasswordChangeChallenge] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmationPassword, setConfirmationPassword] = useState('');
   const passwordRef = useRef(null);
   const textMeasureRef = useRef(null);
 
@@ -92,8 +96,16 @@ export default function LoginPage({ onLoginSuccess }) {
 
       if (data.mfaRequired && data.challengeToken) {
         setMfaChallenge(data.challengeToken);
+        setAuthenticatorApp(data.authenticatorApp || 'other');
         setPassword('');
         setFocusedField('otp');
+        return;
+      }
+
+      if (data.passwordChangeRequired && data.challengeToken) {
+        setPasswordChangeChallenge(data.challengeToken);
+        setPassword('');
+        setFocusedField('password');
         return;
       }
 
@@ -121,6 +133,7 @@ export default function LoginPage({ onLoginSuccess }) {
         body: JSON.stringify({
           challengeToken: mfaChallenge,
           code: verificationCode,
+          mode: 'totp',
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -130,6 +143,13 @@ export default function LoginPage({ onLoginSuccess }) {
         return;
       }
       if (!response.ok) throw new Error(data.error || 'Unable to verify code');
+      if (data.passwordChangeRequired && data.challengeToken) {
+        setMfaChallenge('');
+        setVerificationCode('');
+        setPasswordChangeChallenge(data.challengeToken);
+        setFocusedField('password');
+        return;
+      }
       if (!data.token || !data.user) throw new Error('Verification response was missing session data');
       onLoginSuccess?.(data.user, data.token);
     } catch (err) {
@@ -139,12 +159,41 @@ export default function LoginPage({ onLoginSuccess }) {
     }
   }
 
+  async function handlePasswordChange(event) {
+    event.preventDefault();
+    if (loading) return;
+    if (newPassword !== confirmationPassword) { setError('New passwords do not match'); return; }
+    setLoading(true); setError('');
+    try {
+      const response = await fetch('/api/login/password-change', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challengeToken: passwordChangeChallenge, newPassword })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok && data.restartRequired) { backToPassword(); throw new Error(data.error || 'Sign in again'); }
+      if (!response.ok) throw new Error(data.error || 'Unable to change password');
+      if (!data.token || !data.user) throw new Error('Password change response was missing session data');
+      onLoginSuccess?.(data.user, data.token);
+    } catch (err) { setError(err.message || 'Unable to change password'); }
+    finally { setLoading(false); }
+  }
+
   function backToPassword() {
     setMfaChallenge('');
+    setAuthenticatorApp('');
     setVerificationCode('');
+    setPasswordChangeChallenge('');
+    setNewPassword('');
+    setConfirmationPassword('');
     setError('');
     setFocusedField('username');
   }
+
+  const providerLabel = authenticatorApp === 'google'
+    ? 'Google Authenticator'
+    : authenticatorApp === 'microsoft'
+      ? 'Microsoft Authenticator'
+      : 'your authenticator app';
 
   const loginNotice = new URLSearchParams(window.location.search).get('notice');
 
@@ -257,9 +306,9 @@ export default function LoginPage({ onLoginSuccess }) {
           />
 
           <span className="card-tagline">Internal Security Portal</span>
-          <h1 className="card-title" id="login-title">{mfaChallenge ? 'Verification required' : 'Sign In'}</h1>
+          <h1 className="card-title" id="login-title">{passwordChangeChallenge ? 'Create a new password' : mfaChallenge ? 'Verification required' : 'Sign In'}</h1>
 
-          {loginNotice && !mfaChallenge && (
+          {loginNotice && !mfaChallenge && !passwordChangeChallenge && (
             <div className="login-notice" role="status">
               {loginNotice === 'password-changed'
                 ? 'Password changed. Sign in again.'
@@ -269,11 +318,20 @@ export default function LoginPage({ onLoginSuccess }) {
             </div>
           )}
 
-          {mfaChallenge ? (
+          {passwordChangeChallenge ? (
+            <form onSubmit={handlePasswordChange}>
+              {error && <div className="login-error" role="alert">{error}</div>}
+              <p className="verification-copy">Your temporary password must be replaced before a session can be created.</p>
+              <div className="form-group"><label className="form-label" htmlFor="new-password">New password</label><div className="input-wrapper"><input type="password" id="new-password" className="form-input" minLength={12} maxLength={128} autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} required autoFocus disabled={loading} /></div></div>
+              <div className="form-group"><label className="form-label" htmlFor="confirm-password">Confirm new password</label><div className="input-wrapper"><input type="password" id="confirm-password" className="form-input" minLength={12} maxLength={128} autoComplete="new-password" value={confirmationPassword} onChange={event => setConfirmationPassword(event.target.value)} required disabled={loading} /></div></div>
+              <button type="submit" className="btn-submit" disabled={loading || newPassword.length < 12 || newPassword !== confirmationPassword}>{loading && <span className="spinner" aria-hidden="true" />}<span>{loading ? 'Changing…' : 'Change password and sign in'}</span></button>
+              <div className="verification-actions"><button type="button" onClick={backToPassword} disabled={loading}>Back to sign in</button></div>
+            </form>
+          ) : mfaChallenge ? (
             <form onSubmit={handleMfaVerify}>
               {error && <div className="login-error" role="alert">{error}</div>}
               <p className="verification-copy">
-                Enter the six-digit code from your authenticator app.
+                {`Enter the six-digit code from ${providerLabel}.`}
               </p>
               <div className="form-group">
                 <label className="form-label" htmlFor="verification-code">

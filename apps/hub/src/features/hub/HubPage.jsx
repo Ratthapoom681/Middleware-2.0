@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Radar, ShieldAlert, Smartphone, Users } from 'lucide-react';
+import { MailWarning, Radar, Settings, ShieldAlert, Users } from 'lucide-react';
 import HubTopbar from './HubTopbar/HubTopbar';
 import './HubPage.css';
 
@@ -22,14 +22,7 @@ const APPS = [
   },
 ];
 
-const getMfaStatus = user => {
-  const status = String(user?.mfa?.status || user?.mfaStatus || '').toLowerCase();
-  if (['disabled', 'pending', 'enabled'].includes(status)) return status;
-  if (user?.mfaEnabled) return 'enabled';
-  return user?.mfa?.mode === 'authenticator' || user?.mfaMode === 'authenticator' ? 'pending' : 'disabled';
-};
-
-export default function HubPage({ user, onOpenDocs, onLogout, onOpenProfile, onOpenMfaSetup }) {
+export default function HubPage({ user, onOpenDocs, onLogout, onOpenProfile, onOpenSettings, onOpenMfaSetup }) {
   const isAdmin = user?.role === 'admin';
   const [appStatuses, setAppStatuses] = useState({
     defectdojo: 'healthy',
@@ -70,13 +63,7 @@ export default function HubPage({ user, onOpenDocs, onLogout, onOpenProfile, onO
 
       {/* Main Content */}
       <main className="hub-content">
-        {getMfaStatus(user) === 'pending' && (
-          <div className="hub-auth-notice" role="status">
-            <Smartphone size={18} />
-            <span>An administrator enabled Authenticator MFA for your account. Connect your app to finish setup.</span>
-            <button type="button" onClick={onOpenMfaSetup}>Set up authenticator</button>
-          </div>
-        )}
+        {user?.mfaStatus === 'pending' && <div className="hub-auth-notice" role="status"><MailWarning size={18} /><span>Authenticator setup is pending for your account.</span><button type="button" onClick={onOpenMfaSetup}>Set up now</button></div>}
         <div className="welcome-section">
           <p className="welcome-back">Welcome back, {user?.username}</p>
           <h1 className="select-workspace-heading">Select a workspace</h1>
@@ -140,6 +127,7 @@ export default function HubPage({ user, onOpenDocs, onLogout, onOpenProfile, onO
                 <Users size={16} />
                 <span>User Management</span>
               </a>
+              <button type="button" className="btn-admin-nav" onClick={onOpenSettings}><Settings size={16} /><span>System Settings</span></button>
             </div>
           </section>
         )}

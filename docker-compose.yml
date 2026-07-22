@@ -57,13 +57,6 @@ services:
       AUTH_SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:?Set AUTH_SERVICE_TOKEN in .env}
       MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?Set MFA_ENCRYPTION_KEY in .env}
       AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${AUTH_BOOTSTRAP_ADMIN_PASSWORD:-}
-      APP_PUBLIC_URL: "${APP_PUBLIC_URL:-}"
-      SMTP_HOST: "${SMTP_HOST:-}"
-      SMTP_PORT: "${SMTP_PORT:-587}"
-      SMTP_SECURE: "${SMTP_SECURE:-false}"
-      SMTP_USER: "${SMTP_USER:-}"
-      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
-      SMTP_FROM: "${SMTP_FROM:-}"
     depends_on:
       auth-db:
         condition: service_healthy

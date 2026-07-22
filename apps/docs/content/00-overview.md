@@ -537,17 +537,17 @@ All backend API requests require authorization, using JWT tokens sent in the HTT
 | HTTP Method | API URL Path | Admin | Payload / Parameters | Response Shape |
 |---|---|---|---|---|
 | **POST** | `/api/login` | No | `{username, password}` | Session response or `{mfaRequired, challengeToken, authenticatorApp}` |
-| **POST** | `/api/login/mfa` | No | `{challengeToken, code}` | `{token, user}` |
+| **POST** | `/api/login/mfa` | No | `{challengeToken, code, mode: "totp"}` | Session or password-change challenge |
+| **POST** | `/api/login/password-change` | No | `{challengeToken, newPassword}` | Session after temporary-password replacement |
 | **POST** | `/api/logout` | No | None (Token Header) | `{message: "Logged out"}` |
-| **GET** | `/api/profile` | No | None | Read-only public identity and MFA status |
-| **POST** | `/api/profile/mfa/enrollment/start` | No | `{currentPassword}` | Temporary setup token, QR URI, manual key |
+| **GET** | `/api/profile` | No | None | Read-only identity and MFA status |
+| **POST** | `/api/profile/mfa/enrollment/start` | No | `{provider, currentPassword}` | Pending-only setup token, QR URI, manual key |
 | **POST** | `/api/profile/mfa/enrollment/confirm` | No | `{setupToken, code}` | Enabled MFA status |
 | **GET** | `/api/users` | **Yes** | None | `Array<{username, role, products: []}>` |
-| **POST** | `/api/users` | **Yes** | Identity, access, initial password, and optional `mfaMode` | Saved public user and notification status |
-| **PATCH** | `/api/users/:username/password` | **Yes** | `{newPassword, adminPassword, reason}` | Reset confirmation and session status |
-| **PATCH** | `/api/users/:username/mfa` | **Yes** | `{mode, adminPassword, reason}` | Disabled or pending MFA status |
-| **POST** | `/api/users/:username/mfa/reset` | **Yes** | `{adminPassword, reason}` | Pending MFA status and notification result |
-| **POST** | `/api/users/:username/mfa/resend` | **Yes** | `{adminPassword, reason}` | Notification result |
+| **POST** | `/api/users` | **Yes** | Identity, access, MFA mode, admin password | User plus one-time temporary password |
+| **POST** | `/api/users/:username/password/reset` | **Yes** | Admin password and optional email flag | One-time temporary password |
+| **PATCH/POST** | `/api/users/:username/mfa` | **Yes** | Admin password and mode/action | Pending/enabled/disabled MFA state |
+| **GET/PATCH** | `/api/settings/email` | **Yes** | Runtime SMTP settings and admin password | Redacted saved settings |
 | **DELETE** | `/api/users/:username` | **Yes** | None | `{message: "User deleted"}` |
 | **GET** | `/api/config` | No | None | `{defectDojoUrl, redmineUrl, trackers, ...}` |
 | **POST** | `/api/config` | **Yes** | Configuration Object | `{message: "Config saved successfully"}` |

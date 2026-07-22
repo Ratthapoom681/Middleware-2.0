@@ -16,23 +16,11 @@ const TABLES = {
   sessions: 'auth_sessions',
   auditEvents: 'auth_audit_events',
   mfaConfig: 'auth_mfa_config',
-  mfaPolicy: 'auth_mfa_policy',
   recoveryCodes: 'auth_mfa_recovery_codes',
   mfaChallenges: 'auth_mfa_challenges'
 };
 
 const normalizeText = (value) => String(value || '').trim();
-
-const normalizeIdentityText = (value) => normalizeText(value).slice(0, 120);
-
-const normalizeMfaMode = (value) => (
-  normalizeText(value).toLowerCase() === 'authenticator' ? 'authenticator' : 'disabled'
-);
-
-const normalizeNotificationStatus = (value) => {
-  const normalized = normalizeText(value).toLowerCase();
-  return ['pending', 'sent', 'failed'].includes(normalized) ? normalized : 'none';
-};
 
 const normalizeStatus = (status = '') => (
   normalizeText(status).toLowerCase() === 'suspended' ? 'suspended' : 'active'
@@ -84,45 +72,25 @@ const buildPoolConfig = (connectionString) => {
   return Object.keys(config).length > 0 ? config : undefined;
 };
 
-const normalizeUserRecord = (user = {}) => {
-  const accountStatus = normalizeStatus(user.accountStatus || user.status);
-  const mfaEnabled = Boolean(user.mfaEnabled || user.mfa_enabled);
-  const mfaMode = normalizeMfaMode(
-    user.mfaMode || user.mfa_mode || (mfaEnabled ? 'authenticator' : 'disabled')
-  );
-  return {
-    id: normalizeText(user.id) || crypto.randomUUID(),
-    username: normalizeText(user.username),
-    email: normalizeText(user.email),
-    fullName: normalizeIdentityText(user.fullName ?? user.full_name),
-    company: normalizeIdentityText(user.company),
-    department: normalizeIdentityText(user.department),
-    status: accountStatus,
-    accountStatus,
-    role: normalizeText(user.role) || 'viewer',
-    products: normalizeProducts(user.products),
-    salt: user.salt || '',
-    hash: user.hash || user.password_hash || '',
-    passwordAlgorithm: user.passwordAlgorithm || user.password_algorithm || 'pbkdf2-sha512:1000',
-    passwordUpdatedAt: toIsoString(user.passwordUpdatedAt || user.password_updated_at),
-    lastLoginAt: toIsoString(user.lastLoginAt || user.last_login_at),
-    online: Boolean(user.online),
-    presenceStatus: user.presenceStatus || user.presence_status || '',
-    mfaEnabled,
-    mfaProvider: normalizeText(user.mfaProvider || user.mfa_provider),
-    mfaEnabledAt: toIsoString(user.mfaEnabledAt || user.mfa_enabled_at),
-    mfaMode,
-    mfaStatus: mfaMode === 'disabled' ? 'disabled' : (mfaEnabled ? 'enabled' : 'pending'),
-    mfaRequestedAt: toIsoString(user.mfaRequestedAt || user.mfa_requested_at),
-    mfaRequestedBy: normalizeText(user.mfaRequestedBy || user.mfa_requested_by),
-    mfaRequestReason: normalizeText(user.mfaRequestReason || user.mfa_request_reason),
-    mfaNotificationStatus: normalizeNotificationStatus(user.mfaNotificationStatus || user.mfa_notification_status),
-    mfaNotificationAttemptedAt: toIsoString(user.mfaNotificationAttemptedAt || user.mfa_notification_attempted_at),
-    mfaNotificationSentAt: toIsoString(user.mfaNotificationSentAt || user.mfa_notification_sent_at),
-    mfaNotificationError: normalizeText(user.mfaNotificationError || user.mfa_notification_error),
-    recoveryCodesRemaining: Number(user.recoveryCodesRemaining ?? user.recovery_codes_remaining ?? 0)
-  };
-};
+const normalizeUserRecord = (user = {}) => ({
+  id: normalizeText(user.id) || crypto.randomUUID(),
+  username: normalizeText(user.username),
+  email: normalizeText(user.email),
+  status: normalizeStatus(user.status || user.accountStatus),
+  role: normalizeText(user.role) || 'viewer',
+  products: normalizeProducts(user.products),
+  salt: user.salt || '',
+  hash: user.hash || user.password_hash || '',
+  passwordAlgorithm: user.passwordAlgorithm || user.password_algorithm || 'pbkdf2-sha512:1000',
+  passwordUpdatedAt: toIsoString(user.passwordUpdatedAt || user.password_updated_at),
+  lastLoginAt: toIsoString(user.lastLoginAt || user.last_login_at),
+  online: Boolean(user.online),
+  presenceStatus: user.presenceStatus || user.presence_status || '',
+  mfaEnabled: Boolean(user.mfaEnabled || user.mfa_enabled),
+  mfaProvider: normalizeText(user.mfaProvider || user.mfa_provider),
+  mfaEnabledAt: toIsoString(user.mfaEnabledAt || user.mfa_enabled_at),
+  recoveryCodesRemaining: Number(user.recoveryCodesRemaining ?? user.recovery_codes_remaining ?? 0)
+});
 
 const buildPublicUser = (user = {}) => {
   const normalized = normalizeUserRecord(user);
@@ -134,9 +102,6 @@ const buildPublicUser = (user = {}) => {
     id: normalized.id,
     username: normalized.username,
     email: normalized.email,
-    fullName: normalized.fullName,
-    company: normalized.company,
-    department: normalized.department,
     role: normalized.role,
     products: normalized.products,
     status: accountStatus === 'suspended' ? 'suspended' : presenceStatus,
@@ -146,15 +111,7 @@ const buildPublicUser = (user = {}) => {
     passwordUpdatedAt: normalized.passwordUpdatedAt,
     mfaEnabled: normalized.mfaEnabled,
     mfaProvider: normalized.mfaProvider,
-    mfaEnabledAt: normalized.mfaEnabledAt,
-    mfaMode: normalized.mfaMode,
-    mfaStatus: normalized.mfaStatus,
-    mfaRequestedAt: normalized.mfaRequestedAt,
-    mfaNotificationStatus: normalized.mfaNotificationStatus,
-    mfaNotificationAttemptedAt: normalized.mfaNotificationAttemptedAt,
-    mfaNotificationSentAt: normalized.mfaNotificationSentAt,
-    mfaNotificationError: normalized.mfaNotificationError,
-    recoveryCodesRemaining: normalized.recoveryCodesRemaining
+    mfaEnabledAt: normalized.mfaEnabledAt
   };
 };
 
@@ -232,9 +189,6 @@ function createAuthStore({ dataDir, hashPassword }) {
     id: row.id,
     username: row.username,
     email: row.email,
-    fullName: row.full_name,
-    company: row.company,
-    department: row.department,
     status: row.status,
     role: row.role,
     products: parseJsonArray(row.products),
@@ -248,14 +202,6 @@ function createAuthStore({ dataDir, hashPassword }) {
     mfaEnabled: row.mfa_enabled,
     mfaProvider: row.mfa_provider,
     mfaEnabledAt: row.mfa_enabled_at,
-    mfaMode: row.mfa_mode,
-    mfaRequestedAt: row.mfa_requested_at,
-    mfaRequestedBy: row.mfa_requested_by,
-    mfaRequestReason: row.mfa_request_reason,
-    mfaNotificationStatus: row.mfa_notification_status,
-    mfaNotificationAttemptedAt: row.mfa_notification_attempted_at,
-    mfaNotificationSentAt: row.mfa_notification_sent_at,
-    mfaNotificationError: row.mfa_notification_error,
     recoveryCodesRemaining: row.recovery_codes_remaining
   }));
 
@@ -265,9 +211,6 @@ function createAuthStore({ dataDir, hashPassword }) {
         u.id,
         u.username,
         u.email,
-        u.full_name,
-        u.company,
-        u.department,
         u.status,
         u.last_login_at,
         c.salt,
@@ -277,14 +220,6 @@ function createAuthStore({ dataDir, hashPassword }) {
         (mf.user_id IS NOT NULL) AS mfa_enabled,
         mf.provider AS mfa_provider,
         mf.enabled_at AS mfa_enabled_at,
-        COALESCE(mp.mode, CASE WHEN mf.user_id IS NULL THEN 'disabled' ELSE 'authenticator' END) AS mfa_mode,
-        mp.requested_at AS mfa_requested_at,
-        mp.requested_by AS mfa_requested_by,
-        mp.request_reason AS mfa_request_reason,
-        COALESCE(mp.notification_status, 'none') AS mfa_notification_status,
-        mp.notification_attempted_at AS mfa_notification_attempted_at,
-        mp.notification_sent_at AS mfa_notification_sent_at,
-        mp.notification_error AS mfa_notification_error,
         COALESCE((
           SELECT count(*)::int FROM ${TABLES.recoveryCodes} rc
           WHERE rc.user_id = u.id AND rc.used_at IS NULL
@@ -300,7 +235,6 @@ function createAuthStore({ dataDir, hashPassword }) {
       FROM ${TABLES.users} u
       LEFT JOIN ${TABLES.credentials} c ON c.user_id = u.id
       LEFT JOIN ${TABLES.mfaConfig} mf ON mf.user_id = u.id
-      LEFT JOIN ${TABLES.mfaPolicy} mp ON mp.user_id = u.id
       LEFT JOIN ${TABLES.memberships} m ON m.user_id = u.id AND m.app_key = $1
       LEFT JOIN ${TABLES.memberships} hub_m ON hub_m.user_id = u.id AND hub_m.app_key = $2
       ORDER BY u.username
@@ -314,9 +248,6 @@ function createAuthStore({ dataDir, hashPassword }) {
         u.id,
         u.username,
         u.email,
-        u.full_name,
-        u.company,
-        u.department,
         u.status,
         u.last_login_at,
         c.salt,
@@ -326,14 +257,6 @@ function createAuthStore({ dataDir, hashPassword }) {
         (mf.user_id IS NOT NULL) AS mfa_enabled,
         mf.provider AS mfa_provider,
         mf.enabled_at AS mfa_enabled_at,
-        COALESCE(mp.mode, CASE WHEN mf.user_id IS NULL THEN 'disabled' ELSE 'authenticator' END) AS mfa_mode,
-        mp.requested_at AS mfa_requested_at,
-        mp.requested_by AS mfa_requested_by,
-        mp.request_reason AS mfa_request_reason,
-        COALESCE(mp.notification_status, 'none') AS mfa_notification_status,
-        mp.notification_attempted_at AS mfa_notification_attempted_at,
-        mp.notification_sent_at AS mfa_notification_sent_at,
-        mp.notification_error AS mfa_notification_error,
         COALESCE((
           SELECT count(*)::int FROM ${TABLES.recoveryCodes} rc
           WHERE rc.user_id = u.id AND rc.used_at IS NULL
@@ -349,7 +272,6 @@ function createAuthStore({ dataDir, hashPassword }) {
       FROM ${TABLES.users} u
       LEFT JOIN ${TABLES.credentials} c ON c.user_id = u.id
       LEFT JOIN ${TABLES.mfaConfig} mf ON mf.user_id = u.id
-      LEFT JOIN ${TABLES.mfaPolicy} mp ON mp.user_id = u.id
       LEFT JOIN ${TABLES.memberships} m ON m.user_id = u.id AND m.app_key = $2
       LEFT JOIN ${TABLES.memberships} hub_m ON hub_m.user_id = u.id AND hub_m.app_key = $3
       WHERE u.username = $1
@@ -366,16 +288,11 @@ function createAuthStore({ dataDir, hashPassword }) {
       const existing = await client.query('SELECT id FROM auth_users WHERE username = $1', [user.username]);
       const userId = existing.rows[0]?.id || user.id || crypto.randomUUID();
       await client.query(`
-        INSERT INTO ${TABLES.users} (
-          id, username, email, full_name, company, department, status, last_login_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        INSERT INTO ${TABLES.users} (id, username, email, status, last_login_at)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (username)
         DO UPDATE SET
           email = EXCLUDED.email,
-          full_name = EXCLUDED.full_name,
-          company = EXCLUDED.company,
-          department = EXCLUDED.department,
           status = EXCLUDED.status,
           last_login_at = COALESCE(EXCLUDED.last_login_at, ${TABLES.users}.last_login_at),
           updated_at = now()
@@ -383,9 +300,6 @@ function createAuthStore({ dataDir, hashPassword }) {
         userId,
         user.username,
         user.email,
-        user.fullName,
-        user.company,
-        user.department,
         user.status,
         user.lastLoginAt ? new Date(user.lastLoginAt) : null
       ]);
@@ -413,23 +327,6 @@ function createAuthStore({ dataDir, hashPassword }) {
             products = EXCLUDED.products,
             updated_at = now()
         `, [userId, appKey, user.role, JSON.stringify(user.products)]);
-      }
-
-      const mfaModeWasProvided = Object.prototype.hasOwnProperty.call(input, 'mfaMode')
-        || Object.prototype.hasOwnProperty.call(input, 'mfa_mode');
-      if (!existing.rows[0] || mfaModeWasProvided) {
-        await client.query(`
-          INSERT INTO ${TABLES.mfaPolicy} (user_id, mode, requested_at)
-          VALUES ($1, $2, CASE WHEN $2 = 'authenticator' THEN now() ELSE NULL END)
-          ON CONFLICT (user_id) DO UPDATE SET
-            mode = EXCLUDED.mode,
-            requested_at = CASE
-              WHEN EXCLUDED.mode = 'authenticator' AND ${TABLES.mfaPolicy}.mode <> 'authenticator' THEN now()
-              WHEN EXCLUDED.mode = 'disabled' THEN NULL
-              ELSE ${TABLES.mfaPolicy}.requested_at
-            END,
-            updated_at = now()
-        `, [userId, user.mfaMode]);
       }
     });
     return getUserByUsernameFromDb(user.username);
@@ -565,59 +462,18 @@ function createAuthStore({ dataDir, hashPassword }) {
 
   const getFileMfaEntry = (username) => readMfaFile()[normalizeText(username)] || null;
 
-  const normalizeFileMfaPolicy = (entry = {}) => {
-    const policy = entry.policy && typeof entry.policy === 'object' ? entry.policy : {};
-    const mode = normalizeMfaMode(policy.mode || (entry.secretCiphertext ? 'authenticator' : 'disabled'));
-    return {
-      mode,
-      requestedAt: toIsoString(policy.requestedAt || (entry.secretCiphertext ? entry.enabledAt : '')),
-      requestedBy: normalizeText(policy.requestedBy),
-      requestReason: normalizeText(policy.requestReason),
-      notificationStatus: normalizeNotificationStatus(policy.notificationStatus),
-      notificationAttemptedAt: toIsoString(policy.notificationAttemptedAt),
-      notificationSentAt: toIsoString(policy.notificationSentAt),
-      notificationError: normalizeText(policy.notificationError)
-    };
-  };
-
-  const migrateFileMfaData = () => {
-    const users = readUsersFromDisk(usersPath);
-    const data = readMfaFile();
-    for (const user of users) {
-      const entry = data[user.username] && typeof data[user.username] === 'object'
-        ? data[user.username]
-        : {};
-      entry.policy = normalizeFileMfaPolicy(entry);
-      delete entry.recoveryCodes;
-      data[user.username] = entry;
-    }
-    writeMfaFile(data);
-  };
-
   const listFileUsers = () => {
     const users = readUsersFromDisk(usersPath);
     const mfaData = readMfaFile();
     const now = Date.now();
     return users.map(user => {
       const mfa = mfaData[user.username] || null;
-      const policy = normalizeFileMfaPolicy(mfa || {});
       return {
         ...user,
         passwordUpdatedAt: user.passwordUpdatedAt || '',
         mfaEnabled: Boolean(mfa?.secretCiphertext),
         mfaProvider: mfa?.provider || '',
         mfaEnabledAt: mfa?.enabledAt || '',
-        mfaMode: policy.mode,
-        mfaStatus: policy.mode === 'disabled'
-          ? 'disabled'
-          : (mfa?.secretCiphertext ? 'enabled' : 'pending'),
-        mfaRequestedAt: policy.requestedAt,
-        mfaRequestedBy: policy.requestedBy,
-        mfaRequestReason: policy.requestReason,
-        mfaNotificationStatus: policy.notificationStatus,
-        mfaNotificationAttemptedAt: policy.notificationAttemptedAt,
-        mfaNotificationSentAt: policy.notificationSentAt,
-        mfaNotificationError: policy.notificationError,
         recoveryCodesRemaining: 0,
         presenceStatus: Array.from(fileSessions.values()).some(session => (
         session.username === user.username
@@ -633,7 +489,7 @@ function createAuthStore({ dataDir, hashPassword }) {
   };
 
   const getFileUserIndex = (username) => {
-    const users = readUsersFromDisk(usersPath);
+    const users = listFileUsers();
     return {
       users,
       index: users.findIndex(user => user.username === username)
@@ -647,9 +503,6 @@ function createAuthStore({ dataDir, hashPassword }) {
       users[index] = {
         ...users[index],
         email: user.email,
-        fullName: user.fullName,
-        company: user.company,
-        department: user.department,
         role: user.role,
         products: user.products,
         status: user.status,
@@ -664,25 +517,6 @@ function createAuthStore({ dataDir, hashPassword }) {
       users.push(user);
     }
     writeFileUsers(users);
-    const mfaData = readMfaFile();
-    const existingMfa = mfaData[user.username] && typeof mfaData[user.username] === 'object'
-      ? mfaData[user.username]
-      : {};
-    const mfaModeWasProvided = Object.prototype.hasOwnProperty.call(input, 'mfaMode')
-      || Object.prototype.hasOwnProperty.call(input, 'mfa_mode');
-    if (index < 0 || mfaModeWasProvided) {
-      const existingPolicy = normalizeFileMfaPolicy(existingMfa);
-      const mode = user.mfaMode;
-      existingMfa.policy = {
-        ...existingPolicy,
-        mode,
-        requestedAt: mode === 'authenticator'
-          ? (existingPolicy.mode === 'authenticator' ? existingPolicy.requestedAt : new Date().toISOString())
-          : ''
-      };
-      mfaData[user.username] = existingMfa;
-      writeMfaFile(mfaData);
-    }
     return listFileUsers().find(item => item.username === user.username) || null;
   };
 
@@ -703,7 +537,15 @@ function createAuthStore({ dataDir, hashPassword }) {
     } else {
       console.log('Auth Service: Running in file-storage mode');
       await ensureSeedUsers();
-      migrateFileMfaData();
+      const mfaData = readMfaFile();
+      let changed = false;
+      for (const entry of Object.values(mfaData)) {
+        if (entry && Object.prototype.hasOwnProperty.call(entry, 'recoveryCodes')) {
+          delete entry.recoveryCodes;
+          changed = true;
+        }
+      }
+      if (changed) writeMfaFile(mfaData);
     }
   };
 
@@ -794,44 +636,23 @@ function createAuthStore({ dataDir, hashPassword }) {
     };
   };
 
-  const updateIdentity = async (username, changes = {}) => {
+  const updateEmail = async (username, email) => {
     const normalizedUsername = normalizeText(username);
-    const current = await getUserByUsername(normalizedUsername);
-    if (!current) return null;
-    const next = {
-      email: Object.prototype.hasOwnProperty.call(changes, 'email')
-        ? normalizeText(changes.email)
-        : current.email,
-      fullName: Object.prototype.hasOwnProperty.call(changes, 'fullName')
-        ? normalizeIdentityText(changes.fullName)
-        : current.fullName,
-      company: Object.prototype.hasOwnProperty.call(changes, 'company')
-        ? normalizeIdentityText(changes.company)
-        : current.company,
-      department: Object.prototype.hasOwnProperty.call(changes, 'department')
-        ? normalizeIdentityText(changes.department)
-        : current.department
-    };
+    const normalizedEmail = normalizeText(email);
     if (pool) {
       await pool.query(`
         UPDATE ${TABLES.users}
-        SET email = $2,
-            full_name = $3,
-            company = $4,
-            department = $5,
-            updated_at = now()
+        SET email = $2, updated_at = now()
         WHERE username = $1
-      `, [normalizedUsername, next.email, next.fullName, next.company, next.department]);
+      `, [normalizedUsername, normalizedEmail]);
       return getUserByUsernameFromDb(normalizedUsername);
     }
     const { users, index } = getFileUserIndex(normalizedUsername);
     if (index < 0) return null;
-    users[index] = { ...users[index], ...next };
+    users[index].email = normalizedEmail;
     writeFileUsers(users);
     return getUserByUsername(normalizedUsername);
   };
-
-  const updateEmail = async (username, email) => updateIdentity(username, { email });
 
   const updatePassword = async (username, { salt, hash, passwordAlgorithm }) => {
     const normalizedUsername = normalizeText(username);
@@ -874,122 +695,6 @@ function createAuthStore({ dataDir, hashPassword }) {
       count += 1;
     }
     return count;
-  };
-
-  const buildMfaPolicy = (value = {}, enabled = false, enabledAt = '') => {
-    const mode = normalizeMfaMode(value.mode || (enabled ? 'authenticator' : 'disabled'));
-    return {
-      mode,
-      status: mode === 'disabled' ? 'disabled' : (enabled ? 'enabled' : 'pending'),
-      requestedAt: toIsoString(value.requestedAt || value.requested_at),
-      requestedBy: normalizeText(value.requestedBy || value.requested_by),
-      requestReason: normalizeText(value.requestReason || value.request_reason),
-      notificationStatus: normalizeNotificationStatus(value.notificationStatus || value.notification_status),
-      notificationAttemptedAt: toIsoString(value.notificationAttemptedAt || value.notification_attempted_at),
-      notificationSentAt: toIsoString(value.notificationSentAt || value.notification_sent_at),
-      notificationError: normalizeText(value.notificationError || value.notification_error),
-      enabledAt: enabled ? toIsoString(enabledAt) : ''
-    };
-  };
-
-  const getMfaPolicy = async (username) => {
-    const normalizedUsername = normalizeText(username);
-    if (!normalizedUsername) return null;
-    if (pool) {
-      const { rows } = await pool.query(`
-        SELECT
-          mp.mode,
-          mp.requested_at,
-          mp.requested_by,
-          mp.request_reason,
-          mp.notification_status,
-          mp.notification_attempted_at,
-          mp.notification_sent_at,
-          mp.notification_error,
-          (mf.user_id IS NOT NULL) AS mfa_enabled,
-          mf.enabled_at
-        FROM ${TABLES.users} u
-        LEFT JOIN ${TABLES.mfaPolicy} mp ON mp.user_id = u.id
-        LEFT JOIN ${TABLES.mfaConfig} mf ON mf.user_id = u.id
-        WHERE u.username = $1
-        LIMIT 1
-      `, [normalizedUsername]);
-      if (!rows[0]) return null;
-      return buildMfaPolicy(rows[0], Boolean(rows[0].mfa_enabled), rows[0].enabled_at);
-    }
-    const user = readUsersFromDisk(usersPath).find(item => item.username === normalizedUsername);
-    if (!user) return null;
-    const entry = getFileMfaEntry(normalizedUsername) || {};
-    return buildMfaPolicy(normalizeFileMfaPolicy(entry), Boolean(entry.secretCiphertext), entry.enabledAt);
-  };
-
-  const setMfaPolicy = async (username, changes = {}) => {
-    const normalizedUsername = normalizeText(username);
-    const current = await getMfaPolicy(normalizedUsername);
-    if (!current) return null;
-    const has = (key) => Object.prototype.hasOwnProperty.call(changes, key);
-    const next = {
-      mode: has('mode') ? normalizeMfaMode(changes.mode) : current.mode,
-      requestedAt: has('requestedAt') ? toIsoString(changes.requestedAt) : current.requestedAt,
-      requestedBy: has('requestedBy') ? normalizeText(changes.requestedBy) : current.requestedBy,
-      requestReason: has('requestReason')
-        ? normalizeText(changes.requestReason)
-        : (has('reason') ? normalizeText(changes.reason) : current.requestReason),
-      notificationStatus: has('notificationStatus')
-        ? normalizeNotificationStatus(changes.notificationStatus)
-        : current.notificationStatus,
-      notificationAttemptedAt: has('notificationAttemptedAt')
-        ? toIsoString(changes.notificationAttemptedAt)
-        : current.notificationAttemptedAt,
-      notificationSentAt: has('notificationSentAt')
-        ? toIsoString(changes.notificationSentAt)
-        : current.notificationSentAt,
-      notificationError: has('notificationError')
-        ? normalizeText(changes.notificationError)
-        : current.notificationError
-    };
-    if (pool) {
-      const result = await pool.query(`
-        INSERT INTO ${TABLES.mfaPolicy} (
-          user_id, mode, requested_at, requested_by, request_reason,
-          notification_status, notification_attempted_at, notification_sent_at,
-          notification_error
-        )
-        SELECT u.id, $2, $3, $4, $5, $6, $7, $8, $9
-        FROM ${TABLES.users} u
-        WHERE u.username = $1
-        ON CONFLICT (user_id) DO UPDATE SET
-          mode = EXCLUDED.mode,
-          requested_at = EXCLUDED.requested_at,
-          requested_by = EXCLUDED.requested_by,
-          request_reason = EXCLUDED.request_reason,
-          notification_status = EXCLUDED.notification_status,
-          notification_attempted_at = EXCLUDED.notification_attempted_at,
-          notification_sent_at = EXCLUDED.notification_sent_at,
-          notification_error = EXCLUDED.notification_error,
-          updated_at = now()
-        RETURNING user_id
-      `, [
-        normalizedUsername,
-        next.mode,
-        next.requestedAt ? new Date(next.requestedAt) : null,
-        next.requestedBy,
-        next.requestReason,
-        next.notificationStatus,
-        next.notificationAttemptedAt ? new Date(next.notificationAttemptedAt) : null,
-        next.notificationSentAt ? new Date(next.notificationSentAt) : null,
-        next.notificationError
-      ]);
-      return result.rowCount > 0 ? getMfaPolicy(normalizedUsername) : null;
-    }
-    const data = readMfaFile();
-    const entry = data[normalizedUsername] && typeof data[normalizedUsername] === 'object'
-      ? data[normalizedUsername]
-      : {};
-    entry.policy = next;
-    data[normalizedUsername] = entry;
-    writeMfaFile(data);
-    return getMfaPolicy(normalizedUsername);
   };
 
   const getMfaConfig = async (username) => {
@@ -1036,11 +741,11 @@ function createAuthStore({ dataDir, hashPassword }) {
     return {
       userId: user?.id || '',
       ...entry,
-      recoveryCodesRemaining: 0
+      recoveryCodesRemaining: (entry.recoveryCodes || []).filter(code => !code.usedAt).length
     };
   };
 
-  const saveMfaConfig = async (username, config = {}, _recoveryCodeHashes = []) => {
+  const saveMfaConfig = async (username, config = {}, recoveryCodeHashes = []) => {
     const normalizedUsername = normalizeText(username);
     const enabledAt = config.enabledAt || new Date().toISOString();
     if (pool) {
@@ -1073,24 +778,17 @@ function createAuthStore({ dataDir, hashPassword }) {
           config.lastUsedCounter ?? null
         ]);
         await client.query(`DELETE FROM ${TABLES.recoveryCodes} WHERE user_id = $1`, [userId]);
-        await client.query(`
-          INSERT INTO ${TABLES.mfaPolicy} (user_id, mode, requested_at)
-          VALUES ($1, 'authenticator', $2)
-          ON CONFLICT (user_id) DO UPDATE SET
-            mode = 'authenticator',
-            requested_at = COALESCE(${TABLES.mfaPolicy}.requested_at, EXCLUDED.requested_at),
-            updated_at = now()
-        `, [userId, new Date(enabledAt)]);
+        for (const codeHash of recoveryCodeHashes) {
+          await client.query(`
+            INSERT INTO ${TABLES.recoveryCodes} (user_id, code_hash)
+            VALUES ($1, $2)
+          `, [userId, codeHash]);
+        }
       });
       return getMfaConfig(normalizedUsername);
     }
     const data = readMfaFile();
-    const existing = data[normalizedUsername] && typeof data[normalizedUsername] === 'object'
-      ? data[normalizedUsername]
-      : {};
-    const policy = normalizeFileMfaPolicy(existing);
     data[normalizedUsername] = {
-      ...existing,
       provider: config.provider,
       secretCiphertext: config.secretCiphertext,
       secretIv: config.secretIv,
@@ -1099,102 +797,34 @@ function createAuthStore({ dataDir, hashPassword }) {
       lastUsedCounter: config.lastUsedCounter ?? null,
       failedAttempts: 0,
       lockedUntil: '',
-      policy: {
-        ...policy,
-        mode: 'authenticator',
-        requestedAt: policy.requestedAt || enabledAt
-      }
+      recoveryCodes: recoveryCodeHashes.map(codeHash => ({ codeHash, usedAt: '' }))
     };
-    delete data[normalizedUsername].recoveryCodes;
     writeMfaFile(data);
     return getMfaConfig(normalizedUsername);
   };
 
-  const clearMfaEnrollment = async (username, policyChanges = {}) => {
+  const clearMfa = async (username) => {
     const normalizedUsername = normalizeText(username);
-    const current = await getMfaPolicy(normalizedUsername);
-    if (!current) return null;
-    const has = (key) => Object.prototype.hasOwnProperty.call(policyChanges, key);
-    const mode = has('mode') ? normalizeMfaMode(policyChanges.mode) : 'disabled';
-    const nextPolicy = {
-      mode,
-      requestedAt: has('requestedAt')
-        ? toIsoString(policyChanges.requestedAt)
-        : (mode === 'authenticator' ? new Date().toISOString() : ''),
-      requestedBy: has('requestedBy') ? normalizeText(policyChanges.requestedBy) : current.requestedBy,
-      requestReason: has('requestReason')
-        ? normalizeText(policyChanges.requestReason)
-        : (has('reason') ? normalizeText(policyChanges.reason) : current.requestReason),
-      notificationStatus: has('notificationStatus')
-        ? normalizeNotificationStatus(policyChanges.notificationStatus)
-        : (mode === 'authenticator' ? 'pending' : current.notificationStatus),
-      notificationAttemptedAt: has('notificationAttemptedAt')
-        ? toIsoString(policyChanges.notificationAttemptedAt)
-        : (mode === 'authenticator' ? '' : current.notificationAttemptedAt),
-      notificationSentAt: has('notificationSentAt')
-        ? toIsoString(policyChanges.notificationSentAt)
-        : (mode === 'authenticator' ? '' : current.notificationSentAt),
-      notificationError: has('notificationError')
-        ? normalizeText(policyChanges.notificationError)
-        : (mode === 'authenticator' ? '' : current.notificationError)
-    };
     if (pool) {
-      const found = await withTransaction(async (client) => {
+      return withTransaction(async (client) => {
         const userResult = await client.query(`SELECT id FROM ${TABLES.users} WHERE username = $1`, [normalizedUsername]);
         const userId = userResult.rows[0]?.id;
         if (!userId) return false;
         await client.query(`DELETE FROM ${TABLES.recoveryCodes} WHERE user_id = $1`, [userId]);
         await client.query(`DELETE FROM ${TABLES.mfaChallenges} WHERE user_id = $1`, [userId]);
-        await client.query(`DELETE FROM ${TABLES.mfaConfig} WHERE user_id = $1`, [userId]);
-        await client.query(`
-          INSERT INTO ${TABLES.mfaPolicy} (
-            user_id, mode, requested_at, requested_by, request_reason,
-            notification_status, notification_attempted_at, notification_sent_at,
-            notification_error
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-          ON CONFLICT (user_id) DO UPDATE SET
-            mode = EXCLUDED.mode,
-            requested_at = EXCLUDED.requested_at,
-            requested_by = EXCLUDED.requested_by,
-            request_reason = EXCLUDED.request_reason,
-            notification_status = EXCLUDED.notification_status,
-            notification_attempted_at = EXCLUDED.notification_attempted_at,
-            notification_sent_at = EXCLUDED.notification_sent_at,
-            notification_error = EXCLUDED.notification_error,
-            updated_at = now()
-        `, [
-          userId,
-          nextPolicy.mode,
-          nextPolicy.requestedAt ? new Date(nextPolicy.requestedAt) : null,
-          nextPolicy.requestedBy,
-          nextPolicy.requestReason,
-          nextPolicy.notificationStatus,
-          nextPolicy.notificationAttemptedAt ? new Date(nextPolicy.notificationAttemptedAt) : null,
-          nextPolicy.notificationSentAt ? new Date(nextPolicy.notificationSentAt) : null,
-          nextPolicy.notificationError
-        ]);
-        return true;
+        const result = await client.query(`DELETE FROM ${TABLES.mfaConfig} WHERE user_id = $1`, [userId]);
+        return result.rowCount > 0;
       });
-      return found ? getMfaPolicy(normalizedUsername) : null;
     }
     const data = readMfaFile();
-    const entry = data[normalizedUsername] && typeof data[normalizedUsername] === 'object'
-      ? data[normalizedUsername]
-      : {};
-    for (const key of [
-      'provider', 'secretCiphertext', 'secretIv', 'secretTag', 'enabledAt',
-      'lastUsedCounter', 'failedAttempts', 'lockedUntil', 'recoveryCodes'
-    ]) delete entry[key];
-    entry.policy = nextPolicy;
-    data[normalizedUsername] = entry;
+    const existed = Boolean(data[normalizedUsername]);
+    delete data[normalizedUsername];
     writeMfaFile(data);
     for (const [hash, challenge] of fileChallenges.entries()) {
       if (challenge.username === normalizedUsername) fileChallenges.delete(hash);
     }
-    return getMfaPolicy(normalizedUsername);
+    return existed;
   };
-
-  const clearMfa = async (username) => Boolean(await clearMfaEnrollment(username));
 
   const markTotpUsed = async (username, counter) => {
     const normalizedUsername = normalizeText(username);
@@ -1417,14 +1047,10 @@ function createAuthStore({ dataDir, hashPassword }) {
     revokeSession,
     revokeUserSessions,
     getActiveSession,
-    updateIdentity,
     updateEmail,
     updatePassword,
     getMfaConfig,
-    getMfaPolicy,
-    setMfaPolicy,
     saveMfaConfig,
-    clearMfaEnrollment,
     clearMfa,
     markTotpUsed,
     recordMfaFailure,
@@ -1446,7 +1072,6 @@ module.exports = {
   buildPublicUser,
   normalizeUserRecord,
   normalizeStatus,
-  normalizeMfaMode,
   DEFAULT_APP_KEY,
   HUB_APP_KEY,
   ALL_APP_KEYS

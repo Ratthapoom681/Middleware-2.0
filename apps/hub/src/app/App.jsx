@@ -2,9 +2,11 @@ import { useCallback, useState, useEffect } from 'react';
 import HubPage from '../features/hub/HubPage';
 import UsersPage from '../features/users/UsersPage';
 import ProfilePage, { MfaEnrollmentPage } from '../features/profile/ProfilePage';
+import SettingsPage from '../features/settings/SettingsPage';
 
 const TOKEN_KEY = 'middleware_token';
 const USER_KEY = 'middleware_user';
+const AUTH_NOTICE_KEY = 'middleware_auth_notice';
 
 function getStoredUser() {
   try {
@@ -19,6 +21,15 @@ function getStoredToken() {
   return localStorage.getItem(TOKEN_KEY) || null;
 }
 
+function getAuthNotice() {
+  try {
+    const raw = sessionStorage.getItem(AUTH_NOTICE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 function getSafeProfileReturnTo(hash) {
   const [, queryString = ''] = String(hash || '').split('?');
   const candidate = new URLSearchParams(queryString).get('returnTo') || '/';
@@ -31,6 +42,7 @@ export default function App() {
   const [token, setToken] = useState(getStoredToken);
   const [user, setUser] = useState(getStoredUser);
   const [hash, setHash] = useState(window.location.hash);
+  const [authNotice] = useState(getAuthNotice);
 
   /* Listen for hash changes (for #users navigation) */
   useEffect(() => {
@@ -40,6 +52,11 @@ export default function App() {
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
+
+  useEffect(() => {
+    const isHubRoute = !hash.startsWith('#profile') && !hash.startsWith('#mfa-setup') && hash !== '#users' && hash !== '#settings' && !hash.startsWith('#docs');
+    if (authNotice && isHubRoute) sessionStorage.removeItem(AUTH_NOTICE_KEY);
+  }, [authNotice, hash]);
 
   async function handleLogout() {
     if (token) {
@@ -62,7 +79,7 @@ export default function App() {
   const handleSessionEnded = useCallback((reason) => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
-    const params = new URLSearchParams({ returnTo: '/', notice: reason });
+    const params = new URLSearchParams({ returnTo: '/#profile', notice: reason });
     window.location.replace(`/login/?${params.toString()}`);
   }, []);
 
@@ -80,19 +97,15 @@ export default function App() {
   }
 
   if (hash === '#users' && user.role === 'admin') {
-    return <UsersPage token={token} currentUser={user} onBack={() => { window.location.hash = ''; }} onSessionEnded={handleSessionEnded} onUserUpdated={handleUserUpdated} />;
+    return <UsersPage token={token} currentUser={user} onUserUpdated={handleUserUpdated} onBack={() => { window.location.hash = ''; }} />;
+  }
+
+  if (hash === '#settings' && user.role === 'admin') {
+    return <SettingsPage token={token} currentUser={user} onBack={() => { window.location.hash = ''; }} />;
   }
 
   if (hash.startsWith('#mfa-setup')) {
-    return (
-      <MfaEnrollmentPage
-        token={token}
-        currentUser={user}
-        onBack={() => { window.location.hash = ''; }}
-        onLogout={handleLogout}
-        onUserUpdated={handleUserUpdated}
-      />
-    );
+    return <MfaEnrollmentPage token={token} currentUser={user} onBack={() => { window.location.hash = ''; }} onLogout={handleLogout} onUserUpdated={handleUserUpdated} />;
   }
 
   if (hash.startsWith('#profile')) {
@@ -105,6 +118,7 @@ export default function App() {
         onBack={() => { window.location.href = returnTo; }}
         onLogout={handleLogout}
         onUserUpdated={handleUserUpdated}
+        onSessionEnded={handleSessionEnded}
       />
     );
   }
@@ -112,8 +126,10 @@ export default function App() {
   return (
     <HubPage
       user={user}
+      authNotice={authNotice}
       onOpenDocs={() => { window.location.href = '/docs/'; }}
       onOpenProfile={() => { window.location.hash = '#profile?returnTo=%2F'; }}
+      onOpenSettings={() => { window.location.hash = '#settings'; }}
       onOpenMfaSetup={() => { window.location.hash = '#mfa-setup'; }}
       onLogout={handleLogout}
     />

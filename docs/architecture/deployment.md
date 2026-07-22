@@ -3,32 +3,11 @@
 ## Supported Modes
 
 - Windows development:
-  `node scripts/compose-up.cjs`
+  `docker compose up -d --build`
 - Linux production:
-  `node scripts/compose-up.cjs`
+  `docker compose up -d --build`
 - Optional monitoring:
   `docker compose --profile monitoring up -d monitor`
-
-The wrapper creates `.env` from `.env.example`, generates required local
-secrets, and appends new settings without replacing operator
-values. `docker compose up -d --build` does not run the generator. Prepare
-`.env` before using Compose directly because Compose resolves required
-variables before it starts a container.
-
-## Authenticator Email Delivery
-
-Only the `auth` container receives `APP_PUBLIC_URL` and the `SMTP_*` values.
-Enrollment notices automatically use the browser-facing gateway origin from
-the administrator's request, including a private IP and custom port.
-`APP_PUBLIC_URL` remains an optional fallback for unusual proxy
-deployments. Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, and `SMTP_FROM`
-to enable mail. Relays that require authentication also need both `SMTP_USER`
-and `SMTP_PASSWORD`.
-
-Auth starts when SMTP is absent. An MFA enable or reset remains pending when
-delivery fails, and an administrator can resend the notice after fixing the
-mail settings. Enrollment messages contain the setup page URL without a QR
-secret, OTP, challenge token, or SMTP credential.
 
 The core stack starts the Linux auth-log and Docker log collectors by default.
 If a collector cannot read a source, the vulnerability service remains healthy
@@ -48,6 +27,20 @@ not attached to the edge network.
 
 Protected services call `auth` directly for token introspection. The
 gateway does not expose the introspection endpoint publicly.
+
+## Runtime Email Delivery
+
+SMTP is configured by an administrator at **Hub → System Settings → Email
+Delivery** and is stored encrypted in Auth storage. Updating SMTP does not
+require rebuilding or recreating containers. Unauthenticated Postfix on port 25
+is supported; Plain mode is allowed with an in-product warning because messages,
+including optional temporary-password mail, are not encrypted in transit.
+
+Auth writes setup, temporary-password, and test messages to a durable outbox.
+The worker retries transient failures after 1, 5, 15, and 60 minutes, recovers
+stale leases after restart, and never holds an administrator HTTP request open
+while SMTP connects. Setup links are derived from the validated gateway-facing
+host, protocol, and port of the request that queued the message.
 
 ## Stable Names and Storage
 
