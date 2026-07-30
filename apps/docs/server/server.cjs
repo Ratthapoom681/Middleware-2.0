@@ -20,7 +20,8 @@ const {
   resolveDocumentPath
 } = require('./docs-service.cjs');
 const { seedDocsDirectory } = require('./docs-seed.cjs');
-const { authenticateJwt } = require('./auth.cjs');
+const { hasPermission } = require('../../../packages/access-control/index.cjs');
+const { authenticateJwt, requirePermission } = require('./auth.cjs');
 
 const PORT = process.env.PORT || 3003;
 const CLIENT_DIST_DIR = process.env.CLIENT_DIST_DIR ? path.resolve(process.env.CLIENT_DIST_DIR) : path.resolve(__dirname, '..', 'dist');
@@ -29,14 +30,16 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const documentServiceRole = user => hasPermission(user, 'docs.manage') ? 'admin' : 'viewer';
+
 // API Routes
 
 // Get all documents
-app.get('/api/docs', authenticateJwt, async (req, res) => {
+app.get('/api/docs', authenticateJwt, requirePermission('docs.view', { mutating: false }), async (req, res) => {
   res.set('Cache-Control', 'no-store');
 
   try {
-    const documents = await readDocuments({ role: req.user.role });
+    const documents = await readDocuments({ role: documentServiceRole(req.user) });
     res.json({ documents });
   } catch (err) {
     console.error('Documentation read error:', err);
@@ -45,16 +48,12 @@ app.get('/api/docs', authenticateJwt, async (req, res) => {
 });
 
 // Save edited document content
-app.put('/api/docs/:id', authenticateJwt, async (req, res) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Forbidden: Admin access required' });
-  }
-
+app.put('/api/docs/:id', authenticateJwt, requirePermission('docs.manage'), async (req, res) => {
   try {
     const result = await writeDocument({
       id: req.params.id,
       content: req.body.content,
-      role: req.user.role
+      role: documentServiceRole(req.user)
     });
     res.json(result);
   } catch (err) {
@@ -64,9 +63,9 @@ app.put('/api/docs/:id', authenticateJwt, async (req, res) => {
 });
 
 // Download single document as markdown file
-app.get('/api/docs/:id/export', authenticateJwt, async (req, res) => {
+app.get('/api/docs/:id/export', authenticateJwt, requirePermission('docs.view', { mutating: false }), async (req, res) => {
   try {
-    const result = await exportDocument({ id: req.params.id, role: req.user.role });
+    const result = await exportDocument({ id: req.params.id, role: documentServiceRole(req.user) });
     res.set('Content-Type', 'text/markdown');
     res.set('Content-Disposition', `attachment; filename="${result.fileName}"`);
     res.send(result.content);
@@ -77,11 +76,11 @@ app.get('/api/docs/:id/export', authenticateJwt, async (req, res) => {
 });
 
 // Export all documents (ZIP bundle)
-app.get('/api/docs/export', authenticateJwt, async (req, res) => {
+app.get('/api/docs/export', authenticateJwt, requirePermission('docs.view', { mutating: false }), async (req, res) => {
   try {
     const docsDir = resolveDocsDir();
     const registry = await readRegistry(docsDir);
-    const definitions = getDocumentDefinitions(req.user.role, registry);
+    const definitions = getDocumentDefinitions(documentServiceRole(req.user), registry);
 
     res.set('Content-Type', 'application/zip');
     res.set('Content-Disposition', 'attachment; filename="documentation-export.zip"');
@@ -143,11 +142,7 @@ app.get('/api/docs/export', authenticateJwt, async (req, res) => {
 });
 
 // Import new document (or replace existing one)
-app.post('/api/docs/import', authenticateJwt, (req, res) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Forbidden: Admin access required' });
-  }
-
+app.post('/api/docs/import', authenticateJwt, requirePermission('docs.manage'), (req, res) => {
   try {
     const busboy = Busboy({ headers: req.headers });
     let fileBuffer = null;
@@ -185,7 +180,7 @@ app.post('/api/docs/import', authenticateJwt, (req, res) => {
           fileBuffer,
           fileName,
           documentId: fields.documentId,
-          role: req.user.role
+          role: documentServiceRole(req.user)
         });
 
         res.json(result);
@@ -210,13 +205,9 @@ app.post('/api/docs/import', authenticateJwt, (req, res) => {
 });
 
 // Get document history
-app.get('/api/docs/:id/history', authenticateJwt, async (req, res) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Forbidden: Admin access required' });
-  }
-
+app.get('/api/docs/:id/history', authenticateJwt, requirePermission('docs.manage', { mutating: false }), async (req, res) => {
   try {
-    const history = await getHistory({ id: req.params.id, role: req.user.role });
+    const history = await getHistory({ id: req.params.id, role: documentServiceRole(req.user) });
     res.json({ history });
   } catch (err) {
     console.error('History error:', err);
@@ -225,16 +216,12 @@ app.get('/api/docs/:id/history', authenticateJwt, async (req, res) => {
 });
 
 // Revert document to a previous backup
-app.post('/api/docs/:id/revert', authenticateJwt, async (req, res) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Forbidden: Admin access required' });
-  }
-
+app.post('/api/docs/:id/revert', authenticateJwt, requirePermission('docs.manage'), async (req, res) => {
   try {
     const result = await revertDocument({
       id: req.params.id,
       timestamp: req.body.timestamp,
-      role: req.user.role
+      role: documentServiceRole(req.user)
     });
     res.json(result);
   } catch (err) {
@@ -244,16 +231,12 @@ app.post('/api/docs/:id/revert', authenticateJwt, async (req, res) => {
 });
 
 // Toggle document visibility (hiding/unhiding)
-app.put('/api/docs/:id/hidden', authenticateJwt, async (req, res) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Forbidden: Admin access required' });
-  }
-
+app.put('/api/docs/:id/hidden', authenticateJwt, requirePermission('docs.manage'), async (req, res) => {
   try {
     const result = await setDocumentHidden({
       id: req.params.id,
       hidden: !!req.body.hidden,
-      role: req.user.role
+      role: documentServiceRole(req.user)
     });
     res.json(result);
   } catch (err) {
@@ -263,15 +246,11 @@ app.put('/api/docs/:id/hidden', authenticateJwt, async (req, res) => {
 });
 
 // Delete custom document
-app.delete('/api/docs/:id', authenticateJwt, async (req, res) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Forbidden: Admin access required' });
-  }
-
+app.delete('/api/docs/:id', authenticateJwt, requirePermission('docs.manage'), async (req, res) => {
   try {
     const result = await deleteCustomDocument({
       id: req.params.id,
-      role: req.user.role
+      role: documentServiceRole(req.user)
     });
     res.json(result);
   } catch (err) {

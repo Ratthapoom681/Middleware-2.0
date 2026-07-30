@@ -1,0 +1,75 @@
+.user-editor-modal {
+  width: min(620px, 100%);
+}
+
+.user-editor-modal .user-form {
+  gap: 1.25rem;
+  padding: 1.5rem;
+}
+
+.modal-divider {
+  height: 1px;
+  margin: 0.25rem 0;
+  background: var(--border-subtle);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.product-scope-fieldset {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0.85rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--rounded-sm);
+}
+
+.user-form .product-scope-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.55rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--rounded-sm);
+  cursor: pointer;
+}
+
+.user-form .product-scope-option input {
+  width: 1rem;
+  min-height: 1rem;
+  margin-top: 0.15rem;
+}
+
+.product-scope-option span {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.product-scope-option small,
+.product-scope-fieldset > small {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.effective-access-preview {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  border: 1px solid var(--connected-border);
+  border-radius: var(--rounded-sm);
+  background: var(--connected-bg);
+  color: var(--connected-text);
+  font-size: 0.78rem;
+}
+
+.effective-access-preview span { line-height: 1.45; }
+
+@media (max-width: 720px) {
+  .form-grid { grid-template-columns: 1fr; }
+}

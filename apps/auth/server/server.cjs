@@ -4,6 +4,14 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { verifyJwt } = require('../../../packages/auth-client/index.cjs');
+const {
+  PERMISSION_CATALOG,
+  SYSTEM_ADMIN_ROLE_ID,
+  getAccess,
+  hasPermission,
+  isSystemAdmin,
+  normalizeProductScope
+} = require('../../../packages/access-control/index.cjs');
 const { createAuthStore, DEFAULT_APP_KEY } = require('./auth-store.cjs');
 const { loadRuntimeSecrets } = require('./runtime-config.cjs');
 const { createMfaService } = require('./mfa-service.cjs');
@@ -160,6 +168,7 @@ const emailWorker = createEmailWorker({
 });
 
 function buildTokenPayload(user, sid) {
+  const access = getAccess(user);
   return {
     iss: TOKEN_ISSUER,
     aud: TOKEN_AUDIENCE,
@@ -168,7 +177,11 @@ function buildTokenPayload(user, sid) {
     username: user.username,
     email: user.email,
     role: user.role,
-    products: user.products,
+    products: access.productScope.products,
+    roleId: access.role.id,
+    roleName: access.role.name,
+    productScopeMode: access.productScope.mode,
+    access,
     status: user.status,
     apps: ['hub', DEFAULT_APP_KEY, 'wazuh', 'docs']
   };
@@ -233,6 +246,10 @@ async function authenticateJwt(req, res, next) {
       email: currentUser.email,
       role: currentUser.role,
       products: currentUser.products,
+      roleId: currentUser.roleId,
+      roleName: currentUser.roleName,
+      productScopeMode: currentUser.productScopeMode,
+      access: currentUser.access,
       status: currentUser.status
     };
     next();
@@ -242,12 +259,21 @@ async function authenticateJwt(req, res, next) {
   }
 }
 
-function requireAdmin(req, res, next) {
-  if (req.user?.role !== 'admin') {
-    return res.status(403).json({ error: 'Forbidden: Admin access required' });
+function requireSystemAdmin(req, res, next) {
+  if (!isSystemAdmin(req.user)) {
+    return res.status(403).json({ error: 'Forbidden: System Administrator access required' });
   }
   next();
 }
+
+const requirePermission = permissionKey => (req, res, next) => {
+  if (!hasPermission(req.user, permissionKey)) {
+    return res.status(403).json({ error: 'Forbidden: Permission required', permission: permissionKey });
+  }
+  next();
+};
+
+const requireAdmin = requireSystemAdmin;
 
 // ── API ROUTES ──
 
@@ -333,6 +359,7 @@ registerProfileRoutes({
   app,
   authenticateJwt,
   requireAdmin,
+  requirePermission,
   authStore,
   securityStore,
   securityCrypto,
@@ -378,13 +405,90 @@ app.post('/api/auth/introspect', async (req, res) => {
       email: currentUser.email,
       role: currentUser.role,
       products: currentUser.products,
+      roleId: currentUser.roleId,
+      roleName: currentUser.roleName,
+      productScopeMode: currentUser.productScopeMode,
+      access: currentUser.access,
       status: currentUser.status
     }
   });
 });
 
+const sendAccessStoreError = (res, error, fallback = 'Unable to update access') => {
+  const status = Number(error?.status) || 500;
+  if (status >= 500) console.error(fallback, error);
+  return res.status(status).json({
+    error: status >= 500 ? fallback : error.message,
+    ...(error?.code ? { code: error.code } : {}),
+    ...(error?.details && Object.keys(error.details).length > 0 ? { details: error.details } : {})
+  });
+};
+
+app.get('/api/access/permissions', authenticateJwt, requireSystemAdmin, (_req, res) => {
+  res.json(PERMISSION_CATALOG);
+});
+
+app.get('/api/roles', authenticateJwt, requireSystemAdmin, async (_req, res) => {
+  try {
+    res.json(await authStore.listRoles());
+  } catch (error) {
+    sendAccessStoreError(res, error, 'Unable to list roles');
+  }
+});
+
+app.post('/api/roles', authenticateJwt, requireSystemAdmin, async (req, res) => {
+  try {
+    const role = await authStore.createRole({
+      name: req.body?.name,
+      description: req.body?.description,
+      permissions: req.body?.permissions,
+      actorUsername: req.user.username
+    });
+    res.status(201).json({ message: 'Role created', role });
+  } catch (error) {
+    sendAccessStoreError(res, error, 'Unable to create role');
+  }
+});
+
+app.patch('/api/roles/:roleId', authenticateJwt, requireSystemAdmin, async (req, res) => {
+  try {
+    const role = await authStore.updateRole(req.params.roleId, {
+      name: req.body?.name,
+      description: req.body?.description,
+      permissions: req.body?.permissions,
+      actorUsername: req.user.username
+    });
+    res.json({ message: 'Role updated. Affected users must sign in again.', role });
+  } catch (error) {
+    sendAccessStoreError(res, error, 'Unable to update role');
+  }
+});
+
+app.post('/api/roles/:roleId/retire', authenticateJwt, requireSystemAdmin, async (req, res) => {
+  try {
+    const result = await authStore.retireRole(req.params.roleId, {
+      replacementRoleId: String(req.body?.replacementRoleId || '').trim(),
+      actorUsername: req.user.username
+    });
+    res.json({ message: 'Role retired', ...result });
+  } catch (error) {
+    sendAccessStoreError(res, error, 'Unable to retire role');
+  }
+});
+
+app.get('/api/access/audit', authenticateJwt, requireSystemAdmin, async (req, res) => {
+  try {
+    res.json(await authStore.listAuditEvents({
+      limit: req.query.limit,
+      before: String(req.query.before || '').trim()
+    }));
+  } catch (error) {
+    sendAccessStoreError(res, error, 'Unable to load access activity');
+  }
+});
+
 // Users - List all users (Admins only)
-app.get('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
+app.get('/api/users', authenticateJwt, requireSystemAdmin, async (req, res) => {
   try {
     const users = await authStore.listUsers();
     res.json(await Promise.all(users.map(enrichPublicUser)));
@@ -394,17 +498,79 @@ app.get('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
   }
 });
 
+const resolveUserAccessInput = async (body = {}, existingUser = null) => {
+  const legacyRole = String(body.role || '').trim().toLowerCase();
+  const roleId = String(
+    body.roleId
+      || existingUser?.roleId
+      || (legacyRole === 'admin' ? SYSTEM_ADMIN_ROLE_ID : legacyRole === 'viewer' ? 'viewer' : '')
+  ).trim();
+  if (!roleId) {
+    const error = new Error('Role is required');
+    error.status = 400;
+    error.code = 'role_required';
+    throw error;
+  }
+  const role = await authStore.getRole(roleId);
+  if (!role) {
+    const error = new Error('Selected role was not found');
+    error.status = 400;
+    error.code = 'role_not_found';
+    throw error;
+  }
+  const hasExplicitScope = body.productScope && typeof body.productScope === 'object'
+    || Object.prototype.hasOwnProperty.call(body, 'productScopeMode');
+  const hasLegacyProducts = Object.prototype.hasOwnProperty.call(body, 'products');
+  const requestedScopeMode = String(body.productScope?.mode ?? body.productScopeMode ?? '').trim().toLowerCase();
+  if (!existingUser && !hasExplicitScope) {
+    const error = new Error('Product scope is required');
+    error.status = 400;
+    error.code = 'product_scope_required';
+    throw error;
+  }
+  if (hasExplicitScope && !['all', 'selected', 'none'].includes(requestedScopeMode)) {
+    const error = new Error('Product scope must be All products, Selected products, or No products');
+    error.status = 400;
+    error.code = 'invalid_product_scope';
+    throw error;
+  }
+  if (role.system && hasExplicitScope && requestedScopeMode !== 'all') {
+    const error = new Error('System Administrator must use All products');
+    error.status = 400;
+    error.code = 'system_scope_protected';
+    throw error;
+  }
+  const scope = role.system
+    ? { mode: 'all', products: [] }
+    : normalizeProductScope(
+      hasExplicitScope
+        ? (body.productScope || { mode: body.productScopeMode, products: body.products })
+        : hasLegacyProducts
+          ? { mode: Array.isArray(body.products) && body.products.length > 0 ? 'selected' : 'none', products: body.products }
+          : (existingUser?.access?.productScope || { products: body.products }),
+      Array.isArray(body.products) ? body.products : existingUser?.products,
+      ''
+    );
+  if (scope.mode === 'selected' && scope.products.length === 0) {
+    const error = new Error('Choose at least one product for Selected products');
+    error.status = 400;
+    error.code = 'products_required';
+    throw error;
+  }
+  return { role, scope };
+};
+
 // Users - Create or Update (Admins only)
-app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
-  const { username, role, products, email, status, fullName, company, department } = req.body;
-  if (!username || !role) {
-    return res.status(400).json({ error: 'Username and role are required' });
+app.post('/api/users', authenticateJwt, requireSystemAdmin, async (req, res) => {
+  const { username, email, status, fullName, company, department } = req.body;
+  if (!username) {
+    return res.status(400).json({ error: 'Username is required' });
   }
 
   try {
     const normalizedUsername = String(username || '').trim();
     const existingUser = await authStore.getUserByUsername(normalizedUsername);
-    const users = await authStore.listUsers();
+    const { role: selectedRole, scope: productScope } = await resolveUserAccessInput(req.body, existingUser);
 
     const nextStatus = String(status || 'active').trim().toLowerCase() === 'suspended' ? 'suspended' : 'active';
     const nextEmail = String(email || '').trim();
@@ -413,7 +579,7 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
       company: String(company || '').trim(),
       department: String(department || '').trim()
     };
-    const nextProducts = Array.isArray(products) ? products : [];
+    const nextProducts = productScope.products;
     const requestedMfaProvider = parseAdminMfaProvider(req.body, 'disabled');
     if (!requestedMfaProvider) {
       return res.status(400).json({ error: 'MFA provider must be disabled, google, microsoft, or other' });
@@ -429,7 +595,7 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
     if (req.user.username === normalizedUsername && nextStatus === 'suspended') {
       return res.status(400).json({ error: 'Cannot suspend your own account' });
     }
-    if (req.user.username === normalizedUsername && role !== req.user.role) {
+    if (req.user.username === normalizedUsername && selectedRole.id !== req.user.roleId) {
       return res.status(400).json({ error: 'Cannot change your own role' });
     }
 
@@ -437,8 +603,11 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Email is required for Authenticator MFA' });
     }
 
-    if (existingUser?.role === 'admin' && role !== 'admin' && users.filter(u => u.role === 'admin').length <= 1) {
-      return res.status(400).json({ error: 'Cannot demote the last administrator account' });
+    if (existingUser?.roleId === SYSTEM_ADMIN_ROLE_ID
+      && existingUser.status !== 'suspended'
+      && (selectedRole.id !== SYSTEM_ADMIN_ROLE_ID || nextStatus === 'suspended')
+      && await authStore.countActiveSystemAdministrators() <= 1) {
+      return res.status(400).json({ error: 'Cannot demote or suspend the last System Administrator' });
     }
 
     const notificationOrigin = !existingUser && (nextEmail || requestedMfaMode === 'authenticator')
@@ -449,8 +618,10 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
       ...(existingUser || {}),
       username: normalizedUsername,
       email: nextEmail,
-      role,
+      role: selectedRole.system ? 'admin' : 'viewer',
+      roleId: selectedRole.id,
       products: nextProducts,
+      productScopeMode: productScope.mode,
       status: nextStatus,
       lastLoginAt: existingUser?.lastLoginAt || ''
     };
@@ -462,7 +633,12 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
       nextUser.passwordAlgorithm = algorithm;
     }
 
-    const saved = await authStore.upsertUser(nextUser);
+    const accessChanged = Boolean(existingUser)
+      && (existingUser.roleId !== selectedRole.id
+        || existingUser.productScopeMode !== productScope.mode
+        || JSON.stringify(existingUser.products || []) !== JSON.stringify(nextProducts));
+    const saved = await authStore.upsertUser(nextUser, { assignedBy: req.user.username });
+    if (accessChanged) await authStore.revokeUserSessions(normalizedUsername);
     await securityStore.setIdentity(normalizedUsername, identity);
     let expiresAt = '';
     const deliveries = [];
@@ -501,7 +677,19 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
       actorUsername: req.user.username,
       targetUsername: normalizedUsername,
       action: existingUser ? 'user.updated' : 'user.created',
-      metadata: { role, status: nextStatus, ...(existingUser ? {} : { mfaMode: requestedMfaMode, mfaProvider: requestedMfaProvider, emailQueued: Boolean(nextEmail) }) }
+      metadata: {
+        roleId: selectedRole.id,
+        roleName: selectedRole.name,
+        productScope,
+        status: nextStatus,
+        accessChanged,
+        before: existingUser ? {
+          roleId: existingUser.roleId,
+          roleName: existingUser.roleName,
+          productScope: existingUser.access?.productScope
+        } : null,
+        ...(existingUser ? {} : { mfaMode: requestedMfaMode, mfaProvider: requestedMfaProvider, emailQueued: Boolean(nextEmail) })
+      }
     });
     if (!existingUser) res.set('Cache-Control', 'no-store');
     res.json({
@@ -516,11 +704,12 @@ app.post('/api/users', authenticateJwt, requireAdmin, async (req, res) => {
     });
   } catch (err) {
     console.error('Save user error:', err);
+    if (err.status) return sendAccessStoreError(res, err, 'Unable to save user');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-app.patch('/api/users/:username', authenticateJwt, requireAdmin, async (req, res) => {
+app.patch('/api/users/:username', authenticateJwt, requireSystemAdmin, async (req, res) => {
   const username = String(req.params.username || '').trim();
   try {
     const [target, users, mfaPolicy, mfaConfig, temporaryCredential] = await Promise.all([
@@ -531,13 +720,13 @@ app.patch('/api/users/:username', authenticateJwt, requireAdmin, async (req, res
       securityStore.getTemporaryCredential(username)
     ]);
     if (!target) return res.status(404).json({ error: 'User not found' });
+    const { role: selectedRole, scope: productScope } = await resolveUserAccessInput(req.body, target);
     const email = String(req.body?.email ?? target.email).trim();
     const identity = {
       fullName: String(req.body?.fullName || '').trim(),
       company: String(req.body?.company || '').trim(),
       department: String(req.body?.department || '').trim()
     };
-    const role = String(req.body?.role || target.role).trim();
     const status = String(req.body?.status || target.status).trim().toLowerCase() === 'suspended' ? 'suspended' : 'active';
     if (!isValidEmail(email)) return res.status(400).json({ error: 'Enter a valid email address' });
     if ((mfaPolicy?.mode === 'authenticator' || mfaConfig) && !email) {
@@ -545,9 +734,12 @@ app.patch('/api/users/:username', authenticateJwt, requireAdmin, async (req, res
     }
     if (Object.values(identity).some(value => value.length > 120)) return res.status(400).json({ error: 'Identity fields must be 120 characters or fewer' });
     if (req.user.username === username && status === 'suspended') return res.status(400).json({ error: 'Cannot suspend your own account' });
-    if (req.user.username === username && role !== req.user.role) return res.status(400).json({ error: 'Cannot change your own role' });
-    if (target.role === 'admin' && role !== 'admin' && users.filter(user => user.role === 'admin').length <= 1) {
-      return res.status(400).json({ error: 'Cannot demote the last administrator account' });
+    if (req.user.username === username && selectedRole.id !== req.user.roleId) return res.status(400).json({ error: 'Cannot change your own role' });
+    if (target.roleId === SYSTEM_ADMIN_ROLE_ID
+      && target.status !== 'suspended'
+      && (selectedRole.id !== SYSTEM_ADMIN_ROLE_ID || status === 'suspended')
+      && await authStore.countActiveSystemAdministrators() <= 1) {
+      return res.status(400).json({ error: 'Cannot demote or suspend the last System Administrator' });
     }
     const pendingEnrollment = mfaPolicy?.mode === 'authenticator' && !mfaConfig;
     const emailChanged = email !== String(target.email || '').trim();
@@ -559,16 +751,24 @@ app.patch('/api/users/:username', authenticateJwt, requireAdmin, async (req, res
     let replacementTemporaryExpiresAt = '';
     let replacementTemporaryPasswordHash = null;
     let replacementTemporaryDelivery = null;
+    const accessChanged = target.roleId !== selectedRole.id
+      || target.productScopeMode !== productScope.mode
+      || JSON.stringify(target.products || []) !== JSON.stringify(productScope.products);
     const saveUser = () => authStore.upsertUser({
-      ...target, email, role, status,
+      ...target,
+      email,
+      role: selectedRole.system ? 'admin' : 'viewer',
+      roleId: selectedRole.id,
+      productScopeMode: productScope.mode,
+      status,
       ...(replacementTemporaryPasswordHash ? {
         salt: replacementTemporaryPasswordHash.salt,
         hash: replacementTemporaryPasswordHash.hash,
         passwordAlgorithm: replacementTemporaryPasswordHash.algorithm
       } : {}),
-      products: Array.isArray(req.body?.products) ? req.body.products : target.products
-    });
-    const saved = invalidatePendingEnrollment || suspending || rotateTemporaryCredential
+      products: productScope.products
+    }, { assignedBy: req.user.username });
+    const saved = invalidatePendingEnrollment || suspending || rotateTemporaryCredential || accessChanged
       ? await securityStore.withMfaMutationLock(username, async () => {
         if (invalidatePendingEnrollment) {
           await securityStore.invalidateMfaInvitations(username);
@@ -587,7 +787,7 @@ app.patch('/api/users/:username', authenticateJwt, requireAdmin, async (req, res
             createdBy: req.user.username
           });
         }
-        if (suspending || rotateTemporaryCredential) await authStore.revokeUserSessions(username);
+        if (suspending || rotateTemporaryCredential || accessChanged) await authStore.revokeUserSessions(username);
         if (invalidatePendingEnrollment) {
           await securityStore.setMfaPolicy(username, {
             notificationStatus: 'failed',
@@ -627,8 +827,16 @@ app.patch('/api/users/:username', authenticateJwt, requireAdmin, async (req, res
       targetUsername: username,
       action: 'user.identity_updated',
       metadata: {
-        role,
+        roleId: selectedRole.id,
+        roleName: selectedRole.name,
+        productScope,
         status,
+        accessChanged,
+        before: {
+          roleId: target.roleId,
+          roleName: target.roleName,
+          productScope: target.access?.productScope
+        },
         emailChanged,
         pendingInvitationInvalidated: invalidatePendingEnrollment,
         temporaryCredentialRotated: rotateTemporaryCredential,
@@ -647,12 +855,13 @@ app.patch('/api/users/:username', authenticateJwt, requireAdmin, async (req, res
     });
   } catch (error) {
     console.error('Update user error:', error.message);
+    if (error.status) return sendAccessStoreError(res, error, 'Unable to update user');
     res.status(500).json({ error: 'Unable to update user' });
   }
 });
 
 // Users - Delete (Admins only)
-app.delete('/api/users/:username', authenticateJwt, requireAdmin, async (req, res) => {
+app.delete('/api/users/:username', authenticateJwt, requireSystemAdmin, async (req, res) => {
   const { username } = req.params;
 
   try {
@@ -660,8 +869,10 @@ app.delete('/api/users/:username', authenticateJwt, requireAdmin, async (req, re
     
     // Prevent deleting the last admin
     const targetUser = users.find(user => user.username === username);
-    if (targetUser?.role === 'admin' && users.filter(u => u.role === 'admin').length <= 1) {
-      return res.status(400).json({ error: 'Cannot delete the last administrator account' });
+    if (targetUser?.roleId === SYSTEM_ADMIN_ROLE_ID
+      && targetUser.status !== 'suspended'
+      && await authStore.countActiveSystemAdministrators() <= 1) {
+      return res.status(400).json({ error: 'Cannot delete the last System Administrator account' });
     }
 
     // Prevent deleting yourself

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { MailWarning, Radar, Settings, ShieldAlert, Users } from 'lucide-react';
+import { KeyRound, MailWarning, Radar, Settings, ShieldAlert, Users } from 'lucide-react';
+import { hasPermission, hasWorkspaceAccess, isSystemAdmin } from '../../../../../packages/access-control/index.js';
 import HubTopbar from './HubTopbar/HubTopbar';
 import './HubPage.css';
 
@@ -11,6 +12,7 @@ const APPS = [
     path: '/defectdojo/',
     icon: ShieldAlert,
     accentColor: '#f59e0b',  // amber
+    workspace: 'DefectDojo',
   },
   {
     id: 'wazuh',
@@ -19,11 +21,25 @@ const APPS = [
     path: '/wazuh/',
     icon: Radar,
     accentColor: '#22c55e',  // green
+    workspace: 'Wazuh',
   },
 ];
 
-export default function HubPage({ user, onOpenDocs, onLogout, onOpenProfile, onOpenSettings }) {
-  const isAdmin = user?.role === 'admin';
+const getDefectDojoPath = user => {
+  if (hasPermission(user, 'defectdojo.data.manage')) return '/defectdojo/#data-management';
+  if (hasPermission(user, 'defectdojo.sync.run')) return '/defectdojo/#data-management?tab=sync';
+  if (hasPermission(user, 'defectdojo.sync_history.view')) return '/defectdojo/#sync-history';
+  if (hasPermission(user, 'defectdojo.logs.view')) return '/defectdojo/#log-monitor';
+  if (hasPermission(user, 'defectdojo.mitigations.review')) return '/defectdojo/#mitigation-review';
+  if (hasPermission(user, 'defectdojo.settings.manage')) return '/defectdojo/#settings';
+  if (hasPermission(user, 'defectdojo.vulnerabilities.view')) return '/defectdojo/#dashboard';
+  return '/defectdojo/';
+};
+
+export default function HubPage({ user, onOpenDocs, onLogout, onOpenProfile, onOpenSettings, onOpenRoles }) {
+  const isAdmin = isSystemAdmin(user);
+  const canManageSettings = hasPermission(user, 'hub.settings.manage');
+  const visibleApps = APPS.filter(app => hasWorkspaceAccess(user, app.workspace));
   const [appStatuses, setAppStatuses] = useState({
     defectdojo: 'healthy',
     wazuh: 'healthy'
@@ -71,20 +87,20 @@ export default function HubPage({ user, onOpenDocs, onLogout, onOpenProfile, onO
 
         {/* App Grid */}
         <div className="app-grid">
-          {APPS.map((app) => {
+          {visibleApps.map((app) => {
             const IconComponent = app.icon;
             return (
               <div
                 key={app.id}
                 className="app-card"
-                onClick={() => handleCardClick(app.path)}
+                onClick={() => handleCardClick(app.id === 'defectdojo' ? getDefectDojoPath(user) : app.path)}
                 style={{ '--accent-color': app.accentColor }}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    handleCardClick(app.path);
+                    handleCardClick(app.id === 'defectdojo' ? getDefectDojoPath(user) : app.path);
                   }
                 }}
               >
@@ -111,6 +127,12 @@ export default function HubPage({ user, onOpenDocs, onLogout, onOpenProfile, onO
               </div>
             );
           })}
+          {visibleApps.length === 0 && (
+            <div className="hub-auth-notice" role="status">
+              <ShieldAlert size={18} />
+              <span>No workspaces are assigned to your role. Your profile remains available.</span>
+            </div>
+          )}
         </div>
 
         {/* Admin Section */}
@@ -127,6 +149,16 @@ export default function HubPage({ user, onOpenDocs, onLogout, onOpenProfile, onO
                 <Users size={16} />
                 <span>User Management</span>
               </a>
+              <button type="button" className="btn-admin-nav" onClick={onOpenRoles}><KeyRound size={16} /><span>Roles &amp; Access</span></button>
+              {canManageSettings && <button type="button" className="btn-admin-nav" onClick={onOpenSettings}><Settings size={16} /><span>System Settings</span></button>}
+            </div>
+          </section>
+        )}
+        {!isAdmin && canManageSettings && (
+          <section className="admin-section">
+            <div className="admin-divider" />
+            <span className="admin-label">Administration</span>
+            <div className="admin-actions">
               <button type="button" className="btn-admin-nav" onClick={onOpenSettings}><Settings size={16} /><span>System Settings</span></button>
             </div>
           </section>

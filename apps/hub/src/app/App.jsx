@@ -1,8 +1,16 @@
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import HubPage from '../features/hub/HubPage';
-import UsersPage from '../features/users/UsersPage';
+import HubShell from '../features/hub/HubShell';
+import UserListPage from '../features/users/UserListPage';
+import UserDetailPage from '../features/users/UserDetailPage';
 import ProfilePage from '../features/profile/ProfilePage';
 import SettingsPage from '../features/settings/SettingsPage';
+import RolesAccessPage from '../features/roles/RolesAccessPage';
+import { hasPermission, isSystemAdmin } from '../../../../packages/access-control/index.js';
+import {
+  createSessionExpiryHandler,
+  getSafeHubReturnTo,
+} from '../shared/authenticatedRequest.js';
 
 const TOKEN_KEY = 'middleware_token';
 const USER_KEY = 'middleware_user';
@@ -43,6 +51,14 @@ export default function App() {
   const [user, setUser] = useState(getStoredUser);
   const [hash, setHash] = useState(window.location.hash);
   const [authNotice] = useState(getAuthNotice);
+  const [sessionExpiryRedirecting, setSessionExpiryRedirecting] = useState(false);
+  const handleUnauthorized = useMemo(() => createSessionExpiryHandler({
+    onSessionCleared: () => {
+      setSessionExpiryRedirecting(true);
+      setToken(null);
+      setUser(null);
+    },
+  }), []);
 
   /* Listen for hash changes (for #users navigation) */
   useEffect(() => {
@@ -54,7 +70,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const isHubRoute = !hash.startsWith('#profile') && hash !== '#users' && hash !== '#settings' && !hash.startsWith('#docs');
+    const isHubRoute = !hash.startsWith('#profile') && !hash.startsWith('#users') && hash !== '#settings' && hash !== '#roles' && !hash.startsWith('#docs');
     if (authNotice && isHubRoute) sessionStorage.removeItem(AUTH_NOTICE_KEY);
   }, [authNotice, hash]);
 
@@ -76,32 +92,69 @@ export default function App() {
     setUser(nextUser);
   }, []);
 
-  const handleSessionEnded = useCallback((reason) => {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
-    const params = new URLSearchParams({ returnTo: '/#profile', notice: reason });
-    window.location.replace(`/login/?${params.toString()}`);
-  }, []);
-
   /* Authentication is served independently so Hub can fail without blocking login. */
   if (!token || !user) {
-    const returnTo = hash.startsWith('#profile') ? `/${hash}` : '/';
+    if (sessionExpiryRedirecting) return null;
+    const returnTo = getSafeHubReturnTo(window.location);
     window.location.replace(`/login/?returnTo=${encodeURIComponent(returnTo)}`);
     return null;
   }
 
   /* Authenticated → route by hash */
   if (hash.startsWith('#docs')) {
+    if (!hasPermission(user, 'docs.view')) {
+      window.location.hash = '';
+      return null;
+    }
     window.location.href = `/docs/${hash}`;
     return null;
   }
 
-  if (hash === '#users' && user.role === 'admin') {
-    return <UsersPage token={token} currentUser={user} onUserUpdated={handleUserUpdated} onBack={() => { window.location.hash = ''; }} />;
+  if ((hash === '#users' || hash.startsWith('#users/')) && isSystemAdmin(user)) {
+    const detailMatch = hash.match(/^#users\/(.+)$/);
+    let detailUsername = '';
+    if (detailMatch) {
+      try {
+        detailUsername = decodeURIComponent(detailMatch[1]);
+      } catch {
+        detailUsername = detailMatch[1];
+      }
+    }
+    return (
+      <HubShell
+        user={user}
+        onOpenDocs={() => { window.location.href = '/docs/'; }}
+        onOpenProfile={() => { window.location.hash = '#profile?returnTo=%2F'; }}
+        onLogout={handleLogout}
+      >
+        {detailMatch
+          ? (
+            <UserDetailPage
+              username={detailUsername}
+              token={token}
+              currentUser={user}
+              onUnauthorized={handleUnauthorized}
+              onUserUpdated={handleUserUpdated}
+            />
+          )
+          : (
+            <UserListPage
+              token={token}
+              currentUser={user}
+              onUnauthorized={handleUnauthorized}
+              onUserUpdated={handleUserUpdated}
+            />
+          )}
+      </HubShell>
+    );
   }
 
-  if (hash === '#settings' && user.role === 'admin') {
-    return <SettingsPage token={token} currentUser={user} onBack={() => { window.location.hash = ''; }} />;
+  if (hash === '#settings' && hasPermission(user, 'hub.settings.manage')) {
+    return <SettingsPage token={token} currentUser={user} onUnauthorized={handleUnauthorized} onBack={() => { window.location.hash = ''; }} />;
+  }
+
+  if (hash === '#roles' && isSystemAdmin(user)) {
+    return <RolesAccessPage token={token} onUnauthorized={handleUnauthorized} onBack={() => { window.location.hash = ''; }} />;
   }
 
   if (hash.startsWith('#profile')) {
@@ -113,8 +166,8 @@ export default function App() {
         returnTo={returnTo}
         onBack={() => { window.location.href = returnTo; }}
         onLogout={handleLogout}
+        onUnauthorized={handleUnauthorized}
         onUserUpdated={handleUserUpdated}
-        onSessionEnded={handleSessionEnded}
       />
     );
   }
@@ -126,6 +179,7 @@ export default function App() {
       onOpenDocs={() => { window.location.href = '/docs/'; }}
       onOpenProfile={() => { window.location.hash = '#profile?returnTo=%2F'; }}
       onOpenSettings={() => { window.location.hash = '#settings'; }}
+      onOpenRoles={() => { window.location.hash = '#roles'; }}
       onLogout={handleLogout}
     />
   );

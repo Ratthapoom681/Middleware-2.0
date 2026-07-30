@@ -38,6 +38,11 @@
 .profile-access > div { display: flex; flex-wrap: wrap; gap: .4rem; }
 .profile-access > div span { padding: .22rem .45rem; border: 1px solid var(--border); border-radius: .4rem; background: var(--bg-subtle); color: var(--text-muted); font-size: .68rem; }
 .profile-access > small { display: block; margin-top: .55rem; color: var(--text-soft); font-size: .68rem; }
+.profile-capability-groups { display: grid !important; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .65rem !important; }
+.profile-capability-groups section { padding: .7rem; border: 1px solid var(--border-subtle); border-radius: var(--rounded-sm); background: var(--bg-subtle); }
+.profile-capability-groups h3 { margin: 0 0 .45rem; color: var(--text-main); font-size: .75rem; text-transform: capitalize; }
+.profile-capability-groups ul { margin: 0; padding-left: 1rem; color: var(--text-muted); font-size: .68rem; line-height: 1.55; }
+.profile-no-capabilities { margin: 0; color: var(--text-muted); font-size: .75rem; }
 .profile-admin-note { margin-top: 1.2rem; padding: .75rem; display: flex; align-items: center; gap: .6rem; border: 1px solid var(--info-border); border-radius: var(--rounded-sm); background: var(--info-bg); color: var(--info-text); font-size: .76rem; }
 @media (max-width: 760px) {
   .profile-hero { align-items: flex-start; flex-wrap: wrap; }

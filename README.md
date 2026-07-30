@@ -73,7 +73,11 @@ Because all containers are served behind the Nginx Gateway on port 80 under the 
 2. The login frontend saves the token in `localStorage` under `middleware_token` and the profile under `middleware_user`, then returns to the requested service.
 3. When the user clicks on **DefectDojo Viewer** (`/defectdojo/`) or **Wazuh Viewer** (`/wazuh/`), the browser retains the shared `localStorage` state.
 4. Each service extracts `middleware_token` from `localStorage` and appends it to requests as `Authorization: Bearer <token>`.
-5. DefectDojo and Docs validate signature/issuer/audience/app claims locally and normally introspect through the auth service. If auth is unreachable, locally valid tokens continue until expiry; revocation, suspension, and role changes can therefore be delayed by at most one hour.
+5. DefectDojo and Docs validate signature/issuer/audience/app claims locally and
+   normally introspect through the auth service. If auth is unreachable,
+   locally valid tokens may retain read-only access until expiry. Mutating and
+   administrative requests fail closed without live introspection. Role and
+   product-scope changes revoke every affected session immediately.
 
 Profile information is read-only for users. Administrators manage identity,
 24-hour temporary-password resets, and Authenticator MFA from Hub User
@@ -253,8 +257,11 @@ Then open `http://localhost:61208`. Watch `defectdojo`, `defectdojo_db`, and `au
 
 ### User Management
 User administration is centralized:
-- Log in as the `admin` user.
-- Click **User Management** in the administration section of the Hub.
+- Log in with the protected **System Administrator** role.
+- Use **Roles & Access** to build custom task-based roles and review access
+  activity.
+- Use **User Management** to assign one role and an explicit DefectDojo scope
+  of All products, Selected products, or No products.
 - The Auth API writes to `auth-db`. DefectDojo reads Auth tokens and live introspection rather than storing password hashes locally.
 
 ### Database Credentials Note

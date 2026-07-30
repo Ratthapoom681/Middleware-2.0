@@ -33,6 +33,19 @@ test('canonical repository boundaries and single Compose model exist', () => {
   });
 });
 
+test('gateway forwards RBAC administration APIs to Auth', () => {
+  const gatewayConfig = fs.readFileSync(path.join(ROOT, 'apps/gateway/nginx.conf'), 'utf8');
+  assert.match(gatewayConfig, /location \^~ \/api\/roles\s*\{/);
+  assert.match(gatewayConfig, /location \^~ \/api\/access\/\s*\{/);
+});
+
+test('Hub caching keeps entry HTML fresh and never serves it for missing assets', () => {
+  const hubConfig = fs.readFileSync(path.join(ROOT, 'apps/hub/nginx.conf'), 'utf8');
+  assert.match(hubConfig, /location \^~ \/assets\/\s*\{[\s\S]*?try_files \$uri =404;/);
+  assert.match(hubConfig, /Cache-Control "public, max-age=31536000, immutable"/);
+  assert.match(hubConfig, /Cache-Control "no-store, no-cache, must-revalidate"/);
+});
+
 test('shared auth client validates compatible HS256 tokens', () => {
   const secret = 'repository-layout-test-secret';
   const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');

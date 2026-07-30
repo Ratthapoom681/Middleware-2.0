@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import '../auth/LoginPage.css';
+import '../auth/shared/AuthPage.css';
 import './AuthenticatorEnrollmentPage.css';
 
 const SIGN_IN_PATH = '/login/';
@@ -231,7 +231,7 @@ export default function AuthenticatorEnrollmentPage({ invitationToken }) {
   const provider = providerDetails(details?.provider);
   const expiry = formatExpiry(details?.expiresAt);
 
-  return <main className="login-page authenticator-enrollment-page">
+  return <main className="auth-page login-page authenticator-enrollment-page">
     <SecurityBackground />
     <div className="enrollment-card-wrapper">
       <section className="enrollment-card" aria-labelledby="enrollment-title">

@@ -15,6 +15,7 @@
   "redmineStatusFeedbackId": "",
   "redmineStatusInProgressId": "",
   "redmineStatusResolveId": "",
+  "redmineStatusRiskAcceptanceId": "",
   "redmineStatusClosedId": "",
   "redmineStatusPollIntervalSeconds": 60,
   "pullFilters": {

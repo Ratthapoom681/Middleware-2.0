@@ -1,5 +1,9 @@
 import { useCallback, useRef, useState } from 'react';
-import HuskyMascot from './HuskyMascot';
+import { useNavigate } from 'react-router-dom';
+import AuthBackground from '../shared/AuthBackground';
+import HuskyMascot from '../shared/HuskyMascot';
+import { getLoginNoticeMessage } from '../login-navigation';
+import '../shared/AuthPage.css';
 import './LoginPage.css';
 
 function EyeOpenIcon() {
@@ -22,6 +26,7 @@ function EyeClosedIcon() {
 }
 
 export default function LoginPage({ onLoginSuccess }) {
+  const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -32,9 +37,6 @@ export default function LoginPage({ onLoginSuccess }) {
   const [mfaChallenge, setMfaChallenge] = useState('');
   const [authenticatorApp, setAuthenticatorApp] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
-  const [passwordChangeChallenge, setPasswordChangeChallenge] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmationPassword, setConfirmationPassword] = useState('');
   const passwordRef = useRef(null);
   const textMeasureRef = useRef(null);
 
@@ -103,9 +105,12 @@ export default function LoginPage({ onLoginSuccess }) {
       }
 
       if (data.passwordChangeRequired && data.challengeToken) {
-        setPasswordChangeChallenge(data.challengeToken);
         setPassword('');
-        setFocusedField('password');
+        setFocusedField(null);
+        navigate(
+          { pathname: '/create-password', search: window.location.search },
+          { state: { challengeToken: data.challengeToken } },
+        );
         return;
       }
 
@@ -146,8 +151,11 @@ export default function LoginPage({ onLoginSuccess }) {
       if (data.passwordChangeRequired && data.challengeToken) {
         setMfaChallenge('');
         setVerificationCode('');
-        setPasswordChangeChallenge(data.challengeToken);
-        setFocusedField('password');
+        setFocusedField(null);
+        navigate(
+          { pathname: '/create-password', search: window.location.search },
+          { state: { challengeToken: data.challengeToken } },
+        );
         return;
       }
       if (!data.token || !data.user) throw new Error('Verification response was missing session data');
@@ -159,32 +167,10 @@ export default function LoginPage({ onLoginSuccess }) {
     }
   }
 
-  async function handlePasswordChange(event) {
-    event.preventDefault();
-    if (loading) return;
-    if (newPassword !== confirmationPassword) { setError('New passwords do not match'); return; }
-    setLoading(true); setError('');
-    try {
-      const response = await fetch('/api/login/password-change', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ challengeToken: passwordChangeChallenge, newPassword })
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok && data.restartRequired) { backToPassword(); throw new Error(data.error || 'Sign in again'); }
-      if (!response.ok) throw new Error(data.error || 'Unable to change password');
-      if (!data.token || !data.user) throw new Error('Password change response was missing session data');
-      onLoginSuccess?.(data.user, data.token);
-    } catch (err) { setError(err.message || 'Unable to change password'); }
-    finally { setLoading(false); }
-  }
-
   function backToPassword() {
     setMfaChallenge('');
     setAuthenticatorApp('');
     setVerificationCode('');
-    setPasswordChangeChallenge('');
-    setNewPassword('');
-    setConfirmationPassword('');
     setError('');
     setFocusedField('username');
   }
@@ -196,106 +182,11 @@ export default function LoginPage({ onLoginSuccess }) {
       : 'your authenticator app';
 
   const loginNotice = new URLSearchParams(window.location.search).get('notice');
+  const loginNoticeMessage = getLoginNoticeMessage(loginNotice);
 
   return (
-    <main className="login-page">
-      <div className="security-background" aria-hidden="true">
-        <div className="security-halo" />
-        <div className="edge-glow edge-glow-left" />
-        <div className="edge-glow edge-glow-right" />
-        <div className="security-grid" />
-
-        <svg
-          className="security-network"
-          viewBox="0 0 1440 900"
-          preserveAspectRatio="none"
-          focusable="false"
-        >
-          <defs>
-            <path
-              id="login-network-route-outbound"
-              d="M105 160L220 225L350 450H1090L1210 210L1325 135"
-            />
-            <path
-              id="login-network-route-return"
-              d="M1125 760L1230 600L1090 450H350L205 575L315 740"
-            />
-          </defs>
-
-          <g className="network-lines" fill="none">
-            <path d="M105 160L220 225" />
-            <path d="M105 160L178 355" />
-            <path d="M220 225L178 355" />
-            <path d="M220 225L350 450" />
-            <path d="M178 355L350 450" />
-            <path d="M178 355L205 575" />
-            <path d="M205 575L350 450" />
-            <path d="M205 575L315 740" />
-
-            <path className="network-bridge" d="M350 450H1090" />
-
-            <path d="M1090 450L1210 210" />
-            <path d="M1090 450L1260 380" />
-            <path d="M1090 450L1230 600" />
-            <path d="M1210 210L1325 135" />
-            <path d="M1210 210L1260 380" />
-            <path d="M1260 380L1230 600" />
-            <path d="M1230 600L1125 760" />
-          </g>
-
-          <g className="network-nodes">
-            <circle cx="105" cy="160" r="4" />
-            <circle cx="220" cy="225" r="5" />
-            <circle cx="178" cy="355" r="3.5" />
-            <circle cx="205" cy="575" r="5" />
-            <circle className="network-node-arrival network-node-arrival-return" cx="315" cy="740" r="3.5" />
-            <circle cx="350" cy="450" r="4.5" />
-
-            <circle cx="1090" cy="450" r="4.5" />
-            <circle className="network-node-arrival network-node-arrival-outbound" cx="1325" cy="135" r="4" />
-            <circle cx="1210" cy="210" r="5" />
-            <circle cx="1260" cy="380" r="3.5" />
-            <circle cx="1230" cy="600" r="5" />
-            <circle cx="1125" cy="760" r="3.5" />
-          </g>
-
-          <g className="network-packets">
-            <g className="network-packet network-packet-outbound">
-              <circle className="network-packet-glow" r="8" />
-              <circle className="network-packet-core" r="3" />
-              <animateMotion dur="12s" begin="0s" repeatCount="indefinite">
-                <mpath href="#login-network-route-outbound" />
-              </animateMotion>
-              <animate
-                attributeName="opacity"
-                values="0;1;1;0"
-                keyTimes="0;0.05;0.94;1"
-                dur="12s"
-                begin="0s"
-                repeatCount="indefinite"
-              />
-            </g>
-
-            <g className="network-packet network-packet-return">
-              <circle className="network-packet-glow" r="8" />
-              <circle className="network-packet-core" r="3" />
-              <animateMotion dur="12s" begin="-5s" repeatCount="indefinite">
-                <mpath href="#login-network-route-return" />
-              </animateMotion>
-              <animate
-                attributeName="opacity"
-                values="0;1;1;0"
-                keyTimes="0;0.05;0.94;1"
-                dur="12s"
-                begin="-5s"
-                repeatCount="indefinite"
-              />
-            </g>
-          </g>
-        </svg>
-
-        <div className="security-vignette" />
-      </div>
+    <main className="auth-page login-page">
+      <AuthBackground idPrefix="login" />
 
       <div className="login-card-wrapper">
         <section className="login-card" aria-labelledby="login-title">
@@ -306,28 +197,15 @@ export default function LoginPage({ onLoginSuccess }) {
           />
 
           <span className="card-tagline">Internal Security Portal</span>
-          <h1 className="card-title" id="login-title">{passwordChangeChallenge ? 'Create a new password' : mfaChallenge ? 'Verification required' : 'Sign In'}</h1>
+          <h1 className="card-title" id="login-title">{mfaChallenge ? 'Verification required' : 'Sign In'}</h1>
 
-          {loginNotice && !mfaChallenge && !passwordChangeChallenge && (
+          {loginNoticeMessage && !mfaChallenge && (
             <div className="login-notice" role="status">
-              {loginNotice === 'password-changed'
-                ? 'Password changed. Sign in again.'
-                : loginNotice === 'mfa-disabled'
-                  ? 'Authenticator turned off. Sign in again.'
-                  : 'Your security settings were updated. Sign in again.'}
+              {loginNoticeMessage}
             </div>
           )}
 
-          {passwordChangeChallenge ? (
-            <form onSubmit={handlePasswordChange}>
-              {error && <div className="login-error" role="alert">{error}</div>}
-              <p className="verification-copy">Your temporary password must be replaced before a session can be created.</p>
-              <div className="form-group"><label className="form-label" htmlFor="new-password">New password</label><div className="input-wrapper"><input type="password" id="new-password" className="form-input" minLength={12} maxLength={128} autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} required autoFocus disabled={loading} /></div></div>
-              <div className="form-group"><label className="form-label" htmlFor="confirm-password">Confirm new password</label><div className="input-wrapper"><input type="password" id="confirm-password" className="form-input" minLength={12} maxLength={128} autoComplete="new-password" value={confirmationPassword} onChange={event => setConfirmationPassword(event.target.value)} required disabled={loading} /></div></div>
-              <button type="submit" className="btn-submit" disabled={loading || newPassword.length < 12 || newPassword !== confirmationPassword}>{loading && <span className="spinner" aria-hidden="true" />}<span>{loading ? 'Changing…' : 'Change password and sign in'}</span></button>
-              <div className="verification-actions"><button type="button" onClick={backToPassword} disabled={loading}>Back to sign in</button></div>
-            </form>
-          ) : mfaChallenge ? (
+          {mfaChallenge ? (
             <form onSubmit={handleMfaVerify}>
               {error && <div className="login-error" role="alert">{error}</div>}
               <p className="verification-copy">

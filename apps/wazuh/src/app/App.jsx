@@ -26,6 +26,7 @@ import { MOCK_ALERTS } from '../mock/alerts';
 import { MOCK_INCIDENTS } from '../mock/incidents';
 import { MOCK_AGENTS } from '../mock/agents';
 import { formatBangkokDate, formatBangkokDateTime, formatBangkokTime } from '../shared/time';
+import { getAccess, hasPermission } from '../../../../packages/access-control/index.js';
 
 // ── AUTH CHECK ──
 const TOKEN_KEY = 'middleware_token';
@@ -41,7 +42,6 @@ function decodeValidToken(token) {
     if (payload.iss !== 'middleware-hub' || payload.aud !== 'internal-security-middleware') return null;
     if (!payload.exp || Date.now() / 1000 >= payload.exp || !payload.sid || !payload.sub || !payload.username) return null;
     if (payload.status && payload.status !== 'active') return null;
-    if (payload.role !== 'admin' && (!Array.isArray(payload.apps) || !payload.apps.includes('wazuh'))) return null;
     return payload;
   } catch {
     return null;
@@ -70,6 +70,10 @@ export default function App() {
   const [selectedAlert, setSelectedAlert] = useState(null);
   const [selectedIncidentId, setSelectedIncidentId] = useState(null);
   const [showCreateIncident, setShowCreateIncident] = useState(false);
+  const canViewWazuh = hasPermission(user, 'wazuh.view');
+  const canManageIncidents = hasPermission(user, 'wazuh.incidents.manage');
+  const canManageSettings = hasPermission(user, 'wazuh.settings.manage');
+  const access = getAccess(user);
 
   // Sync hash routing
   useEffect(() => {
@@ -94,6 +98,15 @@ export default function App() {
       <div style={{ backgroundColor: '#0f1624', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <p style={{ color: '#9ca8bc', fontFamily: 'sans-serif' }}>Redirecting to sign in...</p>
       </div>
+    );
+  }
+
+  if (!canViewWazuh) {
+    return (
+      <AccessDeniedPage
+        message="Your role does not include viewing Wazuh alerts, incidents, or agents."
+        onBack={() => { window.location.href = '/'; }}
+      />
     );
   }
 
@@ -133,7 +146,7 @@ export default function App() {
           window.location.href = `/#profile?returnTo=${encodeURIComponent(returnTo)}`;
         }} aria-label="Open your profile">
           <span>{user.username}</span>
-          <small>{user.role}</small>
+          <small>{access.role.name}</small>
         </button>
 
         <nav className="sidebar-nav">
@@ -169,13 +182,15 @@ export default function App() {
             <span>Agents</span>
           </button>
 
-          <button
-            className={`sidebar-nav-item ${activePage === '#settings' ? 'active' : ''}`}
-            onClick={() => navigateTo('#settings')}
-          >
-            <Settings size={18} />
-            <span>Settings</span>
-          </button>
+          {canManageSettings && (
+            <button
+              className={`sidebar-nav-item ${activePage === '#settings' ? 'active' : ''}`}
+              onClick={() => navigateTo('#settings')}
+            >
+              <Settings size={18} />
+              <span>Settings</span>
+            </button>
+          )}
         </nav>
 
         <div className="sidebar-footer">
@@ -212,12 +227,14 @@ export default function App() {
             incidents={incidents} 
             onSelectIncident={(id) => navigateTo(`#incidents/${id}`)}
             onOpenCreate={() => setShowCreateIncident(true)}
+            canManage={canManageIncidents}
           />
         )}
         {activePage === '#incidents' && detailParam && (
           <IncidentDetailPage 
             incidentId={Number(detailParam)} 
             incidents={incidents}
+            canManage={canManageIncidents}
             onBack={() => navigateTo('#incidents')}
             onAddTimelineNote={(id, noteText) => {
               setIncidents(prev => prev.map(inc => {
@@ -254,7 +271,9 @@ export default function App() {
           <AgentsPage agents={agents} />
         )}
         {activePage === '#settings' && (
-          <SettingsPage />
+          canManageSettings
+            ? <SettingsPage />
+            : <AccessDeniedPage message="Your role does not include managing Wazuh settings." onBack={() => navigateTo('#dashboard')} compact />
         )}
       </main>
 
@@ -263,7 +282,7 @@ export default function App() {
         <AlertDetailModal alert={selectedAlert} onClose={() => setSelectedAlert(null)} />
       )}
 
-      {showCreateIncident && (
+      {showCreateIncident && canManageIncidents && (
         <IncidentCreateModal 
           onClose={() => setShowCreateIncident(false)} 
           onSubmit={(title, desc, severity) => {
@@ -286,6 +305,19 @@ export default function App() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+function AccessDeniedPage({ message, onBack, compact = false }) {
+  return (
+    <div className={compact ? 'page-frame' : 'app-shell'} style={{ minHeight: compact ? 'auto' : '100vh', display: 'grid', placeItems: 'center', padding: '2rem' }}>
+      <section style={{ maxWidth: 520, textAlign: 'center' }}>
+        <Lock size={38} style={{ color: 'var(--primary)', marginBottom: '1rem' }} />
+        <h1 style={{ fontSize: '1.4rem' }}>Access denied</h1>
+        <p style={{ color: 'var(--text-muted)', margin: '.65rem 0 1.25rem' }}>{message}</p>
+        <button type="button" className="btn-secondary" onClick={onBack}><ArrowLeft size={16} />Back</button>
+      </section>
     </div>
   );
 }
@@ -485,7 +517,7 @@ function AlertsPage({ alerts, onSelectAlert }) {
 }
 
 // ── PAGE 3: INCIDENTS PAGE ──
-function IncidentsPage({ incidents, onSelectIncident, onOpenCreate }) {
+function IncidentsPage({ incidents, onSelectIncident, onOpenCreate, canManage }) {
   const [statusFilter, setStatusFilter] = useState('all');
 
   const filtered = incidents.filter(inc => {
@@ -499,10 +531,12 @@ function IncidentsPage({ incidents, onSelectIncident, onOpenCreate }) {
           <h1>Incident Manager</h1>
           <p>Track, investigate, and mitigate ongoing security issues</p>
         </div>
-        <button className="btn-primary" onClick={onOpenCreate}>
-          <Plus size={16} />
-          <span>New Incident</span>
-        </button>
+        {canManage && (
+          <button className="btn-primary" onClick={onOpenCreate}>
+            <Plus size={16} />
+            <span>New Incident</span>
+          </button>
+        )}
       </header>
 
       <div className="table-container">
@@ -568,7 +602,7 @@ function IncidentsPage({ incidents, onSelectIncident, onOpenCreate }) {
 }
 
 // ── PAGE 4: INCIDENT DETAIL PAGE ──
-function IncidentDetailPage({ incidentId, incidents, onBack, onAddTimelineNote, onChangeStatus }) {
+function IncidentDetailPage({ incidentId, incidents, onBack, onAddTimelineNote, onChangeStatus, canManage }) {
   const [noteText, setNoteText] = useState('');
   const incident = incidents.find(i => i.id === incidentId);
 
@@ -646,7 +680,7 @@ function IncidentDetailPage({ incidentId, incidents, onBack, onAddTimelineNote, 
           </div>
 
           {/* Add timeline note */}
-          <form onSubmit={handlePostNote} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {canManage && <form onSubmit={handlePostNote} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <textarea
               placeholder="Post an update or note to this timeline..."
               rows="3"
@@ -660,7 +694,7 @@ function IncidentDetailPage({ incidentId, incidents, onBack, onAddTimelineNote, 
             <button type="submit" className="btn-primary" style={{ width: 'fit-content' }}>
               <span>Post Update</span>
             </button>
-          </form>
+          </form>}
         </div>
 
         {/* Sidebar Controls */}
@@ -692,6 +726,7 @@ function IncidentDetailPage({ incidentId, incidents, onBack, onAddTimelineNote, 
                 }}
                 value={incident.status}
                 onChange={(e) => onChangeStatus(incidentId, e.target.value)}
+                disabled={!canManage}
               >
                 <option value="open">Open</option>
                 <option value="investigating">Investigating</option>
@@ -699,6 +734,7 @@ function IncidentDetailPage({ incidentId, incidents, onBack, onAddTimelineNote, 
                 <option value="resolved">Resolved</option>
                 <option value="closed">Closed</option>
               </select>
+              {!canManage && <small style={{ color: 'var(--text-muted)' }}>View only</small>}
             </div>
           </div>
         </div>

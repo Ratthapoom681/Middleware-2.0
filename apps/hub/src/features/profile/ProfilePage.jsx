@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Mail, Shield, ShieldCheck, ShieldOff, Smartphone, UserRound } from 'lucide-react';
+import {
+  createAuthenticatedRequest,
+  isSessionExpiredError,
+} from '../../shared/authenticatedRequest.js';
+import {
+  PERMISSION_CATALOG,
+  getAccess,
+} from '../../../../../packages/access-control/index.js';
 import './ProfilePage.css';
 
 const formatDate = value => {
@@ -28,16 +36,6 @@ function publicProfile(data, fallbackUser) {
   return { user, mfa: { ...mfa, mode: mfa.mode || user.mfaMode || 'disabled', status: getMfaStatus(user, mfa), provider: mfa.provider || user.mfaProvider || '' } };
 }
 
-function useProfileRequest(token) {
-  const headers = useMemo(() => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }), [token]);
-  return useCallback(async (path, options = {}) => {
-    const response = await fetch(`/api${path}`, { ...options, headers: { ...headers, ...(options.headers || {}) } });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'Request failed');
-    return data;
-  }, [headers]);
-}
-
 function PageChrome({ children, onBack, onLogout, backLabel = 'Back to Hub' }) {
   return <div className="profile-page">
     <header className="profile-topbar"><div className="profile-brand"><Shield size={20} /><span>Internal Security Middleware Hub</span></div><button type="button" className="profile-signout" onClick={onLogout}>Sign out</button></header>
@@ -50,8 +48,11 @@ function MfaBadge({ status }) {
   return <span className={`profile-mfa-badge ${status}`}><Icon size={15} />{status === 'enabled' ? 'MFA enabled' : status === 'pending' ? 'Setup pending' : 'MFA disabled'}</span>;
 }
 
-export default function ProfilePage({ token, currentUser, returnTo, onBack, onLogout, onUserUpdated }) {
-  const request = useProfileRequest(token);
+export default function ProfilePage({ token, currentUser, returnTo, onBack, onLogout, onUnauthorized, onUserUpdated }) {
+  const request = useMemo(
+    () => createAuthenticatedRequest({ token, onUnauthorized }),
+    [onUnauthorized, token],
+  );
   const [profile, setProfile] = useState(() => publicProfile(null, currentUser));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -63,14 +64,29 @@ export default function ProfilePage({ token, currentUser, returnTo, onBack, onLo
       const next = publicProfile(data, currentUser);
       setProfile(next);
       onUserUpdated?.({ ...currentUser, ...next.user, mfaMode: next.mfa.mode, mfaStatus: next.mfa.status, mfaEnabled: next.mfa.status === 'enabled', mfaProvider: next.mfa.provider || '' });
-    }).catch(err => active && setError(err.message || 'Unable to load your profile')).finally(() => active && setLoading(false));
+    }).catch(err => {
+      if (active && !isSessionExpiredError(err)) setError(err.message || 'Unable to load your profile');
+    }).finally(() => active && setLoading(false));
     return () => { active = false; };
   }, [currentUser?.username, onUserUpdated, request]);
 
   const user = profile.user || currentUser || {};
   const mfa = profile.mfa || {};
   const displayName = user.fullName || user.username || 'User';
-  const workspaceLabels = user.role === 'admin' ? ['Hub administration', 'DefectDojo', 'Wazuh', 'Docs'] : ['Hub', 'DefectDojo', 'Wazuh', 'Docs'];
+  const access = getAccess(user);
+  const groupedCapabilities = PERMISSION_CATALOG.reduce((groups, permission) => {
+    if (!access.permissions.includes(permission.key)) return groups;
+    const existing = groups.find(group => group.workspace === permission.workspace);
+    if (existing) existing.labels.push(permission.label);
+    else groups.push({ workspace: permission.workspace, labels: [permission.label] });
+    return groups;
+  }, []);
+  const productScope = access.productScope;
+  const productScopeLabel = productScope.mode === 'all'
+    ? 'All products'
+    : productScope.mode === 'selected'
+      ? `Selected products: ${productScope.products.join(', ')}`
+      : 'No products';
   return <PageChrome onBack={onBack} onLogout={onLogout} backLabel={returnTo === '/' ? 'Back to Hub' : 'Back to workspace'}>
     <section className="profile-hero"><div className="profile-avatar" aria-hidden="true">{String(displayName).slice(0, 1).toUpperCase()}</div><div><span className="profile-eyebrow">Your account</span><h1>{displayName}</h1><p>View your identity, workspace access, and sign-in status.</p></div><MfaBadge status={mfa.status} /></section>
     {error && <div className="profile-notice error" role="alert">{error}</div>}
@@ -79,10 +95,23 @@ export default function ProfilePage({ token, currentUser, returnTo, onBack, onLo
       {loading ? <div className="profile-loading">Loading account…</div> : <>
         <dl className="profile-facts profile-facts-wide">
           <div><dt>Full name</dt><dd>{user.fullName || 'Not provided'}</dd></div><div><dt>Username</dt><dd>{user.username || 'Not available'}</dd></div><div><dt>Email address</dt><dd>{user.email || 'Not provided'}</dd></div>
-          <div><dt>Company</dt><dd>{user.company || 'Not provided'}</dd></div><div><dt>Department</dt><dd>{user.department || 'Not provided'}</dd></div><div><dt>Role</dt><dd><span className="profile-role">{user.role || 'viewer'}</span></dd></div>
+          <div><dt>Company</dt><dd>{user.company || 'Not provided'}</dd></div><div><dt>Department</dt><dd>{user.department || 'Not provided'}</dd></div><div><dt>Role</dt><dd><span className="profile-role">{access.role.name}</span></dd></div>
           <div><dt>Account status</dt><dd>{user.accountStatus || user.status || 'active'}</dd></div><div><dt>Last login</dt><dd>{formatDate(user.lastLoginAt)}</dd></div><div><dt>Authenticator MFA</dt><dd>{mfa.status === 'enabled' ? `${providerLabel(mfa.provider)} · enabled ${formatDate(mfa.enabledAt)}` : mfa.status === 'pending' ? `${providerLabel(mfa.provider)} · setup requested ${formatDate(mfa.requestedAt)}` : 'Disabled'}</dd></div>
         </dl>
-        <div className="profile-access"><strong>Workspace access</strong><div>{workspaceLabels.map(label => <span key={label}>{label}</span>)}</div>{user.products?.length > 0 && <small>Products: {user.products.join(', ')}</small>}</div>
+        <div className="profile-access">
+          <strong>Effective capabilities</strong>
+          {groupedCapabilities.length > 0 ? (
+            <div className="profile-capability-groups">
+              {groupedCapabilities.map(group => (
+                <section key={group.workspace}>
+                  <h3>{group.workspace}</h3>
+                  <ul>{group.labels.map(label => <li key={label}>{label}</li>)}</ul>
+                </section>
+              ))}
+            </div>
+          ) : <p className="profile-no-capabilities">No workspace tasks are assigned. Hub and this profile remain available.</p>}
+          <small><strong>DefectDojo scope:</strong> {productScopeLabel}</small>
+        </div>
         <div className="profile-admin-note"><Mail size={17} /><span>Your administrator manages profile details, password resets, and authenticator access.</span></div>
       </>}
     </section>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import DocsPage from './features/docs/DocsPage';
+import { hasPermission } from '../../../../packages/access-control/index.js';
 
 const TOKEN_KEY = 'middleware_token';
 const USER_KEY = 'middleware_user';
@@ -94,6 +95,18 @@ export default function App() {
       <div style={{ display: 'grid', placeItems: 'center', height: '100vh', color: '#787f99' }}>
         Redirecting to login...
       </div>
+    );
+  }
+
+  if (!hasPermission(user, 'docs.view')) {
+    return (
+      <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: '2rem', color: '#c8ccdb', background: '#111522' }}>
+        <section style={{ maxWidth: 520, textAlign: 'center' }}>
+          <h1>Access denied</h1>
+          <p>Your role does not include viewing or exporting documentation.</p>
+          <button type="button" onClick={handleBack}>Back to Hub</button>
+        </section>
+      </main>
     );
   }
 

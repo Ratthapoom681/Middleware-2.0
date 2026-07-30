@@ -213,11 +213,24 @@ Auth-service is the identity owner:
 5. DefectDojo and Docs requests attach `Authorization: Bearer <token>`.
 6. Each backend validates the signature and claims locally, then calls the auth service. Explicit inactive/forbidden responses fail closed; transport and `502–504` failures temporarily use the unexpired local claims.
 
-The roles are `admin` and `viewer`:
+Authorization uses one centrally managed role per user:
 
-- Hub user management and technical documentation require `admin`.
-- DefectDojo routes declare admin-only pages in `apps/vulnerability/web/src/app/routes.js`, and mutating/sensitive APIs use server `requireAdmin` middleware.
-- A viewer's `products` claim limits the findings returned by the backend. Admins are unrestricted.
+- The immutable **System Administrator** role always receives every current and
+  future permission. It alone can manage users, roles, and assignments.
+- Custom roles contain task permission keys from the shared
+  `packages/access-control` catalog. New catalog tasks remain disabled until an
+  administrator reviews the role.
+- Every user also has a DefectDojo product-scope mode of `all`, `selected`, or
+  `none`. The server applies that scope to data, search, tickets, sync, history,
+  and mitigation operations.
+- Backend routes use `requirePermission(...)` or `requireSystemAdmin`; frontend
+  filtering is for clarity and is not the security boundary.
+- Existing top-level `role` and `products` claims remain transitional
+  compatibility data. The nested `access` object is authoritative.
+
+Role edits, assignments, and product-scope changes revoke affected sessions
+immediately. During an Auth transport outage, unexpired local claims can retain
+read access, but mutating and administrative requests fail closed.
 
 If production auth storage contains no users and no legacy users can be
 imported, Auth requires `AUTH_BOOTSTRAP_ADMIN_PASSWORD`. It never creates
@@ -336,7 +349,7 @@ Compose persists state in `auth-data`, `postgres-data`, and `defectdojo-data` vo
 
 A typical **Sync All** run is:
 
-1. An admin starts Sync All in DefectDojo Viewer.
+1. A user with `defectdojo.sync.run` starts Sync All in DefectDojo Viewer.
 2. The frontend posts filters to `/defectdojo/api/sync-all`.
 3. The backend pulls findings and product/engagement/endpoint context from DefectDojo.
 4. Raw findings and mapped entities are persisted.
@@ -349,7 +362,9 @@ A typical **Sync All** run is:
 
 The authenticated SSE endpoint is `/defectdojo/api/sync/events`. The gateway has a dedicated location that disables proxy buffering and extends the read timeout.
 
-Mitigation review state is stored separately from the action history. Admins can close or ignore queued review groups; the backend confirms Redmine transitions and records the administrative action.
+Mitigation review state is stored separately from the action history. Users
+with `defectdojo.mitigations.review` can close or ignore in-scope review groups;
+the backend confirms Redmine transitions and records the action.
 
 ## 12. API Ownership
 

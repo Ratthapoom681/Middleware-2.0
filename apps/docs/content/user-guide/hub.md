@@ -50,14 +50,27 @@ All services are accessed through the gateway on a single port (default: 80).
 
 ## Roles and Access
 
-There are two main roles.
+Every account has one role. A role contains plain-language tasks such as
+**View vulnerabilities**, **Run vulnerability sync**, or **Edit and manage
+documents**.
 
-| Role | Can do |
-| --- | --- |
-| **Admin** | Manage users, configure integrations, run Sync Findings, rebuild Redmine status, clear local data, view sync history, and process mitigation reviews. |
-| **Viewer** | View dashboards, findings, products, engagements, Redmine status, and linked Redmine issues. |
+- **System Administrator** is protected and always has every current and future
+  task. Only System Administrators can manage users, roles, and assignments.
+- **Custom roles** contain only the tasks selected by an administrator. New
+  tasks are not added automatically.
+- DefectDojo access is set separately to **All products**, **Selected
+  products**, or **No products**.
 
-Viewer accounts can be restricted to specific product names. Admin accounts have full product access.
+Use **Administration → Roles & Access** to create and review roles. The editor
+groups tasks by workspace, adds required viewing tasks automatically, previews
+“This role can…”, and warns when a change affects assigned users. Use
+**Activity** on the same page to see who created, changed, retired, or assigned
+a role.
+
+Example: a `Security Reviewer` role can view vulnerabilities and review
+mitigations. If its user is limited to `Mobile Banking`, the user sees those
+tasks only for that product and does not see settings, logs, documentation
+editing, or other products.
 
 ## Start the System
 
@@ -133,26 +146,24 @@ Security hardening checklist:
 
 ## Overall User Flow
 
-### For an Admin
+### For a System Administrator
 
 1. Start the stack and log in to the Hub.
-2. Open **User Management** and create the required users.
-3. Open **DefectDojo Viewer**.
-4. Go to **Settings**.
-5. Configure **Connection** for DefectDojo and Redmine.
-6. Configure **Redmine Status** values and priority mappings.
-7. Return to **Dashboard**.
-8. Click **Sync Findings**.
-9. Review the dashboard, findings table, Sync History, and Mitigation Review queue.
+2. Open **Roles & Access** and create the required task-based roles.
+3. Open **User Management**, choose one role and a DefectDojo product scope for
+   each user, and save.
+4. Open **DefectDojo Viewer** and configure integrations and settings.
+5. Run Sync Findings and review the dashboard, findings table, Sync History,
+   and Mitigation Review queue.
 
-### For a Viewer
+### For a Custom-Role User
 
 1. Log in to the Hub.
-2. Open **DefectDojo Viewer**.
-3. Review **Dashboard** summary cards.
-4. Use search, severity, Redmine status, company, and engagement filters in the findings table.
-5. Open a finding row to review description, impact, endpoints, CVEs, CWEs, and mitigation.
-6. Open linked Redmine issues when a ticket exists.
+2. Open a visible workspace card. Workspaces with no permitted tasks are hidden.
+3. Use the visible navigation and actions. A direct URL to another task shows
+   Access Denied.
+4. In DefectDojo, only products allowed by the assigned product scope are
+   returned.
 
 ## Log In and Use the Hub
 
@@ -196,21 +207,22 @@ To open a workspace:
 
 After logging in for the first time, follow this decision path:
 
-1. **Change the default password** — Go to User Management, edit the admin user, set a strong password.
-2. **Create user accounts** — Add admin and viewer accounts for your team.
-3. **Configure DefectDojo integration** — Open DefectDojo Viewer → Settings → Connection → enter your DefectDojo URL and API key.
-4. **Configure Redmine integration** — In the same Connection tab, enter your Redmine URL and API key.
-5. **Configure Redmine Status mapping** — Go to Settings → Redmine Status → set status IDs and priority IDs (or leave blank for auto-resolve).
-6. **Run your first sync** — Return to Dashboard → click Sync Findings → use default filters → click Pull & Sync.
-7. **Verify results** — Check that the dashboard shows finding counts and severity distribution.
+1. **Change the bootstrap password** — Generate a temporary replacement in User Management, then complete the password-change flow.
+2. **Create roles** — Open Roles & Access and choose the tasks required by each team.
+3. **Create user accounts** — Assign each account one role and one product scope.
+4. **Configure DefectDojo integration** — Open DefectDojo Viewer → Settings → Connection → enter your DefectDojo URL and API key.
+5. **Configure Redmine integration** — In the same Connection tab, enter your Redmine URL and API key.
+6. **Configure Redmine Status mapping** — Go to Settings → Redmine Status → set status IDs and priority IDs (or leave blank for auto-resolve).
+7. **Run your first sync** — Open Sync Operations, select the permitted products, and start the run.
+8. **Verify results** — Check that the dashboard shows finding counts and severity distribution.
 
 ## Manage Hub Users
 
-Admins can manage Hub identities from the Hub.
+System Administrators can manage Hub identities from the Hub.
 
 ### Open User Management
 
-1. Log in as an admin.
+1. Log in as a System Administrator.
 2. On the Hub page, find the **Administration** section.
 3. Click **User Management**.
 
@@ -219,15 +231,15 @@ Admins can manage Hub identities from the Hub.
 1. Click **Add User**.
 2. Enter **Username**.
 3. Enter **Email** if available.
-4. Enter **Password**.
-5. Choose **Role**:
-   - **Viewer** for read-only/restricted use.
-   - **Admin** for full administration.
+4. Choose one custom **Role**. The description and effective-access preview
+   explain what it grants.
+5. Choose **All products**, **Selected products**, or **No products**. System
+   Administrator is fixed to All products.
 6. Choose **Status**:
    - **Active** allows sign-in.
    - **Suspended** blocks active use.
-7. For Viewer accounts, enter **Allowed Products** as comma-separated product names when access should be restricted.
-8. Click **Save User**.
+7. Click **Save User**. The generated temporary password is shown once and is
+   queued for email when an address is available.
 
 ### Edit a User
 
@@ -241,8 +253,9 @@ Admins can manage Hub identities from the Hub.
 
 1. Find the user in the table.
 2. Click the key icon.
-3. Enter the new password.
-4. Click **Save User** or **Save Password**.
+3. Generate a new temporary password and deliver or copy it securely.
+4. The user's existing sessions end and they must choose a permanent password
+   at next sign-in.
 
 ### Delete a User
 

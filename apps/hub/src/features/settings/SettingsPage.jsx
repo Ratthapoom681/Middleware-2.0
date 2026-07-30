@@ -1,27 +1,30 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Mail, ShieldAlert } from 'lucide-react';
+import {
+  createAuthenticatedRequest,
+  isSessionExpiredError,
+} from '../../shared/authenticatedRequest.js';
 import './SettingsPage.css';
 
 const EMPTY = { host: '', port: 25, security: 'plain', username: '', password: '', fromAddress: '', clearPassword: false };
 
-export default function SettingsPage({ token, onBack }) {
+export default function SettingsPage({ token, onBack, onUnauthorized }) {
   const [settings, setSettings] = useState(EMPTY);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const request = useCallback(async (path, options = {}) => {
-    const response = await fetch(`/api${path}`, {
-      ...options,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(options.headers || {}) }
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'Request failed');
-    return data;
-  }, [token]);
+  const request = useMemo(
+    () => createAuthenticatedRequest({ token, onUnauthorized }),
+    [onUnauthorized, token],
+  );
 
   useEffect(() => {
-    request('/settings/email').then(data => setSettings({ ...EMPTY, ...data, password: '' })).catch(err => setError(err.message));
+    request('/settings/email')
+      .then(data => setSettings({ ...EMPTY, ...data, password: '' }))
+      .catch(err => {
+        if (!isSessionExpiredError(err)) setError(err.message);
+      });
   }, [request]);
 
   const save = async event => {
@@ -30,7 +33,9 @@ export default function SettingsPage({ token, onBack }) {
       const data = await request('/settings/email', { method: 'PATCH', body: JSON.stringify(settings) });
       setSettings(value => ({ ...value, ...data.settings, password: '', clearPassword: false }));
       setMessage(data.message);
-    } catch (err) { setError(err.message); } finally { setBusy(false); }
+    } catch (err) {
+      if (!isSessionExpiredError(err)) setError(err.message);
+    } finally { setBusy(false); }
   };
 
   return <div className="settings-page">

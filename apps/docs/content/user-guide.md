@@ -90,14 +90,20 @@ All services are accessed through a single Nginx gateway port (default: 80).
 
 ## 3. Roles and Access
 
-There are two main roles.
+Every user has one role. The protected **System Administrator** role always has
+all permissions and is the only role that can manage users, assignments, and
+role definitions. Administrators can create custom roles by selecting
+plain-language tasks grouped under Hub, DefectDojo, Documentation, and Wazuh.
 
-| Role | Can do |
-| --- | --- |
-| **Admin** | Manage users, configure integrations, run Sync Findings, view sync history, and process mitigation reviews. |
-| **Viewer** | View dashboards, findings, products, engagements, and Redmine status. |
+DefectDojo product scope is selected separately for each user:
 
-Viewer accounts can be restricted to specific product names. Admin accounts have full access.
+- **All products** — the permitted DefectDojo tasks apply everywhere.
+- **Selected products** — the tasks apply only to the named products.
+- **No products** — no product-scoped DefectDojo data is available.
+
+For example, assign a `Security Reviewer` role with **View vulnerabilities**
+and **Review mitigations**, then select only `Mobile Banking`. That user cannot
+see settings, logs, documentation editing, or other products.
 
 ---
 
@@ -132,20 +138,18 @@ Fresh production installs use username `admin` and the password configured in
 
 ## 5. Overall User Flow
 
-### For an Admin
+### For a System Administrator
 1. Start the stack and log in to the Hub.
-2. Open User Management and create required users.
-3. Open DefectDojo Viewer → Settings → Connection. Configure DefectDojo and Redmine APIs.
-4. Configure Redmine Status values.
-5. Return to Dashboard and click Sync Findings.
-6. Review the dashboard, Sync History, and Mitigation Review queue.
+2. Open **Roles & Access** and create the required custom roles.
+3. Open **User Management** and assign each user one role and one product scope.
+4. Open DefectDojo Viewer → Settings → Connection and configure DefectDojo and Redmine APIs.
+5. Return to Dashboard, run Sync Findings, and review the permitted queues.
 
-### For a Viewer
+### For a Custom-Role User
 1. Log in to the Hub.
-2. Open DefectDojo Viewer.
-3. Review Dashboard summary cards.
-4. Filter findings by severity, status, company, or engagement.
-5. Open a finding row to review details and linked Redmine issues.
+2. Open one of the workspace cards allowed by the assigned role.
+3. Use the visible tasks and products. Hidden tasks remain blocked when opened
+   by a direct URL.
 
 ---
 
@@ -174,10 +178,14 @@ Administrator-created and reset passwords are temporary, expire after 24 hours, 
 
 ## 7. Manage Hub Users
 
-Admins can manage identities from the Hub.
+System Administrators can manage identities from the Hub.
 
 1. Find the **Administration** section on the Hub page and click **User Management**.
-2. **Add a User**: Enter identity details, choose Role, Allowed Products, and Disabled, Google Authenticator, Microsoft Authenticator, or Other authenticator. The system generates and displays a one-time temporary password. When a valid email is saved, delivery is queued automatically; otherwise copy it manually.
+2. **Add a User**: Enter identity details, choose one Role and an explicit
+   product scope, and choose Disabled, Google Authenticator, Microsoft
+   Authenticator, or Other authenticator. The system generates and displays a
+   one-time temporary password. When a valid email is saved, delivery is queued
+   automatically; otherwise copy it manually.
 3. **Edit/Delete/Reset**: Use table actions to update identity, generate a new temporary password, or delete an account.
 4. **Manage MFA**: Assign the user’s authenticator app, resend a pending 24-hour email invitation, reset a lost authenticator, change providers, or disable MFA. Users cannot enroll from Hub or Profile and do not enter their current password; the single-use email link is the enrollment bootstrap factor. Changing an enabled provider, resetting, and disabling revoke target sessions, and successful enrollment revokes all remaining sessions. These actions rely on the active administrator session and do not request the administrator password again.
 5. **Configure Email**: Open **System Settings → Email Delivery**. SMTP settings are saved at runtime, so no image rebuild is required. Plain port 25 relays are supported but do not protect temporary passwords in transit.
@@ -186,7 +194,9 @@ Admins can manage identities from the Hub.
 
 ## 8. Use DefectDojo Viewer
 
-Open **DefectDojo Viewer** from the Hub. The sidebar provides access to the Dashboard, Sync History (Admin), Mitigation Review (Admin), Settings (Admin), and Logout.
+Open **DefectDojo Viewer** from the Hub. The sidebar shows only tasks granted by
+the assigned role. The server independently checks every request and applies
+the user's product scope.
 
 ---
 
@@ -247,7 +257,9 @@ One compacted row equals one actionable issue, and Redmine tickets are created p
 
 Click any finding row to view its details (severity, description, endpoints, CVEs, and mitigation guidance).
 
-**Open in Redmine**: Admins can click this to create a new ticket or open an existing one. Viewers can only open existing tickets.
+**Open in Redmine**: Users with **Manage Redmine tickets** can create or update
+a ticket. Vulnerability viewers can open an existing ticket link but cannot
+change it.
 
 ---
 
@@ -267,7 +279,8 @@ Use the `/defectdojo/#products` route to view a grid of all synced products. Cli
 
 ## 16. Sync History
 
-Admins can view an audit log of all syncs at **Sync History**. You can filter by status (Success, Partial, Failed) and view new finding details for each sync run.
+Users with **View sync history** can open **Sync History**, filter by status
+(Success, Partial, Failed), and view runs within their product scope.
 
 ---
 
@@ -275,7 +288,7 @@ Admins can view an audit log of all syncs at **Sync History**. You can filter by
 
 The Mitigation Review queue acts as a safety gate.
 
-1. When a Redmine ticket is Resolved, admins review it here.
+1. When a Redmine ticket is Resolved, users with **Review mitigations** review it here.
 2. Click the action button on a pending item.
 3. Add a Reviewer note.
 4. Click **Review & Close** to close the ticket in Redmine, or **Ignore** to archive the review without closing.

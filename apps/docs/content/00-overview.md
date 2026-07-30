@@ -86,18 +86,18 @@ Routing in DefectDojo Viewer relies on the URL hash. Deep linking is fully suppo
 
 ### Route Definitions (`src/app/routes.js`)
 
-| Route ID | Hash Prefix | Requires Admin | Page Description |
+| Route ID | Hash Prefix | Required permission | Page Description |
 |---|---|---|---|
-| `dashboard` | `#dashboard` or empty | No | SOC-style landing page with metric summaries and embedded findings |
-| `findings` | `#findings` | No | Full list of compacted vulnerability findings |
-| `products` | `#products` | No | Grid of products containing lists of engagements |
-| `productDashboard` | `#product-dashboard` | No | Per-product dashboard screen with stats |
-| `productFindings` | `#product-findings` | No | Compacted findings filtered to a specific product |
-| `syncHistory` | `#sync-history` | Yes | Audit log of data sync operations |
-| `mitigationReview` | `#mitigation-review` | Yes | Mitigation review queue and action history |
-| `notifyManagement` | `#notify-management` | Yes | IP/host mapping configuration for notification endpoints |
-| `users` | `#users` | Yes | Legacy route that redirects to Hub user administration |
-| `settings` | `#settings` | Yes | Global settings (DefectDojo/Redmine configurations, database controls) |
+| `dashboard` | `#dashboard` or empty | `defectdojo.vulnerabilities.view` | SOC-style landing page with metric summaries and embedded findings |
+| `findings` | `#findings` | `defectdojo.vulnerabilities.view` | Full list of compacted vulnerability findings |
+| `products` | `#products` | `defectdojo.vulnerabilities.view` | Grid of products containing lists of engagements |
+| `productDashboard` | `#product-dashboard` | `defectdojo.vulnerabilities.view` | Per-product dashboard screen with stats |
+| `productFindings` | `#product-findings` | `defectdojo.vulnerabilities.view` | Compacted findings filtered to a specific product |
+| `dataManagement` | `#data-management` | `defectdojo.data.manage`; the Sync tab accepts `defectdojo.sync.run` | Live data, Sync Operations, archives, and storage |
+| `syncHistory` | `#sync-history` | `defectdojo.sync_history.view` | Audit log of data sync operations |
+| `mitigationReview` | `#mitigation-review` | `defectdojo.mitigations.review` | Mitigation review queue and action history |
+| `logMonitor` | `#log-monitor` | `defectdojo.logs.view` | Application and access-monitoring logs |
+| `settings` | `#settings` | `defectdojo.settings.manage` | Global DefectDojo and Redmine configuration |
 
 ### Deep Linking Schema
 The query resolver splits parameters in the hash string, allowing variables to be parsed and injected into component states on mount:
@@ -106,8 +106,12 @@ The query resolver splits parameters in the hash string, allowing variables to b
 ```
 
 ### Authorization Rules
-- The application router maps route flags on page render.
-- If a user with the `viewer` role navigates to an admin-only hash route (e.g., `#settings`), the router intercepts the action and redirects them to the default `#dashboard`.
+- The application router maps each route to a task permission and hides
+  navigation the user cannot use.
+- A direct unauthorized hash displays Access Denied, while the matching backend
+  endpoint returns `403`.
+- DefectDojo product scope is enforced by the backend for `all`, `selected`, and
+  `none`; frontend filtering is not the security boundary.
 
 ---
 
@@ -135,14 +139,14 @@ sequenceDiagram
         LoginUI->>LocalStore: Store shared token and user
     else Successful password-only login
         Server-->>LoginUI: 200 OK {token, user}
-        LoginUI->>LocalStore: Set 'defectdojo_token' = token
-        LoginUI->>LocalStore: Set 'defectdojo_user' = JSON string
+        LoginUI->>LocalStore: Store shared middleware token and user
         LoginUI->>User: Route to Dashboard
     end
 ```
 
 ### Session Persistence & Validation
-- On initialization, `App.jsx` reads `localStorage` for `defectdojo_token` and `defectdojo_user`.
+- On initialization, `App.jsx` reads the shared `middleware_token` and
+  `middleware_user` values.
 - To confirm validity, the app attempts to perform its initial dashboard query using the saved token.
 - If any API request responds with `401 Unauthorized`, the client intercepts the status code, triggers the logout callback, clears credentials from `localStorage`, dispatches `AUTH_EXPIRED_EVENT`, and resets the URL hash.
 
@@ -160,14 +164,12 @@ The main application layout wraps page views in `AppShell.jsx`, featuring a resp
 
 ### Sidebar Interface Components
 1. **Brand Header**: Renders the application logo with the `AlertTriangle` icon, display text, and product version.
-2. **User Profile Card**: Displays the logged-in username alongside a role badge (`Admin` or `Viewer`).
+2. **User Profile Card**: Displays the logged-in username and effective role name.
 3. **Primary Navigation Links**:
-   - `Dashboard` (Available to all users)
-   - `Sync History` (Admin only)
-   - `Notify Management` (Admin only)
-   - `Mitigation Review` (Admin only) — Contains a pending counter badge (`mitigationReviewPendingCount`). Renders with an animated warning class if count > 0.
-   - `Users` (Admin only)
-   - `Settings` (Admin only)
+   - `Dashboard` and `Company` for vulnerability viewers
+   - `Sync Operations` and `Sync History` for their respective sync tasks
+   - `Data Management`, `Log Monitor`, `Mitigation Review`, and `Settings` only
+     when the assigned role includes those tasks
 4. **Footer Actions**:
    - **Theme Selector**: A slider component (`ThemeToggle.jsx`) that toggles the visual theme.
    - **Refresh Action**: Trigger button with `RefreshCw` icon. Rotates during fetching and is disabled during dashboard reload.
@@ -183,7 +185,8 @@ The Security Dashboard (`DashboardPage.jsx`) gives security operators a high-lev
 - **User Indicator**: Shows current session username and role badge.
 - **Database Connectivity Status**: A status indicator (`Connected` vs `Reconnecting` badge). Updated dynamically through the SSE stream heartbeat.
 - **Redmine Polling Status**: Renders status indicators (`enabled`, `running`, `disabled`, or `error`). Includes an animated spin state when the background Redmine poll is processing.
-- **Sync All Action Button** (Admin only): Displays `Sync All (X)` where `X` is the current compacted findings count. Triggers the sync filters modal.
+- **Sync All Action Button**: Requires `defectdojo.sync.run`, displays the
+  current compacted finding count, and opens the sync filters.
 
 ### Metrics Grid Layout (`DashboardOverviewCards.jsx`)
 The page renders three summary panels to aggregate vulnerabilities:
@@ -344,22 +347,23 @@ stateDiagram-v2
     ActiveInDefectDojo --> MitigationReviewQueue : Queue for review (mismatch)
     MitigatedInDefectDojo --> AutoClosed : Optional auto-close
     
-    MitigationReviewQueue --> IgnoredState : Admin clicks "Ignore review"
-    MitigationReviewQueue --> ClosedRedmine : Admin clicks "Review & Close"
+    MitigationReviewQueue --> IgnoredState : Reviewer clicks "Ignore review"
+    MitigationReviewQueue --> ClosedRedmine : Reviewer clicks "Review & Close"
     
     IgnoredState --> [*]
     ClosedRedmine --> [*]
 ```
 
 ### Review Interface Layout
-Admins can toggle between two tabs:
+Users with `defectdojo.mitigations.review` can toggle between two tabs:
 1. **Queue Tab**: Lists resolved tickets waiting for review. Rows show the Redmine issue ID, finding details, severity, product route, and mitigation confirmation time.
 2. **History Tab**: Displays an audit log of past review actions, showing the action type, reviewer, timestamp, and notes.
 
 ### Review Actions & Modals
 - **Review & Close**: Opens a dialog to add reviewer notes. Submitting closes the ticket in Redmine and archives the review item.
 - **Ignore Review**: Archives the review item without closing the Redmine ticket.
-- **Bulk Operations**: Admins can select multiple items to batch-close or batch-ignore them.
+- **Bulk Operations**: Authorized mitigation reviewers can select multiple
+  items to batch-close or batch-ignore them.
 
 ---
 
@@ -376,7 +380,8 @@ The Sync History page (`SyncHistory.jsx`) provides an audit trail of pull and sy
 
 ## 12. Configuration Settings & Admin Controls
 
-The Settings panel (`Settings.jsx`) configures API connections and system settings.
+The Settings panel (`Settings.jsx`) requires
+`defectdojo.settings.manage` and configures API connections and system settings.
 
 ### Settings Layout
 - **DefectDojo Settings**: API URL, authentication keys, and default sync filters (severity, active, verified, mitigated).
@@ -395,18 +400,26 @@ The Settings panel (`Settings.jsx`) configures API connections and system settin
 User administration is centralized in the Hub's `UsersPage.jsx`. The Vulnerability application redirects legacy user-management links to the Hub rather than maintaining a second administration screen.
 
 ### Key Features
-- **User Directory Grid**: Lists Hub identities, roles, account status, presence, and allowed product scopes.
-- **Create/Edit User Dialog**: Sets passwords, roles (`admin` or `viewer`), and product restrictions.
+- **User Directory Grid**: Lists Hub identities, one assigned role, account
+  status, presence, and effective product scope.
+- **Create/Edit User Dialog**: Selects one central role and an explicit scope of
+  All products, Selected products, or No products.
+- **Roles & Access**: System Administrators create custom task-based roles,
+  review dependencies and sensitive actions, retire roles with a replacement,
+  and inspect access activity.
 - **Access Scope Constraints**:
   - Hub stores identities, credentials, sessions, and app memberships in the authentication database.
-  - If a user is restricted to specific products, the Vulnerability frontend limits its findings and dashboard views to those products.
-  - The Vulnerability backend also enforces these restrictions by filtering database queries.
+  - Role changes revoke affected sessions immediately.
+  - The Vulnerability backend applies product scope to findings, search,
+    tickets, sync, history, mitigations, and data changes.
 
 ---
 
-## 14. Notification Management
+## 14. Mapped Asset Management
 
-The Notification screen (`NotifyManagement.jsx`) maps IP addresses and hostname signatures to custom notification targets, routing automated alerts to the correct development teams.
+The Mapped Assets screen is part of DefectDojo Settings and requires
+`defectdojo.settings.manage`. It maps product and host signatures to readable
+notification labels.
 
 ---
 
@@ -414,8 +427,17 @@ The Notification screen (`NotifyManagement.jsx`) maps IP addresses and hostname 
 
 ### PostgreSQL Schema Mapping (`backend/data/database.cjs` & migrations)
 
-#### Users (`defectdojo_viewer_users`)
-Stores user accounts, passwords, and access restrictions.
+#### Identity and access (`auth-db`)
+
+Auth owns `auth_users`, `auth_roles`, `auth_role_permissions`,
+`auth_user_role_assignments`, `auth_app_memberships`, sessions, and access audit
+events. One assignment row is allowed per user. `product_scope_mode` stores
+`all`, `selected`, or `none`.
+
+#### Legacy users (`defectdojo_viewer_users`)
+
+This older table remains only for transitional import and optional legacy local
+authentication. It is not the RBAC authorization source.
 ```sql
 CREATE TABLE defectdojo_viewer_users (
     username text PRIMARY KEY CHECK (length(trim(username)) > 0),
@@ -532,53 +554,28 @@ CREATE TABLE defectdojo_viewer_mitigation_reviews (
 
 ## 16. Complete API Endpoint Reference
 
-Backend API requests require JWT authorization unless the table describes a public sign-in or email-invitation endpoint. Endpoints marked **Admin** require the `role === 'admin'` claim.
+Backend API requests require JWT authorization unless the row describes a
+public challenge flow. The protected System Administrator role is required only
+for identity and role administration; other endpoints use the task permission
+shown below.
 
-| HTTP Method | API URL Path | Admin | Payload / Parameters | Response Shape |
+| HTTP Method | API URL Path | Required permission | Payload / Parameters | Response Shape |
 |---|---|---|---|---|
-| **POST** | `/api/login` | No | `{username, password}` | Session response or `{mfaRequired, challengeToken, authenticatorApp}` |
-| **POST** | `/api/login/mfa` | No | `{challengeToken, code, mode: "totp"}` | Session or password-change challenge |
-| **POST** | `/api/login/password-change` | No | `{challengeToken, newPassword}` | Session after temporary-password replacement |
-| **POST** | `/api/logout` | No | None (Token Header) | `{message: "Logged out"}` |
-| **GET** | `/api/profile` | No | None | Read-only identity and MFA status |
-| **POST** | `/api/mfa/enrollment/start` | No (public) | `{invitationToken}` | Assigned provider, account/issuer labels, QR URI, manual key, and expiry |
-| **POST** | `/api/mfa/enrollment/confirm` | No (public) | `{invitationToken, code}` | Enabled MFA status and sign-in URL |
-| **POST** | `/api/profile/mfa/enrollment/start` or `/confirm` | No | Retired | `410 Gone`; enrollment is email-invitation-only |
-| **GET** | `/api/users` | **Yes** | None | `Array<{username, role, products: []}>` |
-| **POST** | `/api/users` | **Yes** | Identity, access, and `mfaProvider` | User, one-time temporary password, and automatic delivery mode |
-| **POST** | `/api/users/:username/password/reset` | **Yes** | None | One-time temporary password and automatic delivery mode |
-| **PATCH** | `/api/users/:username/mfa` | **Yes** | `{mfaProvider: disabled\|google\|microsoft\|other}` | Pending/enabled/disabled MFA state |
-| **POST** | `/api/users/:username/mfa/reset` or `/resend` | **Yes** | None | Updated policy and queued setup delivery |
-| **GET/PATCH** | `/api/settings/email` | **Yes** | Runtime SMTP settings | Redacted saved settings |
-| **DELETE** | `/api/users/:username` | **Yes** | None | `{message: "User deleted"}` |
-| **GET** | `/api/config` | No | None | `{defectDojoUrl, redmineUrl, trackers, ...}` |
-| **POST** | `/api/config` | **Yes** | Configuration Object | `{message: "Config saved successfully"}` |
-| **GET** | `/api/config/backups` | **Yes** | None | `Array<{fileName, size, createdAt}>` |
-| **POST** | `/api/config/backup` | **Yes** | `{label: "str"}` | Backup file metadata object |
-| **GET** | `/api/config/backups/:fileName/export` | **Yes** | None | Raw backup JSON file stream |
-| **GET** | `/api/config/export` | **Yes** | None | Current configuration JSON |
-| **POST** | `/api/config/import` | **Yes** | Raw backup JSON | `{message: "Backup file imported successfully"}` |
-| **POST** | `/api/config/restore` | **Yes** | `{fileName: "str"}` | `{message: "Database restore completed"}` |
-| **GET** | `/api/dashboard/summary` | No | `productId?`, `engagementId?` | Severity distribution, ticket workflows, finding counts |
-| **GET** | `/api/compacted-cves` | No | `productId?`, `engagementId?`, `redmineStatus?`, `severity?`, `q?` | `Array<CompactedFinding>` |
-| **GET** | `/api/findings` | No | None | `Array<RawFinding>` |
-| **POST** | `/api/pull` | **Yes** | `{pullFilters: {}}` | Sync transaction result |
-| **POST** | `/api/clear` | **Yes** | None | `{message: "Database and settings wiped"}` |
-| **GET** | `/api/redmine/sync/status` | No | None | Poller configurations, running states, error logs |
-| **POST** | `/api/redmine/rebuild-status` | **Yes** | None | Rebuild task status result |
-| **POST** | `/api/redmine/issues/status` | **Yes** | Compacted Finding group | Updated Redmine ticket object |
-| **POST** | `/api/redmine/issues/check` | **Yes** | Compacted Finding group | `{exists: boolean, issue: object / null}` |
-| **POST** | `/api/redmine/issues` | **Yes** | Compacted Finding group | Created Redmine ticket object |
-| **GET** | `/api/mitigation-rechecks` | No | None | `Array<MitigationRecheckAuditLog>` |
-| **GET** | `/api/admin/mitigation-queue` | **Yes** | None | `Array<MitigationReviewRow>` |
-| **GET** | `/api/admin/mitigation-actions` | **Yes** | `limit?` | `Array<AdminActionHistoryRow>` |
-| **POST** | `/api/admin/mitigation-queue/:reviewKey/actions` | **Yes** | `{action: "close_redmine" / "ignore", reason}` | `{message: "Action processed successfully"}` |
-| **GET** | `/api/sync-history` | **Yes** | None | `Array<SyncHistoryLog>` |
-| **GET** | `/api/sync-history/:id` | **Yes** | None | Detailed single Sync History Log object |
-| **POST** | `/api/sync-all` | **Yes** | `{pullFilters: {}, autoCreateTickets: bool}` | Server-Sent Events stream initialization |
-| **GET** | `/api/logs` | **Yes** | None | Recent system log lines text payload |
-| **DELETE** | `/api/logs` | **Yes** | None | `{message: "Logs cleared"}` |
-| **GET** | `/api/sync/events` | No | None | Real-time Server-Sent Events (SSE) stream |
+| **POST** | `/api/login`, `/api/login/mfa`, `/api/login/password-change` | Public challenge flow | Sign-in fields | Session response with effective `access` |
+| **GET** | `/api/profile` | Authenticated | None | Read-only identity, MFA, role, capabilities, and scope |
+| **GET/POST/PATCH** | `/api/roles` and `/api/roles/:roleId` | System Administrator | Role definition | Role with permission summary |
+| **POST** | `/api/roles/:roleId/retire` | System Administrator | `{replacementRoleId}` when assigned | Atomic reassignment and retirement |
+| **GET** | `/api/access/permissions`, `/api/access/audit` | System Administrator | Optional audit paging | Catalog or access activity |
+| **GET/POST/PATCH/DELETE** | `/api/users` | System Administrator | Identity, `roleId`, `productScope`, and MFA policy | Effective user access |
+| **GET/PATCH** | `/api/settings/email` | `hub.settings.manage` | Runtime SMTP settings | Redacted saved settings |
+| **GET** | `/api/dashboard/summary`, `/api/compacted-cves`, `/api/findings`, `/api/global-search` | `defectdojo.vulnerabilities.view` | Product/engagement filters | Product-scoped vulnerability data |
+| **POST** | `/api/pull`, `/api/sync-all` | `defectdojo.sync.run` | Sync filters | Product-scoped sync result |
+| **GET** | `/api/sync-history`, `/api/sync-history/:id` | `defectdojo.sync_history.view` | Optional filters | Product-scoped sync history |
+| **POST** | `/api/redmine/issues/status`, `/check`, `/issues` | `defectdojo.tickets.manage` | Finding/ticket references | Product-scoped Redmine result |
+| **GET/POST** | `/api/admin/mitigation-*` | `defectdojo.mitigations.review` | Review query or action | Product-scoped mitigation data |
+| **GET/DELETE** | `/api/logs`, `/api/log-monitor/*` | `defectdojo.logs.view` / `defectdojo.logs.clear` | Log query or clear request | Global security logs |
+| **GET/POST** | `/api/config*` | `defectdojo.settings.manage` | Configuration or backup data | Integration settings result |
+| **GET/POST/PUT/DELETE** | `/api/data-management/*` | `defectdojo.data.manage` | Data/archive operation | Scope-checked data result |
 
 ---
 

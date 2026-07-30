@@ -1,0 +1,236 @@
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background-color: rgba(2, 6, 23, 0.72);
+}
+
+.user-modal {
+  width: min(520px, 100%);
+  max-height: min(760px, calc(100vh - 2rem));
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--rounded-md);
+  background-color: var(--bg-card);
+  box-shadow: var(--shadow-popover);
+}
+
+.password-reset-modal { width: min(480px, 100%); }
+.security-action-modal,
+.credential-modal { width: min(520px, 100%); }
+.mfa-delivery-modal { width: min(620px, 100%); }
+
+.modal-accent-primary { border-top: 3px solid var(--primary); }
+.modal-accent-danger { border-top: 3px solid var(--danger-border); }
+.modal-accent-warning { border-top: 3px solid var(--warning-border); }
+.modal-accent-info { border-top: 3px solid var(--info-border); }
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.5rem 1.5rem 1.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.modal-heading {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.modal-heading-icon {
+  flex: 0 0 auto;
+  width: 2.1rem;
+  height: 2.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bg-subtle);
+  color: var(--warning-text);
+}
+
+.modal-header h2 {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 1.15rem;
+  font-weight: var(--font-weight-bold);
+}
+
+.modal-header p {
+  margin: 0.3rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.user-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 1.5rem;
+}
+
+.user-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  color: var(--text-main);
+  font-size: 0.84rem;
+  font-weight: var(--font-weight-semibold);
+}
+
+.user-form input,
+.user-form select,
+.user-form textarea {
+  width: 100%;
+  min-height: 2.55rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--rounded-sm);
+  background-color: var(--bg-input);
+  color: var(--text-main);
+  font: inherit;
+}
+
+.user-form label > small,
+.user-form > small {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.modal-copy {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.modal-error {
+  padding: 0.75rem;
+  border: 1px solid var(--danger-border);
+  border-radius: var(--rounded-sm);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  font-size: 0.82rem;
+}
+
+.modal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.modal-section-label {
+  color: var(--text-soft);
+  font-size: 0.68rem;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.05em;
+  text-transform: var(--text-transform-uppercase);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding-top: 0.5rem;
+}
+
+.credential-display {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border: 2px solid var(--warning-border);
+  border-radius: var(--rounded-sm);
+  background: var(--warning-bg);
+}
+
+.credential-display code {
+  flex: 1;
+  overflow-wrap: anywhere;
+  color: var(--warning-text);
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  letter-spacing: 0.06em;
+}
+
+.credential-warning,
+.mfa-delivery-guidance {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.75rem;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--rounded-sm);
+  background: var(--bg-subtle);
+  color: var(--warning-text);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.credential-warning svg,
+.mfa-delivery-guidance svg { flex: 0 0 auto; margin-top: 0.1rem; }
+.mfa-delivery-guidance { border-color: var(--danger-border); background: var(--danger-bg); color: var(--danger-text); }
+
+.mfa-delivery-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--rounded-sm);
+  background: var(--bg-subtle);
+}
+
+.mfa-delivery-summary > svg { flex: 0 0 auto; margin-top: 0.12rem; }
+.mfa-delivery-summary > div { min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.mfa-delivery-summary strong { color: var(--text-main); font-size: 0.9rem; }
+.mfa-delivery-summary span { color: var(--text-muted); font-size: 0.8rem; line-height: 1.45; }
+.mfa-delivery-summary.queued { border-color: var(--warning-border); background: var(--warning-bg); color: var(--warning-text); }
+.mfa-delivery-summary.sending,
+.mfa-delivery-summary.sent { border-color: var(--info-border); background: var(--info-bg); color: var(--info-text); }
+.mfa-delivery-summary.failed { border-color: var(--danger-border); background: var(--danger-bg); color: var(--danger-text); }
+
+.mfa-delivery-details {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.mfa-delivery-details > div {
+  min-width: 0;
+  padding: 0.7rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--rounded-sm);
+  background: var(--bg-input);
+}
+
+.mfa-delivery-details dt { color: var(--text-muted); font-size: 0.7rem; }
+.mfa-delivery-details dd { margin: 0.24rem 0 0; overflow-wrap: anywhere; color: var(--text-main); font-size: 0.82rem; }
+.mfa-delivery-disabled-reason { margin: 0; color: var(--text-muted); font-size: 0.78rem; line-height: 1.45; }
+.mfa-delivery-spinner { animation: mfa-delivery-spin 900ms linear infinite; }
+
+@keyframes mfa-delivery-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 720px) {
+  .mfa-delivery-details { grid-template-columns: 1fr; }
+  .modal-actions { flex-direction: column-reverse; }
+  .modal-actions button { width: 100%; }
+  .credential-display { align-items: stretch; flex-direction: column; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mfa-delivery-spinner { animation: none; }
+}

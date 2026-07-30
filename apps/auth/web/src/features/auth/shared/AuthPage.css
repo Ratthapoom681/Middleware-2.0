@@ -1,19 +1,18 @@
-/* ── Login page reset ── */
-.login-page,
-.login-page *,
-.login-page *::before,
-.login-page *::after {
+/* Shared auth page shell */
+.auth-page,
+.auth-page *,
+.auth-page *::before,
+.auth-page *::after {
   box-sizing: border-box;
 }
 
-.login-page h1,
-.login-page p,
-.login-page form {
+.auth-page h1,
+.auth-page p,
+.auth-page form {
   margin: 0;
 }
 
-.login-page {
-  /* Monochrome dark + electric blue */
+.auth-page {
   --font-sans: 'Kanit', 'Prompt', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --bg-page: #0B0E17;
   --bg-card: #12161F;
@@ -52,8 +51,8 @@
   font-family: var(--font-sans);
 }
 
-/* ── Security operations background ── */
-.login-page .security-background {
+/* Security operations background */
+.auth-page .security-background {
   position: absolute;
   z-index: 0;
   inset: 0;
@@ -61,7 +60,7 @@
   pointer-events: none;
 }
 
-.login-page .security-halo {
+.auth-page .security-halo {
   position: absolute;
   z-index: 0;
   top: 44%;
@@ -81,7 +80,7 @@
   will-change: transform, opacity;
 }
 
-.login-page .edge-glow {
+.auth-page .edge-glow {
   --glow-x: 0px;
   --glow-y: 0px;
   position: absolute;
@@ -95,7 +94,7 @@
   will-change: transform;
 }
 
-.login-page .edge-glow-left {
+.auth-page .edge-glow-left {
   --glow-x: 55px;
   --glow-y: 38px;
   top: 4%;
@@ -103,7 +102,7 @@
   background: radial-gradient(circle, rgba(41, 121, 255, 0.13), transparent 68%);
 }
 
-.login-page .edge-glow-right {
+.auth-page .edge-glow-right {
   --glow-x: -48px;
   --glow-y: -34px;
   right: -250px;
@@ -112,7 +111,7 @@
   animation-duration: 38s;
 }
 
-.login-page .security-grid {
+.auth-page .security-grid {
   position: absolute;
   z-index: 1;
   inset: -64px;
@@ -127,7 +126,7 @@
   will-change: transform;
 }
 
-.login-page .security-network {
+.auth-page .security-network {
   position: absolute;
   z-index: 2;
   inset: 0;
@@ -136,7 +135,7 @@
   opacity: 0.72;
 }
 
-.login-page .network-lines path {
+.auth-page .network-lines path {
   stroke: rgba(92, 156, 255, 0.2);
   stroke-width: 1.2;
   stroke-linecap: round;
@@ -144,41 +143,41 @@
   vector-effect: non-scaling-stroke;
 }
 
-.login-page .network-lines .network-bridge {
+.auth-page .network-lines .network-bridge {
   stroke: rgba(92, 156, 255, 0.15);
 }
 
-.login-page .network-nodes circle {
+.auth-page .network-nodes circle {
   fill: rgba(92, 156, 255, 0.56);
   filter: drop-shadow(0 0 5px rgba(41, 121, 255, 0.72));
   transform-box: fill-box;
   transform-origin: center;
 }
 
-.login-page .network-node-arrival {
+.auth-page .network-node-arrival {
   animation: security-node-arrival 12s linear infinite;
   will-change: transform, opacity;
 }
 
-.login-page .network-node-arrival-return {
+.auth-page .network-node-arrival-return {
   animation-delay: -5s;
 }
 
-.login-page .network-packets {
+.auth-page .network-packets {
   pointer-events: none;
 }
 
-.login-page .network-packet-glow {
+.auth-page .network-packet-glow {
   fill: rgba(41, 121, 255, 0.24);
   filter: drop-shadow(0 0 7px rgba(41, 121, 255, 0.9));
 }
 
-.login-page .network-packet-core {
-  fill: #a9ccff;
+.auth-page .network-packet-core {
+  fill: #A9CCFF;
   filter: drop-shadow(0 0 3px rgba(92, 156, 255, 1));
 }
 
-.login-page .security-vignette {
+.auth-page .security-vignette {
   position: absolute;
   z-index: 3;
   inset: 0;
@@ -209,29 +208,8 @@
   94% { opacity: 1; transform: scale(1.75); }
 }
 
-/* ── Card ── */
-.login-page .login-card-wrapper {
-  position: relative;
-  z-index: 2;
-  width: min(420px, calc(100% - 32px));
-  padding-top: 100px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.login-page .login-card {
-  position: relative;
-  width: 100%;
-  max-width: 420px;
-  padding: 40px 36px 32px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-card);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-}
-
-.login-page .husky-canvas-wrapper {
+/* Shared card content */
+.auth-page .husky-canvas-wrapper {
   position: absolute;
   z-index: 3;
   top: -80px;
@@ -242,14 +220,14 @@
   pointer-events: none;
 }
 
-.login-page .husky-canvas-wrapper canvas,
-.login-page .husky-static {
+.auth-page .husky-canvas-wrapper canvas,
+.auth-page .husky-static {
   display: block;
   width: 100%;
   height: 100%;
 }
 
-.login-page .card-tagline {
+.auth-page .card-tagline {
   display: block;
   margin-bottom: 20px;
   color: var(--accent);
@@ -260,7 +238,7 @@
   text-transform: uppercase;
 }
 
-.login-page .card-title {
+.auth-page .card-title {
   margin-bottom: 28px;
   color: var(--text-primary);
   font-family: var(--font-sans);
@@ -270,13 +248,13 @@
   text-wrap: balance;
 }
 
-/* ── Form ── */
-.login-page .form-group {
+/* Shared form controls */
+.auth-page .form-group {
   position: relative;
   margin-bottom: 20px;
 }
 
-.login-page .form-label {
+.auth-page .form-label {
   display: block;
   margin-bottom: 8px;
   color: var(--text-secondary);
@@ -284,13 +262,13 @@
   font-weight: 500;
 }
 
-.login-page .input-wrapper {
+.auth-page .input-wrapper {
   position: relative;
   display: flex;
   align-items: center;
 }
 
-.login-page .form-input {
+.auth-page .form-input {
   width: 100%;
   height: 48px;
   padding: 0 16px;
@@ -304,98 +282,45 @@
   transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.login-page .form-input::placeholder {
+.auth-page .form-input::placeholder {
   color: var(--text-placeholder);
   opacity: 1;
 }
 
-.login-page .form-input:hover:not(:focus):not(:disabled) {
+.auth-page .form-input:hover:not(:focus):not(:disabled) {
   background: var(--bg-input-hover);
 }
 
-.login-page .form-input:focus {
+.auth-page .form-input:focus {
   border-color: var(--border-input-focus);
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
-.login-page .form-input[aria-invalid='true'] {
+.auth-page .form-input[aria-invalid='true'] {
   border-color: var(--danger-border);
 }
 
-.login-page .form-input:disabled {
+.auth-page .form-input:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
 
-.login-page .password-input {
-  padding-right: 52px;
+.auth-page .verification-code-input {
+  padding-left: 18px;
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  text-align: center;
 }
 
-/* Edge adds its own reveal button after password text is entered. */
-.login-page .password-input::-ms-reveal,
-.login-page .password-input::-ms-clear {
-  display: none;
+.auth-page .verification-code-input.recovery {
+  font-size: 15px;
+  letter-spacing: 0.08em;
 }
 
-.login-page .toggle-password {
-  position: absolute;
-  top: 50%;
-  right: 12px;
-  padding: 6px;
-  display: flex;
-  align-items: center;
-  transform: translateY(-50%);
-  background: none;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: color 0.15s ease, background-color 0.15s ease;
-}
-
-.login-page .toggle-password:hover:not(:disabled) {
-  background: rgba(41, 121, 255, 0.08);
-  color: var(--accent);
-}
-
-.login-page .toggle-password:focus-visible,
-.login-page .forgot-password:focus-visible,
-.login-page .btn-submit:focus-visible {
-  outline: 2px solid var(--text-link);
-  outline-offset: 3px;
-}
-
-.login-page .toggle-password:disabled,
-.login-page .forgot-password:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.login-page .form-options-row {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  margin-top: -4px;
-  margin-bottom: 24px;
-}
-
-.login-page .forgot-password {
-  padding: 0;
-  background: none;
-  border: 0;
-  color: var(--text-link);
-  font-family: var(--font-sans);
-  font-size: 13px;
-  cursor: pointer;
-  transition: color 0.15s ease;
-}
-
-.login-page .forgot-password:hover:not(:disabled) {
-  color: var(--accent);
-  text-decoration: underline;
-}
-
-.login-page .btn-submit {
+.auth-page .btn-submit {
   width: 100%;
   height: 48px;
   display: flex;
@@ -413,21 +338,26 @@
   transition: background-color 0.15s ease, transform 0.1s ease;
 }
 
-.login-page .btn-submit:hover:not(:disabled) {
+.auth-page .btn-submit:hover:not(:disabled) {
   background: var(--accent-hover);
   transform: translateY(-1px);
 }
 
-.login-page .btn-submit:active:not(:disabled) {
+.auth-page .btn-submit:active:not(:disabled) {
   transform: translateY(0);
 }
 
-.login-page .btn-submit:disabled {
+.auth-page .btn-submit:disabled {
   cursor: not-allowed;
   opacity: 0.6;
 }
 
-.login-page .login-error {
+.auth-page .btn-submit:focus-visible {
+  outline: 2px solid var(--text-link);
+  outline-offset: 3px;
+}
+
+.auth-page .login-error {
   margin-bottom: 20px;
   padding: 12px 16px;
   background: var(--danger-bg);
@@ -439,40 +369,18 @@
   animation: error-shake 0.4s ease-out;
 }
 
-.login-page .login-notice {
+.auth-page .login-notice {
   margin-bottom: 20px;
   padding: 12px 16px;
   background: rgba(34, 197, 94, 0.08);
   border: 1px solid rgba(34, 197, 94, 0.28);
   border-radius: var(--radius-sm);
-  color: #86efac;
+  color: #86EFAC;
   font-size: 13px;
   line-height: 1.5;
 }
 
-.login-page .verification-copy {
-  margin: -10px 0 20px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.login-page .verification-code-input {
-  padding-left: 18px;
-  color: var(--text-primary);
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: 0.28em;
-  text-align: center;
-}
-
-.login-page .verification-code-input.recovery {
-  font-size: 15px;
-  letter-spacing: 0.08em;
-}
-
-.login-page .verification-actions {
+.auth-page .verification-actions {
   margin-top: 16px;
   display: flex;
   align-items: center;
@@ -480,7 +388,7 @@
   gap: 12px;
 }
 
-.login-page .verification-actions button {
+.auth-page .verification-actions button {
   min-height: 40px;
   padding: 4px 0;
   border: 0;
@@ -490,12 +398,12 @@
   cursor: pointer;
 }
 
-.login-page .verification-actions button:hover:not(:disabled) {
+.auth-page .verification-actions button:hover:not(:disabled) {
   color: var(--accent);
   text-decoration: underline;
 }
 
-.login-page .verification-actions button:focus-visible {
+.auth-page .verification-actions button:focus-visible {
   outline: 2px solid var(--text-link);
   outline-offset: 3px;
 }
@@ -508,7 +416,7 @@
   80% { transform: translateX(3px); }
 }
 
-.login-page .spinner {
+.auth-page .spinner {
   width: 18px;
   height: 18px;
   flex-shrink: 0;
@@ -522,7 +430,7 @@
   to { transform: rotate(360deg); }
 }
 
-.login-page .card-footer {
+.auth-page .card-footer {
   margin-top: 24px;
   padding-top: 16px;
   border-top: 1px solid var(--border-card);
@@ -531,93 +439,72 @@
   text-align: center;
 }
 
-/* ── Responsive layout ── */
 @media (max-width: 768px) {
-  .login-page .login-card-wrapper {
-    width: min(380px, calc(100% - 32px));
-  }
-
-  .login-page .login-card {
-    max-width: 380px;
-    padding: 36px 28px 28px;
-  }
-
-  .login-page .card-title {
+  .auth-page .card-title {
     font-size: 24px;
   }
 
-  .login-page .husky-canvas-wrapper {
+  .auth-page .husky-canvas-wrapper {
     top: -65px;
     width: 130px;
     height: 100px;
   }
 
-  .login-page .security-grid {
+  .auth-page .security-grid {
     opacity: 0.3;
   }
 
-  .login-page .security-network {
+  .auth-page .security-network {
     opacity: 0.5;
   }
 
-  .login-page .edge-glow {
+  .auth-page .edge-glow {
     width: 380px;
     height: 380px;
     filter: blur(88px);
   }
 
-  .login-page .security-halo {
+  .auth-page .security-halo {
     width: min(700px, 108vw);
     height: min(620px, 72vh);
   }
 }
 
 @media (max-width: 480px) {
-  .login-page {
+  .auth-page {
     padding: 16px 0;
   }
 
-  .login-page .login-card-wrapper {
-    width: calc(100% - 24px);
-    padding-top: 80px;
-  }
-
-  .login-page .login-card {
-    max-width: none;
-    padding: 32px 20px 24px;
-    border-radius: var(--radius-md);
-  }
-
-  .login-page .form-input,
-  .login-page .btn-submit {
+  .auth-page .form-input,
+  .auth-page .btn-submit {
     height: 44px;
     font-size: 14px;
   }
 
-  .login-page .husky-canvas-wrapper {
+  .auth-page .husky-canvas-wrapper {
     top: -55px;
     width: 110px;
     height: 85px;
   }
 
-  .login-page .security-network,
-  .login-page .edge-glow {
+  .auth-page .security-network,
+  .auth-page .edge-glow {
     display: none;
   }
 
-  .login-page .security-grid {
+  .auth-page .security-grid {
     opacity: 0.18;
     -webkit-mask-image: radial-gradient(ellipse 105% 72% at 50% 42%, #000 8%, rgba(0, 0, 0, 0.68) 54%, transparent 100%);
     mask-image: radial-gradient(ellipse 105% 72% at 50% 42%, #000 8%, rgba(0, 0, 0, 0.68) 54%, transparent 100%);
   }
 
-  .login-page .security-halo {
+  .auth-page .security-halo {
     top: 42%;
     width: 130vw;
     height: 64vh;
   }
 
-  .login-page .security-vignette {
+  .auth-page .security-vignette {
     background: radial-gradient(
       ellipse at 50% 44%,
       rgba(5, 7, 12, 0) 25%,
@@ -628,27 +515,25 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .login-page .security-grid,
-  .login-page .security-halo,
-  .login-page .edge-glow,
-  .login-page .network-node-arrival,
-  .login-page .login-error,
-  .login-page .spinner {
+  .auth-page .security-grid,
+  .auth-page .security-halo,
+  .auth-page .edge-glow,
+  .auth-page .network-node-arrival,
+  .auth-page .login-error,
+  .auth-page .spinner {
     animation: none;
   }
 
-  .login-page .network-packets {
+  .auth-page .network-packets {
     display: none;
   }
 
-  .login-page .form-input,
-  .login-page .toggle-password,
-  .login-page .forgot-password,
-  .login-page .btn-submit {
+  .auth-page .form-input,
+  .auth-page .btn-submit {
     transition: none;
   }
 
-  .login-page .btn-submit:hover:not(:disabled) {
+  .auth-page .btn-submit:hover:not(:disabled) {
     transform: none;
   }
 }

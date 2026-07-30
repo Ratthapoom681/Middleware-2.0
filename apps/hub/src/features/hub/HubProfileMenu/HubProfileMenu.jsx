@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { LogOut, UserRound } from 'lucide-react';
+import { getAccess } from '../../../../../../packages/access-control/index.js';
 import './HubProfileMenu.css';
 
 export default function HubProfileMenu({ user, onOpenProfile, onLogout }) {
+  const access = getAccess(user);
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const triggerRef = useRef(null);
@@ -43,7 +45,7 @@ export default function HubProfileMenu({ user, onOpenProfile, onLogout }) {
         aria-expanded={open}
       >
         <span className="hub-profile-avatar" aria-hidden="true">{String(user?.username || 'U').slice(0, 1).toUpperCase()}</span>
-        <span className="hub-profile-copy"><strong>{user?.username || 'User'}</strong><small>{user?.role || 'viewer'}</small></span>
+        <span className="hub-profile-copy"><strong>{user?.username || 'User'}</strong><small>{access.role.name}</small></span>
       </button>
       {open && (
         <div className="hub-profile-popover" role="menu">

@@ -1,4 +1,5 @@
 const { verifyJwt: verifySharedJwt } = require('../../../packages/auth-client/index.cjs');
+const { PERMISSION_BY_KEY, hasPermission } = require('../../../packages/access-control/index.cjs');
 const { loadRuntimeSecrets } = require('./runtime-config.cjs');
 
 const {
@@ -87,6 +88,7 @@ async function authenticateJwt(req, res, next) {
   if (!AUTH_INTROSPECTION_URL || Date.now() < authCircuitOpenUntil) {
     if (!AUTH_INTROSPECTION_URL) setAuthValidationMode('local-fallback');
     res.set('X-Auth-Validation', 'local-fallback');
+    req.authValidationMode = 'local-fallback';
     req.user = payload;
     return next();
   }
@@ -99,6 +101,7 @@ async function authenticateJwt(req, res, next) {
     authCircuitOpenUntil = 0;
     setAuthValidationMode('live');
     res.set('X-Auth-Validation', 'live');
+    req.authValidationMode = 'live';
     req.user = result.payload;
     return next();
   } catch (err) {
@@ -109,9 +112,22 @@ async function authenticateJwt(req, res, next) {
     authCircuitOpenUntil = Date.now() + AUTH_CIRCUIT_OPEN_MS;
     setAuthValidationMode('local-fallback');
     res.set('X-Auth-Validation', 'local-fallback');
+    req.authValidationMode = 'local-fallback';
     req.user = payload;
     return next();
   }
 }
 
-module.exports = { authenticateJwt, verifyJwt, isExpectedPayload };
+const requirePermission = (permissionKey, options = {}) => (req, res, next) => {
+  const permission = PERMISSION_BY_KEY.get(permissionKey);
+  if (!permission || !hasPermission(req.user, permissionKey)) {
+    return res.status(403).json({ error: 'Forbidden: Permission required', permission: permissionKey });
+  }
+  const mutating = options.mutating ?? permission.mutating;
+  if (mutating && AUTH_INTROSPECTION_URL && req.authValidationMode !== 'live') {
+    return res.status(503).json({ error: 'Live authorization is required for this action', permission: permissionKey });
+  }
+  next();
+};
+
+module.exports = { authenticateJwt, requirePermission, verifyJwt, isExpectedPayload };

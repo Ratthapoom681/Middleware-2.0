@@ -1,0 +1,12 @@
+{
+  "name": "@middleware/access-control",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./index.cjs",
+  "module": "./index.js",
+  "exports": {
+    "import": "./index.js",
+    "require": "./index.cjs"
+  }
+}

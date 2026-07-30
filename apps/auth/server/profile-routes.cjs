@@ -153,6 +153,7 @@ function registerProfileRoutes({
   app,
   authenticateJwt,
   requireAdmin,
+  requirePermission = () => requireAdmin,
   authStore,
   securityStore,
   securityCrypto,
@@ -584,12 +585,12 @@ function registerProfileRoutes({
     }
   });
 
-  app.get('/api/settings/email', authenticateJwt, requireAdmin, async (req, res) => {
+  app.get('/api/settings/email', authenticateJwt, requirePermission('hub.settings.manage'), async (req, res) => {
     try { res.json(publicEmailSettings(await securityStore.getEmailSettings())); }
     catch (error) { console.error('Email settings load error:', error.message); res.status(500).json({ error: 'Unable to load email settings' }); }
   });
 
-  app.patch('/api/settings/email', authenticateJwt, requireAdmin, async (req, res) => {
+  app.patch('/api/settings/email', authenticateJwt, requirePermission('hub.settings.manage'), async (req, res) => {
     try {
       const current = await securityStore.getEmailSettings();
       const clearPassword = Boolean(req.body?.clearPassword);

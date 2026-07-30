@@ -1,0 +1,227 @@
+.user-detail-page { padding: 2rem 1.5rem; }
+
+.user-detail-container {
+  width: min(960px, 100%);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.user-detail-error {
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--danger-border);
+  border-radius: var(--rounded-sm);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  font-size: 0.88rem;
+}
+
+.user-detail-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.25rem;
+  padding: 1.5rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--rounded-md);
+  background-color: var(--bg-card);
+  box-shadow: var(--shadow-lg);
+}
+
+.user-avatar {
+  width: 3.5rem;
+  height: 3.5rem;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-text);
+  font-size: 1.35rem;
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+}
+
+.user-identity {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.user-identity h1 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: 1.35rem;
+  font-weight: var(--font-weight-bold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-identity-username { color: var(--text-muted); font-size: 0.88rem; }
+.user-identity-email { overflow: hidden; color: var(--text-soft); font-size: 0.82rem; text-overflow: ellipsis; white-space: nowrap; }
+.user-header-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 0.5rem; }
+
+.user-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.detail-card {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--rounded-md);
+  background-color: var(--bg-card);
+  box-shadow: var(--shadow-lg);
+}
+
+.detail-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  font-size: 0.9rem;
+  font-weight: var(--font-weight-semibold);
+}
+
+.detail-card-header svg { color: var(--text-soft); }
+.detail-card-body { padding: 1.25rem; }
+
+.detail-dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr);
+  gap: 0.85rem 1rem;
+  align-items: baseline;
+}
+
+.detail-dl dt { color: var(--text-muted); font-size: 0.8rem; }
+.detail-dl dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--text-main); font-size: 0.88rem; }
+
+.presence-badge {
+  min-width: 4.75rem;
+  display: inline-flex;
+  justify-content: center;
+  padding: 0.28rem 0.52rem;
+  border: 1px solid var(--border);
+  border-radius: var(--rounded-sm);
+  font-size: 0.76rem;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.2;
+}
+
+.presence-badge.online { border-color: var(--connected-border); background: var(--connected-bg); color: var(--connected-text); }
+.presence-badge.offline { border-color: var(--border-strong); background: var(--bg-subtle); color: var(--text-muted); }
+.presence-badge.suspended { border-color: var(--danger-border); background: var(--danger-bg); color: var(--danger-text); }
+
+.detail-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.detail-card-actions button { min-height: 2.2rem; padding: 0.45rem 0.7rem; font-size: 0.78rem; }
+.detail-access-body { display: flex; flex-direction: column; gap: 1.25rem; }
+
+.access-value { display: block; }
+.access-value.unrestricted { color: var(--connected-text); }
+.access-value.restricted { color: var(--warning-text); }
+.access-value.none { color: var(--danger-text); }
+.access-description { display: block; margin-top: 0.18rem; color: var(--text-muted); font-size: 0.78rem; }
+
+.detail-list-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.detail-section-label {
+  color: var(--text-soft);
+  font-size: 0.68rem;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.05em;
+  text-transform: var(--text-transform-uppercase);
+}
+
+.detail-chip-list { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+
+.detail-chip-list span {
+  padding: 0.28rem 0.55rem;
+  border: 1px solid var(--info-border);
+  border-radius: 999px;
+  background: var(--info-bg);
+  color: var(--info-text);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.detail-chip-list.permissions span {
+  border-color: var(--border-strong);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.detail-unrestricted {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--connected-text);
+  font-size: 0.82rem;
+}
+
+.detail-empty-copy { margin: 0; color: var(--text-muted); font-size: 0.82rem; }
+
+.user-detail-loading,
+.user-detail-not-found {
+  min-height: 24rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 3rem 2rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--rounded-md);
+  background: var(--bg-card);
+  color: var(--text-soft);
+  text-align: center;
+  box-shadow: var(--shadow-lg);
+}
+
+.user-detail-loading svg { color: var(--primary); animation: user-detail-spin 900ms linear infinite; }
+.user-detail-not-found.error svg { color: var(--danger-text); }
+.user-detail-not-found h2 { margin: 0.5rem 0 0; color: var(--text-main); font-size: 1.15rem; }
+.user-detail-not-found p { max-width: 28rem; margin: 0; color: var(--text-muted); font-size: 0.88rem; line-height: 1.5; }
+
+@keyframes user-detail-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 720px) {
+  .user-detail-page { padding: 1rem; }
+  .user-detail-grid { grid-template-columns: 1fr; }
+  .user-detail-header { align-items: stretch; flex-direction: column; }
+  .user-avatar { margin: 0 auto; }
+  .user-identity { align-items: center; text-align: center; }
+  .user-header-actions { align-items: stretch; flex-direction: column-reverse; }
+  .detail-dl { grid-template-columns: 1fr; gap: 0.25rem; }
+  .detail-dl dd { margin-bottom: 0.65rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .user-detail-loading svg { animation: none; }
+}

@@ -37,6 +37,7 @@ import { formatBangkokIntl } from '../../shared/time.js';
 import DocsEditor from './DocsEditor.jsx';
 import DocsImport from './DocsImport.jsx';
 import './DocsPage.css';
+import { getAccess, hasPermission } from '../../../../../../packages/access-control/index.js';
 
 const DOC_FILE_IDS = {
   'quick-start.md': 'quick-start',
@@ -247,6 +248,8 @@ function SearchResults({ query, results, onOpen }) {
 }
 
 export default function DocsPage({ token, user, routeHash, onBack, onLogout, onUnauthorized }) {
+  const canManageDocuments = hasPermission(user, 'docs.manage');
+  const access = getAccess(user);
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -522,7 +525,7 @@ export default function DocsPage({ token, user, routeHash, onBack, onLogout, onU
             const returnTo = `${window.location.pathname}${window.location.hash || ''}`;
             window.location.href = `/#profile?returnTo=${encodeURIComponent(returnTo)}`;
           }}>{user?.username}</button>
-          <span className={`docs-role-badge ${user?.role}`}>{user?.role}</span>
+          <span className={`docs-role-badge ${access.role.system ? 'admin' : 'custom'}`}>{access.role.name}</span>
           <button type="button" className="docs-icon-command" onClick={onLogout} title="Sign Out">
             <LogOut size={16} />
             <span>Sign Out</span>
@@ -621,7 +624,7 @@ export default function DocsPage({ token, user, routeHash, onBack, onLogout, onU
                   <FileText size={16} />
                   <span>Documents</span>
                   <div className="aside-heading-actions">
-                    {user?.role === 'admin' && (
+                    {canManageDocuments && (
                       <button
                         type="button"
                         onClick={() => setIsImporting(true)}
@@ -675,7 +678,7 @@ export default function DocsPage({ token, user, routeHash, onBack, onLogout, onU
                                   </span>
                                   {document.kind === 'technical' && <small>Admin</small>}
                                 </a>
-                                {user?.role === 'admin' && (
+                                {canManageDocuments && (
                                   <div className="sidebar-document-actions">
                                     <button
                                       type="button"
@@ -734,7 +737,7 @@ export default function DocsPage({ token, user, routeHash, onBack, onLogout, onU
                       <span className="updated-time">Updated {formatUpdatedAt(selectedDocument.updatedAt)}</span>
                     </div>
                     <div className="document-header-right">
-                      {user?.role === 'admin' && (
+                      {canManageDocuments && (
                         <button
                           type="button"
                           className="docs-header-action-btn primary"

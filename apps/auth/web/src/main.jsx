@@ -1,21 +1,15 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import LoginPage from './features/auth/LoginPage';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import LoginPage from './features/auth/login/LoginPage';
+import CreatePasswordPage from './features/auth/create-password/CreatePasswordPage';
 import AuthenticatorEnrollmentPage from './features/enrollment/AuthenticatorEnrollmentPage';
 import { isEnrollmentPath, takeInvitationFromLocation } from './features/enrollment/enrollment-route';
+import { getSafeLoginReturnTo } from './features/auth/login-navigation';
 import './styles.css';
 
 const TOKEN_KEY = 'middleware_token';
 const USER_KEY = 'middleware_user';
-const SERVICE_PREFIXES = ['/defectdojo/', '/docs/', '/wazuh/'];
-
-function safeReturnTo() {
-  const candidate = new URLSearchParams(window.location.search).get('returnTo') || '/';
-  if (candidate === '/') return candidate;
-  if (candidate.startsWith('//') || !candidate.startsWith('/')) return '/';
-  if (candidate.startsWith('/#profile')) return candidate;
-  return SERVICE_PREFIXES.some(prefix => candidate.startsWith(prefix)) ? candidate : '/';
-}
 
 const enrollmentRoute = isEnrollmentPath(window.location.pathname);
 const invitationToken = enrollmentRoute ? takeInvitationFromLocation(window.location, window.history) : '';
@@ -25,12 +19,25 @@ function App() {
   function handleLoginSuccess(user, token) {
     localStorage.setItem(TOKEN_KEY, token);
     localStorage.setItem(USER_KEY, JSON.stringify(user));
-    window.location.replace(safeReturnTo());
+    window.location.replace(getSafeLoginReturnTo(window.location.search));
   }
 
-  return enrollmentRoute
-    ? <AuthenticatorEnrollmentPage invitationToken={invitationToken} />
-    : <LoginPage onLoginSuccess={handleLoginSuccess} />;
+  if (enrollmentRoute) {
+    return <AuthenticatorEnrollmentPage invitationToken={invitationToken} />;
+  }
+
+  return (
+    <BrowserRouter basename="/login">
+      <Routes>
+        <Route path="/" element={<LoginPage onLoginSuccess={handleLoginSuccess} />} />
+        <Route
+          path="/create-password"
+          element={<CreatePasswordPage onLoginSuccess={handleLoginSuccess} />}
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }
 
 createRoot(document.getElementById('root')).render(

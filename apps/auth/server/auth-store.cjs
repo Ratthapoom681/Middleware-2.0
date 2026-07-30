@@ -3,6 +3,16 @@ const path = require('path');
 const crypto = require('crypto');
 const { Pool } = require('pg');
 const { runMigrations } = require('./migration-runner.cjs');
+const {
+  SYSTEM_ADMIN_ROLE_ID,
+  VIEWER_ROLE_ID,
+  ALL_PERMISSION_KEYS,
+  VIEWER_PERMISSIONS,
+  PERMISSION_BY_KEY,
+  buildAccess,
+  normalizePermissionKeys,
+  normalizeProductScope
+} = require('../../../packages/access-control/index.cjs');
 
 const DEFAULT_APP_KEY = 'defectdojo';
 const HUB_APP_KEY = 'hub';
@@ -13,6 +23,9 @@ const TABLES = {
   users: 'auth_users',
   credentials: 'auth_credentials',
   memberships: 'auth_app_memberships',
+  roles: 'auth_roles',
+  rolePermissions: 'auth_role_permissions',
+  userRoles: 'auth_user_role_assignments',
   sessions: 'auth_sessions',
   auditEvents: 'auth_audit_events',
   mfaConfig: 'auth_mfa_config',
@@ -30,6 +43,10 @@ const normalizeProducts = (products) => {
   const list = Array.isArray(products) ? products : [];
   return Array.from(new Set(list.map(item => normalizeText(item)).filter(Boolean)));
 };
+
+const normalizeProductScopeMode = (mode, role, products) => (
+  normalizeProductScope({ mode, products }, products, role).mode
+);
 
 const parseJsonArray = (value) => {
   if (Array.isArray(value)) return normalizeProducts(value);
@@ -78,7 +95,21 @@ const normalizeUserRecord = (user = {}) => ({
   email: normalizeText(user.email),
   status: normalizeStatus(user.status || user.accountStatus),
   role: normalizeText(user.role) || 'viewer',
+  roleId: normalizeText(user.roleId || user.role_id)
+    || (normalizeText(user.role) === 'admin' ? SYSTEM_ADMIN_ROLE_ID : VIEWER_ROLE_ID),
+  roleName: normalizeText(user.roleName || user.role_name)
+    || (normalizeText(user.role) === 'admin' ? 'System Administrator' : 'Viewer'),
+  roleSystem: Boolean(user.roleSystem ?? user.role_system ?? normalizeText(user.role) === 'admin'),
+  permissions: normalizePermissionKeys(
+    user.permissions || user.access?.permissions || (normalizeText(user.role) === 'viewer' ? VIEWER_PERMISSIONS : []),
+    { allowSystemOnly: Boolean(user.roleSystem ?? user.role_system ?? normalizeText(user.role) === 'admin') }
+  ),
   products: normalizeProducts(user.products),
+  productScopeMode: normalizeProductScopeMode(
+    user.productScopeMode || user.product_scope_mode || user.productScope?.mode || user.access?.productScope?.mode,
+    normalizeText(user.role),
+    normalizeProducts(user.productScope?.products || user.access?.productScope?.products || user.products)
+  ),
   salt: user.salt || '',
   hash: user.hash || user.password_hash || '',
   passwordAlgorithm: user.passwordAlgorithm || user.password_algorithm || 'pbkdf2-sha512:1000',
@@ -98,12 +129,29 @@ const buildPublicUser = (user = {}) => {
   const presenceStatus = accountStatus === 'suspended'
     ? 'offline'
     : (user.presenceStatus || (user.online ? 'online' : 'offline'));
+  const access = user.access || buildAccess({
+    role: {
+      id: normalized.roleId,
+      name: normalized.roleName,
+      system: normalized.roleSystem
+    },
+    permissions: normalized.permissions,
+    productScope: {
+      mode: normalized.productScopeMode,
+      products: normalized.products
+    },
+    legacyRole: normalized.role
+  });
   return {
     id: normalized.id,
     username: normalized.username,
     email: normalized.email,
     role: normalized.role,
     products: normalized.products,
+    roleId: access.role.id,
+    roleName: access.role.name,
+    productScopeMode: access.productScope.mode,
+    access,
     status: accountStatus === 'suspended' ? 'suspended' : presenceStatus,
     accountStatus,
     presenceStatus,
@@ -146,6 +194,8 @@ const createDefaultAdminUser = (hashPassword, password = 'admin') => {
 function createAuthStore({ dataDir, hashPassword }) {
   const usersPath = path.join(dataDir, 'users.json');
   const mfaPath = path.join(dataDir, 'mfa.json');
+  const rolesPath = path.join(dataDir, 'roles.json');
+  const auditPath = path.join(dataDir, 'access-audit.json');
   const authConnectionString = getAuthConnectionString();
   const dbConfigured = Boolean(authConnectionString || process.env.PGHOST || process.env.PGDATABASE);
   const legacyConnectionString = getLegacyConnectionString();
@@ -185,6 +235,179 @@ function createAuthStore({ dataDir, hashPassword }) {
     }
   };
 
+  const createStoreError = (message, status = 400, code = 'invalid_request', details = {}) => {
+    const error = new Error(message);
+    error.status = status;
+    error.code = code;
+    error.details = details;
+    return error;
+  };
+
+  const normalizeRoleRecord = (role = {}) => {
+    const system = Boolean(role.system ?? role.isSystem ?? role.is_system) || role.id === SYSTEM_ADMIN_ROLE_ID;
+    return {
+      id: normalizeText(role.id) || crypto.randomUUID(),
+      name: normalizeText(role.name),
+      description: normalizeText(role.description),
+      system,
+      permissions: system
+        ? [...ALL_PERMISSION_KEYS]
+        : normalizePermissionKeys(role.permissions),
+      assignedUserCount: Number(role.assignedUserCount ?? role.assigned_user_count ?? 0),
+      createdBy: normalizeText(role.createdBy || role.created_by),
+      updatedBy: normalizeText(role.updatedBy || role.updated_by),
+      createdAt: toIsoString(role.createdAt || role.created_at),
+      updatedAt: toIsoString(role.updatedAt || role.updated_at)
+    };
+  };
+
+  const validateCustomRole = ({ name, description = '', permissions = [] }, { currentRoleId = '' } = {}) => {
+    const normalizedName = normalizeText(name);
+    const normalizedDescription = normalizeText(description);
+    if (normalizedName.length < 2 || normalizedName.length > 80) {
+      throw createStoreError('Role name must be between 2 and 80 characters', 400, 'invalid_role_name');
+    }
+    if (normalizedDescription.length > 240) {
+      throw createStoreError('Role description must be 240 characters or fewer', 400, 'invalid_role_description');
+    }
+    const requested = Array.isArray(permissions) ? permissions.map(normalizeText).filter(Boolean) : [];
+    const unknown = requested.filter(key => !PERMISSION_BY_KEY.has(key));
+    if (unknown.length > 0) {
+      throw createStoreError('One or more permissions are not recognized', 400, 'unknown_permission', { permissions: unknown });
+    }
+    const systemOnly = requested.filter(key => PERMISSION_BY_KEY.get(key)?.systemOnly);
+    if (systemOnly.length > 0) {
+      throw createStoreError('Identity-management permissions are reserved for System Administrator', 400, 'system_permission', { permissions: systemOnly });
+    }
+    return {
+      id: currentRoleId,
+      name: normalizedName,
+      description: normalizedDescription,
+      permissions: normalizePermissionKeys(requested)
+    };
+  };
+
+  const readFileRoles = () => {
+    if (!fs.existsSync(rolesPath)) return [];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(rolesPath, 'utf8'));
+      return Array.isArray(parsed) ? parsed.map(normalizeRoleRecord).filter(role => role.id && role.name) : [];
+    } catch (error) {
+      console.error('Auth Service: Error reading role data from disk:', error);
+      return [];
+    }
+  };
+
+  const writeFileRoles = roles => {
+    fs.writeFileSync(rolesPath, JSON.stringify(roles.map(normalizeRoleRecord), null, 2), 'utf8');
+  };
+
+  const readFileAudit = () => {
+    if (!fs.existsSync(auditPath)) return [];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(auditPath, 'utf8'));
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const writeFileAudit = events => {
+    fs.writeFileSync(auditPath, JSON.stringify(events.slice(-1000), null, 2), 'utf8');
+  };
+
+  const ensureRbacRolesInDb = async () => {
+    await withTransaction(async client => {
+      await client.query(`
+        INSERT INTO ${TABLES.roles} (id, name, description, is_system, created_by, updated_by)
+        VALUES ($1, 'System Administrator', 'Protected role with complete access to every workspace.', true, 'system', 'system')
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          description = EXCLUDED.description,
+          is_system = true,
+          updated_at = now()
+      `, [SYSTEM_ADMIN_ROLE_ID]);
+      const viewer = await client.query(`SELECT id FROM ${TABLES.roles} WHERE id = $1`, [VIEWER_ROLE_ID]);
+      if (viewer.rows.length === 0) {
+        await client.query(`
+          INSERT INTO ${TABLES.roles} (id, name, description, is_system, created_by, updated_by)
+          VALUES ($1, 'Viewer', 'Read-only access matching the previous Viewer role.', false, 'migration', 'migration')
+        `, [VIEWER_ROLE_ID]);
+        for (const permission of VIEWER_PERMISSIONS) {
+          await client.query(`
+            INSERT INTO ${TABLES.rolePermissions} (role_id, permission_key)
+            VALUES ($1, $2)
+            ON CONFLICT DO NOTHING
+          `, [VIEWER_ROLE_ID, permission]);
+        }
+      }
+      await client.query(`DELETE FROM ${TABLES.rolePermissions} WHERE role_id = $1`, [SYSTEM_ADMIN_ROLE_ID]);
+      for (const permission of ALL_PERMISSION_KEYS) {
+        await client.query(`
+          INSERT INTO ${TABLES.rolePermissions} (role_id, permission_key)
+          VALUES ($1, $2)
+          ON CONFLICT DO NOTHING
+        `, [SYSTEM_ADMIN_ROLE_ID, permission]);
+      }
+    });
+  };
+
+  const ensureLegacyRoleAssignmentsInDb = async () => {
+    await pool.query(`
+      INSERT INTO ${TABLES.userRoles} (user_id, role_id, assigned_by)
+      SELECT
+        u.id,
+        CASE WHEN bool_or(m.role = 'admin') THEN $1 ELSE $2 END,
+        'migration'
+      FROM ${TABLES.users} u
+      LEFT JOIN ${TABLES.memberships} m ON m.user_id = u.id
+      GROUP BY u.id
+      ON CONFLICT (user_id) DO NOTHING
+    `, [SYSTEM_ADMIN_ROLE_ID, VIEWER_ROLE_ID]);
+  };
+
+  const ensureFileRbac = () => {
+    const now = new Date().toISOString();
+    const roles = readFileRoles();
+    const byId = new Map(roles.map(role => [role.id, role]));
+    byId.set(SYSTEM_ADMIN_ROLE_ID, normalizeRoleRecord({
+      ...(byId.get(SYSTEM_ADMIN_ROLE_ID) || {}),
+      id: SYSTEM_ADMIN_ROLE_ID,
+      name: 'System Administrator',
+      description: 'Protected role with complete access to every workspace.',
+      system: true,
+      permissions: ALL_PERMISSION_KEYS,
+      createdBy: byId.get(SYSTEM_ADMIN_ROLE_ID)?.createdBy || 'system',
+      updatedBy: 'system',
+      createdAt: byId.get(SYSTEM_ADMIN_ROLE_ID)?.createdAt || now,
+      updatedAt: now
+    }));
+    if (!byId.has(VIEWER_ROLE_ID)) {
+      byId.set(VIEWER_ROLE_ID, normalizeRoleRecord({
+        id: VIEWER_ROLE_ID,
+        name: 'Viewer',
+        description: 'Read-only access matching the previous Viewer role.',
+        permissions: VIEWER_PERMISSIONS,
+        createdBy: 'migration',
+        updatedBy: 'migration',
+        createdAt: now,
+        updatedAt: now
+      }));
+    }
+    writeFileRoles(Array.from(byId.values()));
+
+    const users = readUsersFromDisk(usersPath);
+    let changed = false;
+    for (const user of users) {
+      const expectedRoleId = user.roleId || (user.role === 'admin' ? SYSTEM_ADMIN_ROLE_ID : VIEWER_ROLE_ID);
+      const expectedScope = normalizeProductScopeMode(user.productScopeMode, user.role, user.products);
+      if (user.roleId !== expectedRoleId || user.productScopeMode !== expectedScope) changed = true;
+      user.roleId = expectedRoleId;
+      user.productScopeMode = expectedScope;
+    }
+    if (changed) fs.writeFileSync(usersPath, JSON.stringify(users.map(normalizeUserRecord), null, 2), 'utf8');
+  };
+
   const mapUserRows = (rows) => rows.map(row => normalizeUserRecord({
     id: row.id,
     username: row.username,
@@ -192,6 +415,7 @@ function createAuthStore({ dataDir, hashPassword }) {
     status: row.status,
     role: row.role,
     products: parseJsonArray(row.products),
+    productScopeMode: row.product_scope_mode,
     salt: row.salt,
     hash: row.password_hash,
     passwordAlgorithm: row.password_algorithm,
@@ -226,6 +450,7 @@ function createAuthStore({ dataDir, hashPassword }) {
         ), 0) AS recovery_codes_remaining,
         COALESCE(m.role, hub_m.role, 'viewer') AS role,
         COALESCE(m.products, hub_m.products, '[]'::jsonb) AS products,
+        COALESCE(m.product_scope_mode, hub_m.product_scope_mode, 'none') AS product_scope_mode,
         EXISTS (
           SELECT 1 FROM ${TABLES.sessions} s
           WHERE s.user_id = u.id
@@ -239,7 +464,7 @@ function createAuthStore({ dataDir, hashPassword }) {
       LEFT JOIN ${TABLES.memberships} hub_m ON hub_m.user_id = u.id AND hub_m.app_key = $2
       ORDER BY u.username
     `, [appKey, HUB_APP_KEY]);
-    return mapUserRows(rows);
+    return Promise.all(mapUserRows(rows).map(attachDbAccess));
   };
 
   const getUserByUsernameFromDb = async (username, appKey = DEFAULT_APP_KEY) => {
@@ -263,6 +488,7 @@ function createAuthStore({ dataDir, hashPassword }) {
         ), 0) AS recovery_codes_remaining,
         COALESCE(m.role, hub_m.role, 'viewer') AS role,
         COALESCE(m.products, hub_m.products, '[]'::jsonb) AS products,
+        COALESCE(m.product_scope_mode, hub_m.product_scope_mode, 'none') AS product_scope_mode,
         EXISTS (
           SELECT 1 FROM ${TABLES.sessions} s
           WHERE s.user_id = u.id
@@ -277,7 +503,103 @@ function createAuthStore({ dataDir, hashPassword }) {
       WHERE u.username = $1
       LIMIT 1
     `, [username, appKey, HUB_APP_KEY]);
-    return rows[0] ? mapUserRows(rows)[0] : null;
+    return rows[0] ? attachDbAccess(mapUserRows(rows)[0]) : null;
+  };
+
+  const getRoleFromDb = async (roleId, client = pool) => {
+    const { rows } = await client.query(`
+      SELECT
+        r.id,
+        r.name,
+        r.description,
+        r.is_system,
+        r.created_by,
+        r.updated_by,
+        r.created_at,
+        r.updated_at,
+        COALESCE((
+          SELECT jsonb_agg(rp.permission_key ORDER BY rp.permission_key)
+          FROM ${TABLES.rolePermissions} rp
+          WHERE rp.role_id = r.id
+        ), '[]'::jsonb) AS permissions,
+        COALESCE((
+          SELECT count(*)::int
+          FROM ${TABLES.userRoles} ur
+          WHERE ur.role_id = r.id
+        ), 0) AS assigned_user_count
+      FROM ${TABLES.roles} r
+      WHERE r.id = $1
+      LIMIT 1
+    `, [roleId]);
+    if (!rows[0]) return null;
+    return normalizeRoleRecord({
+      ...rows[0],
+      permissions: parseJsonArray(rows[0].permissions)
+    });
+  };
+
+  const attachDbAccess = async user => {
+    if (!user) return null;
+    const { rows } = await pool.query(`
+      SELECT ur.role_id
+      FROM ${TABLES.userRoles} ur
+      WHERE ur.user_id = $1
+      LIMIT 1
+    `, [user.id]);
+    const fallbackRoleId = user.role === 'admin' ? SYSTEM_ADMIN_ROLE_ID : VIEWER_ROLE_ID;
+    const role = await getRoleFromDb(rows[0]?.role_id || fallbackRoleId);
+    const access = buildAccess({
+      role: role || {
+        id: fallbackRoleId,
+        name: fallbackRoleId === SYSTEM_ADMIN_ROLE_ID ? 'System Administrator' : 'Viewer',
+        system: fallbackRoleId === SYSTEM_ADMIN_ROLE_ID
+      },
+      permissions: role?.permissions || (fallbackRoleId === VIEWER_ROLE_ID ? VIEWER_PERMISSIONS : ALL_PERMISSION_KEYS),
+      productScope: {
+        mode: role?.system ? 'all' : user.productScopeMode,
+        products: user.products
+      },
+      legacyRole: role?.system ? 'admin' : 'viewer'
+    });
+    return {
+      ...user,
+      role: access.role.system ? 'admin' : 'viewer',
+      roleId: access.role.id,
+      roleName: access.role.name,
+      roleSystem: access.role.system,
+      permissions: access.permissions,
+      productScopeMode: access.productScope.mode,
+      products: access.productScope.products,
+      access
+    };
+  };
+
+  const attachFileAccess = user => {
+    if (!user) return null;
+    const roles = readFileRoles();
+    const fallbackRoleId = user.role === 'admin' ? SYSTEM_ADMIN_ROLE_ID : VIEWER_ROLE_ID;
+    const role = roles.find(item => item.id === (user.roleId || fallbackRoleId))
+      || roles.find(item => item.id === fallbackRoleId);
+    const access = buildAccess({
+      role,
+      permissions: role?.permissions || (fallbackRoleId === VIEWER_ROLE_ID ? VIEWER_PERMISSIONS : ALL_PERMISSION_KEYS),
+      productScope: {
+        mode: role?.system ? 'all' : user.productScopeMode,
+        products: user.products
+      },
+      legacyRole: role?.system ? 'admin' : 'viewer'
+    });
+    return {
+      ...user,
+      role: access.role.system ? 'admin' : 'viewer',
+      roleId: access.role.id,
+      roleName: access.role.name,
+      roleSystem: access.role.system,
+      permissions: access.permissions,
+      productScopeMode: access.productScope.mode,
+      products: access.productScope.products,
+      access
+    };
   };
 
   const upsertUserToDb = async (input = {}, options = {}) => {
@@ -285,6 +607,8 @@ function createAuthStore({ dataDir, hashPassword }) {
     if (!user.username) throw new Error('Username is required');
     const apps = Array.isArray(options.appKeys) && options.appKeys.length > 0 ? options.appKeys : ALL_APP_KEYS;
     await withTransaction(async (client) => {
+      const role = await getRoleFromDb(user.roleId, client);
+      if (!role) throw createStoreError('Selected role was not found', 400, 'role_not_found');
       const existing = await client.query('SELECT id FROM auth_users WHERE username = $1', [user.username]);
       const userId = existing.rows[0]?.id || user.id || crypto.randomUUID();
       await client.query(`
@@ -319,15 +643,30 @@ function createAuthStore({ dataDir, hashPassword }) {
 
       for (const appKey of apps) {
         await client.query(`
-          INSERT INTO ${TABLES.memberships} (user_id, app_key, role, products)
-          VALUES ($1, $2, $3, $4::jsonb)
+          INSERT INTO ${TABLES.memberships} (user_id, app_key, role, products, product_scope_mode)
+          VALUES ($1, $2, $3, $4::jsonb, $5)
           ON CONFLICT (user_id, app_key)
           DO UPDATE SET
             role = EXCLUDED.role,
             products = EXCLUDED.products,
+            product_scope_mode = EXCLUDED.product_scope_mode,
             updated_at = now()
-        `, [userId, appKey, user.role, JSON.stringify(user.products)]);
+        `, [
+          userId,
+          appKey,
+          role.system ? 'admin' : 'viewer',
+          JSON.stringify(role.system || user.productScopeMode !== 'selected' ? [] : user.products),
+          role.system ? 'all' : user.productScopeMode
+        ]);
       }
+      await client.query(`
+        INSERT INTO ${TABLES.userRoles} (user_id, role_id, assigned_by)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_id) DO UPDATE SET
+          role_id = EXCLUDED.role_id,
+          assigned_by = EXCLUDED.assigned_by,
+          assigned_at = now()
+      `, [userId, role.id, normalizeText(options.assignedBy)]);
     });
     return getUserByUsernameFromDb(user.username);
   };
@@ -468,7 +807,7 @@ function createAuthStore({ dataDir, hashPassword }) {
     const now = Date.now();
     return users.map(user => {
       const mfa = mfaData[user.username] || null;
-      return {
+      return attachFileAccess({
         ...user,
         passwordUpdatedAt: user.passwordUpdatedAt || '',
         mfaEnabled: Boolean(mfa?.secretCiphertext),
@@ -480,7 +819,7 @@ function createAuthStore({ dataDir, hashPassword }) {
         && !session.revokedAt
         && Date.parse(session.expiresAt) > now
       )) ? 'online' : 'offline'
-      };
+      });
     });
   };
 
@@ -498,23 +837,36 @@ function createAuthStore({ dataDir, hashPassword }) {
 
   const upsertFileUser = async (input = {}) => {
     const user = normalizeUserRecord(input);
+    const role = readFileRoles().find(item => item.id === user.roleId);
+    if (!role) throw createStoreError('Selected role was not found', 400, 'role_not_found');
+    const storedUser = {
+      ...user,
+      role: role.system ? 'admin' : 'viewer',
+      roleId: role.id,
+      roleName: role.name,
+      roleSystem: role.system,
+      productScopeMode: role.system ? 'all' : user.productScopeMode,
+      products: role.system || user.productScopeMode !== 'selected' ? [] : user.products
+    };
     const { users, index } = getFileUserIndex(user.username);
     if (index >= 0) {
       users[index] = {
         ...users[index],
-        email: user.email,
-        role: user.role,
-        products: user.products,
-        status: user.status,
-        lastLoginAt: user.lastLoginAt || users[index].lastLoginAt
+        email: storedUser.email,
+        role: storedUser.role,
+        roleId: storedUser.roleId,
+        products: storedUser.products,
+        productScopeMode: storedUser.productScopeMode,
+        status: storedUser.status,
+        lastLoginAt: storedUser.lastLoginAt || users[index].lastLoginAt
       };
-      if (user.hash && user.salt) {
-        users[index].salt = user.salt;
-        users[index].hash = user.hash;
-        users[index].passwordAlgorithm = user.passwordAlgorithm;
+      if (storedUser.hash && storedUser.salt) {
+        users[index].salt = storedUser.salt;
+        users[index].hash = storedUser.hash;
+        users[index].passwordAlgorithm = storedUser.passwordAlgorithm;
       }
     } else {
-      users.push(user);
+      users.push(storedUser);
     }
     writeFileUsers(users);
     return listFileUsers().find(item => item.username === user.username) || null;
@@ -528,7 +880,9 @@ function createAuthStore({ dataDir, hashPassword }) {
       try {
         await lockClient.query('SELECT pg_advisory_lock($1)', [732024061]);
         await runMigrations({ pool });
+        await ensureRbacRolesInDb();
         await ensureSeedUsers();
+        await ensureLegacyRoleAssignmentsInDb();
       } finally {
         await lockClient.query('SELECT pg_advisory_unlock($1)', [732024061]).catch(() => {});
         lockClient.release();
@@ -537,6 +891,7 @@ function createAuthStore({ dataDir, hashPassword }) {
     } else {
       console.log('Auth Service: Running in file-storage mode');
       await ensureSeedUsers();
+      ensureFileRbac();
       const mfaData = readMfaFile();
       let changed = false;
       for (const entry of Object.values(mfaData)) {
@@ -695,6 +1050,300 @@ function createAuthStore({ dataDir, hashPassword }) {
       count += 1;
     }
     return count;
+  };
+
+  const listRoles = async () => {
+    if (pool) {
+      const { rows } = await pool.query(`SELECT id FROM ${TABLES.roles} ORDER BY is_system DESC, lower(name), id`);
+      return Promise.all(rows.map(row => getRoleFromDb(row.id)));
+    }
+    const users = readUsersFromDisk(usersPath);
+    return readFileRoles()
+      .map(role => ({
+        ...role,
+        permissions: role.system ? [...ALL_PERMISSION_KEYS] : role.permissions,
+        assignedUserCount: users.filter(user => user.roleId === role.id
+          || (!user.roleId && role.id === (user.role === 'admin' ? SYSTEM_ADMIN_ROLE_ID : VIEWER_ROLE_ID))).length
+      }))
+      .sort((left, right) => Number(right.system) - Number(left.system) || left.name.localeCompare(right.name));
+  };
+
+  const getRole = async roleId => {
+    const normalizedRoleId = normalizeText(roleId);
+    if (!normalizedRoleId) return null;
+    if (pool) return getRoleFromDb(normalizedRoleId);
+    const roles = await listRoles();
+    return roles.find(role => role.id === normalizedRoleId) || null;
+  };
+
+  const createRole = async ({ name, description = '', permissions = [], actorUsername = '' }) => {
+    const valid = validateCustomRole({ name, description, permissions });
+    const now = new Date().toISOString();
+    const role = normalizeRoleRecord({
+      id: crypto.randomUUID(),
+      ...valid,
+      system: false,
+      createdBy: actorUsername,
+      updatedBy: actorUsername,
+      createdAt: now,
+      updatedAt: now
+    });
+    if (pool) {
+      try {
+        await withTransaction(async client => {
+          await client.query(`
+            INSERT INTO ${TABLES.roles} (id, name, description, is_system, created_by, updated_by)
+            VALUES ($1, $2, $3, false, $4, $4)
+          `, [role.id, role.name, role.description, actorUsername]);
+          for (const permission of role.permissions) {
+            await client.query(`
+              INSERT INTO ${TABLES.rolePermissions} (role_id, permission_key)
+              VALUES ($1, $2)
+            `, [role.id, permission]);
+          }
+        });
+      } catch (error) {
+        if (error.code === '23505') throw createStoreError('A role with this name already exists', 409, 'role_name_conflict');
+        throw error;
+      }
+    } else {
+      const roles = readFileRoles();
+      if (roles.some(item => item.name.toLowerCase() === role.name.toLowerCase())) {
+        throw createStoreError('A role with this name already exists', 409, 'role_name_conflict');
+      }
+      roles.push(role);
+      writeFileRoles(roles);
+    }
+    await saveAuditEvent({
+      actorUsername,
+      targetUsername: role.name,
+      action: 'role.created',
+      metadata: { roleId: role.id, after: { name: role.name, description: role.description, permissions: role.permissions } }
+    });
+    return getRole(role.id);
+  };
+
+  const updateRole = async (roleId, { name, description = '', permissions = [], actorUsername = '' }) => {
+    const existing = await getRole(roleId);
+    if (!existing) throw createStoreError('Role not found', 404, 'role_not_found');
+    if (existing.system) throw createStoreError('System Administrator is protected and cannot be edited', 409, 'system_role_protected');
+    const valid = validateCustomRole({ name, description, permissions }, { currentRoleId: roleId });
+    let affectedUsernames = [];
+    if (pool) {
+      try {
+        await withTransaction(async client => {
+          const users = await client.query(`
+            SELECT u.username
+            FROM ${TABLES.userRoles} ur
+            JOIN ${TABLES.users} u ON u.id = ur.user_id
+            WHERE ur.role_id = $1
+          `, [roleId]);
+          affectedUsernames = users.rows.map(row => row.username);
+          await client.query(`
+            UPDATE ${TABLES.roles}
+            SET name = $2, description = $3, updated_by = $4, updated_at = now()
+            WHERE id = $1
+          `, [roleId, valid.name, valid.description, actorUsername]);
+          await client.query(`DELETE FROM ${TABLES.rolePermissions} WHERE role_id = $1`, [roleId]);
+          for (const permission of valid.permissions) {
+            await client.query(`
+              INSERT INTO ${TABLES.rolePermissions} (role_id, permission_key)
+              VALUES ($1, $2)
+            `, [roleId, permission]);
+          }
+          await client.query(`
+            UPDATE ${TABLES.sessions} s
+            SET revoked_at = COALESCE(s.revoked_at, now())
+            FROM ${TABLES.userRoles} ur
+            WHERE s.user_id = ur.user_id
+              AND ur.role_id = $1
+              AND s.revoked_at IS NULL
+          `, [roleId]);
+          await client.query(`
+            INSERT INTO ${TABLES.auditEvents} (actor_username, target_username, action, metadata)
+            VALUES ($1, $2, 'role.updated', $3::jsonb)
+          `, [
+            actorUsername,
+            valid.name,
+            JSON.stringify({
+              roleId,
+              affectedUserCount: affectedUsernames.length,
+              before: { name: existing.name, description: existing.description, permissions: existing.permissions },
+              after: { name: valid.name, description: valid.description, permissions: valid.permissions }
+            })
+          ]);
+        });
+      } catch (error) {
+        if (error.code === '23505') throw createStoreError('A role with this name already exists', 409, 'role_name_conflict');
+        throw error;
+      }
+    } else {
+      const roles = readFileRoles();
+      const index = roles.findIndex(role => role.id === roleId);
+      if (roles.some((role, roleIndex) => roleIndex !== index && role.name.toLowerCase() === valid.name.toLowerCase())) {
+        throw createStoreError('A role with this name already exists', 409, 'role_name_conflict');
+      }
+      roles[index] = normalizeRoleRecord({
+        ...roles[index],
+        ...valid,
+        id: roleId,
+        updatedBy: actorUsername,
+        updatedAt: new Date().toISOString()
+      });
+      writeFileRoles(roles);
+      affectedUsernames = readUsersFromDisk(usersPath)
+        .filter(user => user.roleId === roleId)
+        .map(user => user.username);
+    }
+    if (!pool) {
+      await Promise.all(affectedUsernames.map(username => revokeUserSessions(username)));
+      await saveAuditEvent({
+        actorUsername,
+        targetUsername: valid.name,
+        action: 'role.updated',
+        metadata: {
+          roleId,
+          affectedUserCount: affectedUsernames.length,
+          before: { name: existing.name, description: existing.description, permissions: existing.permissions },
+          after: { name: valid.name, description: valid.description, permissions: valid.permissions }
+        }
+      });
+    }
+    return getRole(roleId);
+  };
+
+  const retireRole = async (roleId, { replacementRoleId = '', actorUsername = '' } = {}) => {
+    const existing = await getRole(roleId);
+    if (!existing) throw createStoreError('Role not found', 404, 'role_not_found');
+    if (existing.system) throw createStoreError('System Administrator cannot be retired', 409, 'system_role_protected');
+    if (replacementRoleId === roleId) throw createStoreError('Replacement role must be different', 400, 'invalid_replacement_role');
+    const replacement = replacementRoleId ? await getRole(replacementRoleId) : null;
+    if (replacementRoleId && !replacement) throw createStoreError('Replacement role not found', 404, 'replacement_role_not_found');
+    let affectedUsernames = [];
+    if (pool) {
+      await withTransaction(async client => {
+        const users = await client.query(`
+          SELECT u.id, u.username
+          FROM ${TABLES.userRoles} ur
+          JOIN ${TABLES.users} u ON u.id = ur.user_id
+          WHERE ur.role_id = $1
+          FOR UPDATE
+        `, [roleId]);
+        affectedUsernames = users.rows.map(row => row.username);
+        if (affectedUsernames.length > 0 && !replacement) {
+          throw createStoreError('Choose a replacement role before retiring an assigned role', 409, 'role_in_use', { assignedUserCount: affectedUsernames.length });
+        }
+        await client.query(`
+          UPDATE ${TABLES.sessions} s
+          SET revoked_at = COALESCE(s.revoked_at, now())
+          FROM ${TABLES.userRoles} ur
+          WHERE s.user_id = ur.user_id
+            AND ur.role_id = $1
+            AND s.revoked_at IS NULL
+        `, [roleId]);
+        if (replacement) {
+          await client.query(`
+            UPDATE ${TABLES.memberships} m
+            SET
+              role = $2,
+              product_scope_mode = CASE WHEN $2 = 'admin' THEN 'all' ELSE m.product_scope_mode END,
+              products = CASE WHEN $2 = 'admin' THEN '[]'::jsonb ELSE m.products END,
+              updated_at = now()
+            WHERE m.user_id IN (
+              SELECT ur.user_id
+              FROM ${TABLES.userRoles} ur
+              WHERE ur.role_id = $1
+            )
+          `, [roleId, replacement.system ? 'admin' : 'viewer']);
+          await client.query(`
+            UPDATE ${TABLES.userRoles}
+            SET role_id = $2, assigned_by = $3, assigned_at = now()
+            WHERE role_id = $1
+          `, [roleId, replacement.id, actorUsername]);
+        }
+        await client.query(`
+          INSERT INTO ${TABLES.auditEvents} (actor_username, target_username, action, metadata)
+          VALUES ($1, $2, 'role.retired', $3::jsonb)
+        `, [
+          actorUsername,
+          existing.name,
+          JSON.stringify({
+            roleId,
+            replacementRoleId: replacement?.id || '',
+            replacementRoleName: replacement?.name || '',
+            affectedUserCount: affectedUsernames.length,
+            before: { name: existing.name, description: existing.description, permissions: existing.permissions }
+          })
+        ]);
+        await client.query(`DELETE FROM ${TABLES.roles} WHERE id = $1`, [roleId]);
+      });
+    } else {
+      const users = readUsersFromDisk(usersPath);
+      affectedUsernames = users.filter(user => user.roleId === roleId).map(user => user.username);
+      if (affectedUsernames.length > 0 && !replacement) {
+        throw createStoreError('Choose a replacement role before retiring an assigned role', 409, 'role_in_use', { assignedUserCount: affectedUsernames.length });
+      }
+      for (const user of users) {
+        if (user.roleId !== roleId) continue;
+        user.roleId = replacement.id;
+        user.role = replacement.system ? 'admin' : 'viewer';
+        if (replacement.system) {
+          user.productScopeMode = 'all';
+          user.products = [];
+        }
+      }
+      writeFileUsers(users);
+      writeFileRoles(readFileRoles().filter(role => role.id !== roleId));
+    }
+    if (!pool) {
+      await Promise.all(affectedUsernames.map(username => revokeUserSessions(username)));
+      await saveAuditEvent({
+        actorUsername,
+        targetUsername: existing.name,
+        action: 'role.retired',
+        metadata: {
+          roleId,
+          replacementRoleId: replacement?.id || '',
+          replacementRoleName: replacement?.name || '',
+          affectedUserCount: affectedUsernames.length,
+          before: { name: existing.name, description: existing.description, permissions: existing.permissions }
+        }
+      });
+    }
+    return { retiredRole: existing, replacementRole: replacement, affectedUserCount: affectedUsernames.length };
+  };
+
+  const countActiveSystemAdministrators = async () => {
+    const users = await listUsers();
+    return users.filter(user => user.roleId === SYSTEM_ADMIN_ROLE_ID && user.status !== 'suspended').length;
+  };
+
+  const listAuditEvents = async ({ limit = 100, before = '' } = {}) => {
+    const safeLimit = Math.max(1, Math.min(250, Number(limit) || 100));
+    if (pool) {
+      const params = [safeLimit];
+      const beforeClause = before ? 'WHERE created_at < $2' : '';
+      if (before) params.push(new Date(before));
+      const { rows } = await pool.query(`
+        SELECT id, actor_username, target_username, action, metadata, created_at
+        FROM ${TABLES.auditEvents}
+        ${beforeClause}
+        ORDER BY created_at DESC, id DESC
+        LIMIT $1
+      `, params);
+      return rows.map(row => ({
+        id: String(row.id),
+        actorUsername: row.actor_username,
+        targetUsername: row.target_username,
+        action: row.action,
+        metadata: row.metadata || {},
+        createdAt: toIsoString(row.created_at)
+      }));
+    }
+    return readFileAudit()
+      .filter(event => !before || Date.parse(event.createdAt) < Date.parse(before))
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+      .slice(0, safeLimit);
   };
 
   const getMfaConfig = async (username) => {
@@ -1024,7 +1673,18 @@ function createAuthStore({ dataDir, hashPassword }) {
         INSERT INTO ${TABLES.auditEvents} (actor_username, target_username, action, metadata)
         VALUES ($1, $2, $3, $4::jsonb)
       `, [actorUsername, targetUsername, action, JSON.stringify(metadata)]);
+      return;
     }
+    const events = readFileAudit();
+    events.push({
+      id: crypto.randomUUID(),
+      actorUsername,
+      targetUsername,
+      action,
+      metadata,
+      createdAt: new Date().toISOString()
+    });
+    writeFileAudit(events);
   };
 
   const close = async () => {
@@ -1046,6 +1706,13 @@ function createAuthStore({ dataDir, hashPassword }) {
     createSession,
     revokeSession,
     revokeUserSessions,
+    listRoles,
+    getRole,
+    createRole,
+    updateRole,
+    retireRole,
+    countActiveSystemAdministrators,
+    listAuditEvents,
     getActiveSession,
     updateEmail,
     updatePassword,

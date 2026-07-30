@@ -1,0 +1,125 @@
+.login-page .login-card-wrapper {
+  position: relative;
+  z-index: 2;
+  width: min(420px, calc(100% - 32px));
+  padding-top: 100px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.login-page .login-card {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  padding: 40px 36px 32px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.login-page .password-input {
+  padding-right: 52px;
+}
+
+/* Edge adds its own reveal button after password text is entered. */
+.login-page .password-input::-ms-reveal,
+.login-page .password-input::-ms-clear {
+  display: none;
+}
+
+.login-page .toggle-password {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  transform: translateY(-50%);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.login-page .toggle-password:hover:not(:disabled) {
+  background: rgba(41, 121, 255, 0.08);
+  color: var(--accent);
+}
+
+.login-page .toggle-password:focus-visible,
+.login-page .forgot-password:focus-visible {
+  outline: 2px solid var(--text-link);
+  outline-offset: 3px;
+}
+
+.login-page .toggle-password:disabled,
+.login-page .forgot-password:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.login-page .form-options-row {
+  margin-top: -4px;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.login-page .forgot-password {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text-link);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.login-page .forgot-password:hover:not(:disabled) {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.login-page .verification-copy {
+  margin: -10px 0 20px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+@media (max-width: 768px) {
+  .login-page .login-card-wrapper {
+    width: min(380px, calc(100% - 32px));
+  }
+
+  .login-page .login-card {
+    max-width: 380px;
+    padding: 36px 28px 28px;
+  }
+}
+
+@media (max-width: 480px) {
+  .login-page .login-card-wrapper {
+    width: calc(100% - 24px);
+    padding-top: 80px;
+  }
+
+  .login-page .login-card {
+    max-width: none;
+    padding: 32px 20px 24px;
+    border-radius: var(--radius-md);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-page .toggle-password,
+  .login-page .forgot-password {
+    transition: none;
+  }
+}

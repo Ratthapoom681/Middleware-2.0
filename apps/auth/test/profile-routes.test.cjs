@@ -124,10 +124,36 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   assert.ok(verified.data.token);
   adminToken = verified.data.token;
 
+  const missingScope = await request('/api/users', {
+    token: adminToken, method: 'POST', body: JSON.stringify({
+      username: 'missing-scope', email: '', roleId: 'viewer', status: 'active', mfaProvider: 'disabled'
+    })
+  });
+  assert.equal(missingScope.response.status, 400);
+  assert.equal(missingScope.data.code, 'product_scope_required');
+
+  const invalidScope = await request('/api/users', {
+    token: adminToken, method: 'POST', body: JSON.stringify({
+      username: 'invalid-scope', email: '', roleId: 'viewer',
+      productScope: { mode: 'sometimes', products: [] }, status: 'active', mfaProvider: 'disabled'
+    })
+  });
+  assert.equal(invalidScope.response.status, 400);
+  assert.equal(invalidScope.data.code, 'invalid_product_scope');
+
+  const protectedSystemScope = await request('/api/users', {
+    token: adminToken, method: 'POST', body: JSON.stringify({
+      username: 'invalid-system-scope', email: '', roleId: 'system-administrator',
+      productScope: { mode: 'selected', products: ['Product A'] }, status: 'active', mfaProvider: 'disabled'
+    })
+  });
+  assert.equal(protectedSystemScope.response.status, 400);
+  assert.equal(protectedSystemScope.data.code, 'system_scope_protected');
+
   const created = await request('/api/users', {
     token: adminToken, method: 'POST', body: JSON.stringify({
       username: 'analyst', email: 'analyst@example.test', fullName: 'Test Analyst', company: 'Beenets', department: 'SOC',
-      role: 'viewer', products: ['Product A'], status: 'active', mfaProvider: 'disabled'
+      roleId: 'viewer', productScope: { mode: 'selected', products: ['Product A'] }, status: 'active', mfaProvider: 'disabled'
     })
   });
   assert.equal(created.response.status, 200);
@@ -138,7 +164,8 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
 
   const copyOnly = await request('/api/users', {
     token: adminToken, method: 'POST', body: JSON.stringify({
-      username: 'copyonly', email: '', role: 'viewer', products: [], status: 'active', mfaProvider: 'disabled'
+      username: 'copyonly', email: '', role: 'viewer', products: [], status: 'active', mfaProvider: 'disabled',
+      productScope: { mode: 'none', products: [] }
     })
   });
   assert.equal(copyOnly.response.status, 200);
@@ -169,7 +196,8 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
 
   const invalidEmail = await request('/api/users', {
     token: adminToken, method: 'POST', body: JSON.stringify({
-      username: 'invalid-email', email: 'not-an-email', role: 'viewer', products: [], status: 'active', mfaProvider: 'disabled'
+      username: 'invalid-email', email: 'not-an-email', role: 'viewer', products: [], status: 'active', mfaProvider: 'disabled',
+      productScope: { mode: 'none', products: [] }
     })
   });
   assert.equal(invalidEmail.response.status, 400);

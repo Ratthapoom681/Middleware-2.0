@@ -85,7 +85,7 @@ function drawEye(context, x, y, eyeOffsetX, eyeOffsetY, openness, scale) {
 
   context.save();
   context.translate(x, y);
-  context.scale(1, Math.max(0.12, openness));
+  context.scale(scale, Math.max(0.12, openness) * scale);
   context.beginPath();
   context.ellipse(0, 0, 8.5, 7.5, 0, 0, Math.PI * 2);
   context.fillStyle = '#FFFFFF';
@@ -95,12 +95,12 @@ function drawEye(context, x, y, eyeOffsetX, eyeOffsetY, openness, scale) {
   context.stroke();
 
   context.beginPath();
-  context.arc(eyeOffsetX, 0.5 + eyeOffsetY, 4.1 * scale, 0, Math.PI * 2);
+  context.arc(eyeOffsetX, 0.5 + eyeOffsetY, 4.1, 0, Math.PI * 2);
   context.fillStyle = COLORS.eye;
   context.fill();
 
   context.beginPath();
-  context.arc(eyeOffsetX, 0.5 + eyeOffsetY, 2 * scale, 0, Math.PI * 2);
+  context.arc(eyeOffsetX, 0.5 + eyeOffsetY, 2, 0, Math.PI * 2);
   context.fillStyle = COLORS.pupil;
   context.fill();
 
@@ -344,7 +344,6 @@ export default function HuskyMascot({ focusedField, showPassword, caretPosition 
       rightPaw: 0,
       leftPawVelocity: 0,
       rightPawVelocity: 0,
-      coverStartedAt: 0,
       wasCovering: false,
     };
     let animationFrame;
@@ -377,7 +376,6 @@ export default function HuskyMascot({ focusedField, showPassword, caretPosition 
       if (isCovering !== animation.wasCovering) {
         animation.leftPawVelocity = 0;
         animation.rightPawVelocity = 0;
-        if (isCovering) animation.coverStartedAt = elapsed;
         animation.wasCovering = isCovering;
       }
 
@@ -412,13 +410,8 @@ export default function HuskyMascot({ focusedField, showPassword, caretPosition 
       if (isCovering) {
         targetHeadY = 3;
         targetTilt = -0.025;
-        targetEyeScale = 0.9;
+        targetEyeScale = 1.22;
         targetEarPerk = 0.25;
-        const peekPhase = (elapsed - animation.coverStartedAt) % 8;
-        if (peekPhase > 7 && peekPhase < 8) {
-          const peek = Math.sin((peekPhase - 7) * Math.PI);
-          targetRightPaw = 1 - peek * 0.7;
-        }
       } else if (isPasswordRevealed) {
         targetHeadX = caretDirection * 8;
         targetHeadY = 2;

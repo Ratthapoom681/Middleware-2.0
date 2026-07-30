@@ -1,5 +1,6 @@
 import { BookOpen, Shield } from 'lucide-react';
 import HubProfileMenu from '../HubProfileMenu/HubProfileMenu';
+import { hasPermission } from '../../../../../../packages/access-control/index.js';
 import './HubTopbar.css';
 
 export default function HubTopbar({ user, onOpenDocs, onOpenProfile, onLogout }) {
@@ -10,10 +11,10 @@ export default function HubTopbar({ user, onOpenDocs, onOpenProfile, onLogout })
         <span className="brand-text">Internal Security Middleware Hub</span>
       </div>
       <div className="topbar-user">
-        <button type="button" className="btn-docs" onClick={onOpenDocs} title="Documentation">
+        {hasPermission(user, 'docs.view') && <button type="button" className="btn-docs" onClick={onOpenDocs} title="Documentation">
           <BookOpen size={16} />
           <span>Documentation</span>
-        </button>
+        </button>}
         <HubProfileMenu user={user} onOpenProfile={onOpenProfile} onLogout={onLogout} />
       </div>
     </header>
