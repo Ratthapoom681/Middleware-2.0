@@ -121,7 +121,7 @@ services:
     depends_on:
       defectdojo_db:
         condition: service_healthy
-    networks: [app-data]
+    networks: [edge, app-data]
     healthcheck:
       disable: true
     mem_limit: 128m
