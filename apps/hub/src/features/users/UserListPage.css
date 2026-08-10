@@ -1,4 +1,3 @@
-.btn-back,
 .btn-primary,
 .btn-secondary,
 .btn-danger,
@@ -15,17 +14,6 @@
   transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
 }
 
-.btn-back {
-  width: fit-content;
-  min-height: 2.35rem;
-  padding: 0.5rem 0.85rem;
-  border-color: var(--border-subtle);
-  background: var(--bg-subtle);
-  color: var(--text-muted);
-  font-size: 0.875rem;
-}
-
-.btn-back:hover,
 .btn-secondary:hover,
 .icon-btn:hover {
   border-color: var(--border-strong);
@@ -151,6 +139,16 @@
   color: var(--text-main);
   font-size: 0.9rem;
   font-weight: var(--font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-list-id-cell {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

@@ -6,6 +6,7 @@ import UserDetailPage from '../features/users/UserDetailPage';
 import ProfilePage from '../features/profile/ProfilePage';
 import SettingsPage from '../features/settings/SettingsPage';
 import RolesAccessPage from '../features/roles/RolesAccessPage';
+import { parseUserDetailHash } from '../features/users/userRouting.js';
 import { hasPermission, isSystemAdmin } from '../../../../packages/access-control/index.js';
 import {
   createSessionExpiryHandler,
@@ -92,6 +93,11 @@ export default function App() {
     setUser(nextUser);
   }, []);
 
+  const replaceHash = useCallback((nextHash) => {
+    window.history.replaceState(null, '', nextHash);
+    setHash(nextHash);
+  }, []);
+
   /* Authentication is served independently so Hub can fail without blocking login. */
   if (!token || !user) {
     if (sessionExpiryRedirecting) return null;
@@ -111,30 +117,26 @@ export default function App() {
   }
 
   if ((hash === '#users' || hash.startsWith('#users/')) && isSystemAdmin(user)) {
-    const detailMatch = hash.match(/^#users\/(.+)$/);
-    let detailUsername = '';
-    if (detailMatch) {
-      try {
-        detailUsername = decodeURIComponent(detailMatch[1]);
-      } catch {
-        detailUsername = detailMatch[1];
-      }
-    }
+    const detailRoute = parseUserDetailHash(hash);
     return (
       <HubShell
         user={user}
+        onBack={() => { window.location.hash = detailRoute.detail ? '#users' : ''; }}
+        backLabel={detailRoute.detail ? 'Back to Users' : 'Back to Hub'}
         onOpenDocs={() => { window.location.href = '/docs/'; }}
         onOpenProfile={() => { window.location.hash = '#profile?returnTo=%2F'; }}
         onLogout={handleLogout}
       >
-        {detailMatch
+        {detailRoute.detail
           ? (
             <UserDetailPage
-              username={detailUsername}
+              userId={detailRoute.userId}
+              username={detailRoute.username}
               token={token}
               currentUser={user}
               onUnauthorized={handleUnauthorized}
               onUserUpdated={handleUserUpdated}
+              onCanonicalize={replaceHash}
             />
           )
           : (
@@ -150,11 +152,31 @@ export default function App() {
   }
 
   if (hash === '#settings' && hasPermission(user, 'hub.settings.manage')) {
-    return <SettingsPage token={token} currentUser={user} onUnauthorized={handleUnauthorized} onBack={() => { window.location.hash = ''; }} />;
+    return (
+      <HubShell
+        user={user}
+        onBack={() => { window.location.hash = ''; }}
+        onOpenDocs={() => { window.location.href = '/docs/'; }}
+        onOpenProfile={() => { window.location.hash = '#profile?returnTo=%2F'; }}
+        onLogout={handleLogout}
+      >
+        <SettingsPage token={token} onUnauthorized={handleUnauthorized} />
+      </HubShell>
+    );
   }
 
   if (hash === '#roles' && isSystemAdmin(user)) {
-    return <RolesAccessPage token={token} onUnauthorized={handleUnauthorized} onBack={() => { window.location.hash = ''; }} />;
+    return (
+      <HubShell
+        user={user}
+        onBack={() => { window.location.hash = ''; }}
+        onOpenDocs={() => { window.location.href = '/docs/'; }}
+        onOpenProfile={() => { window.location.hash = '#profile?returnTo=%2F'; }}
+        onLogout={handleLogout}
+      >
+        <RolesAccessPage token={token} onUnauthorized={handleUnauthorized} />
+      </HubShell>
+    );
   }
 
   if (hash.startsWith('#profile')) {

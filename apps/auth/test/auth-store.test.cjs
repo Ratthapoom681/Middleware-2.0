@@ -92,3 +92,72 @@ test('existing production users do not require bootstrap credentials', async (t)
     await store.close();
   });
 });
+
+test('file storage repairs missing, malformed, and duplicate public user IDs once', async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-store-public-id-repair-'));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const usersPath = path.join(dataDir, 'users.json');
+  fs.writeFileSync(usersPath, JSON.stringify([
+    { username: 'alpha', userId: '000005', role: 'viewer', status: 'active', products: [], ...hashPassword('alpha-password') },
+    { username: 'beta', userId: '000005', role: 'viewer', status: 'active', products: [], ...hashPassword('beta-password') },
+    { username: 'gamma', userId: 'invalid', role: 'viewer', status: 'active', products: [], ...hashPassword('gamma-password') },
+    { username: 'delta', role: 'viewer', status: 'active', products: [], ...hashPassword('delta-password') }
+  ]));
+
+  const firstStore = createAuthStore({ dataDir, hashPassword });
+  await firstStore.initialize();
+  const firstUsers = await firstStore.listUsers();
+  const firstIds = Object.fromEntries(firstUsers.map(user => [user.username, user.userId]));
+  assert.deepEqual(firstIds, {
+    alpha: '000005',
+    beta: '000006',
+    gamma: '000007',
+    delta: '000008'
+  });
+  assert.equal((await firstStore.getUserByUserId('000006')).username, 'beta');
+  assert.equal(new Set(firstUsers.map(user => user.userId)).size, firstUsers.length);
+  await firstStore.close();
+
+  const restartedStore = createAuthStore({ dataDir, hashPassword });
+  await restartedStore.initialize();
+  const restartedIds = Object.fromEntries((await restartedStore.listUsers()).map(user => [user.username, user.userId]));
+  assert.deepEqual(restartedIds, firstIds);
+  await restartedStore.close();
+});
+
+test('file storage preserves public IDs on update and never reuses deleted IDs', async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-store-public-id-sequence-'));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const store = createAuthStore({ dataDir, hashPassword });
+  await store.initialize();
+
+  const created = await store.upsertUser({
+    username: 'operator',
+    email: 'operator@example.test',
+    role: 'viewer',
+    roleId: 'viewer',
+    status: 'active',
+    productScopeMode: 'none',
+    products: [],
+    ...hashPassword('operator-password')
+  });
+  assert.equal(created.userId, '000002');
+
+  const updated = await store.upsertUser({ ...created, email: 'updated@example.test' });
+  assert.equal(updated.userId, created.userId);
+  assert.equal(await store.deleteUser('operator'), true);
+
+  const replacement = await store.upsertUser({
+    username: 'replacement',
+    email: '',
+    role: 'viewer',
+    roleId: 'viewer',
+    status: 'active',
+    productScopeMode: 'none',
+    products: [],
+    ...hashPassword('replacement-password')
+  });
+  assert.equal(replacement.userId, '000003');
+  assert.equal(await store.getUserByUserId(created.userId), null);
+  await store.close();
+});

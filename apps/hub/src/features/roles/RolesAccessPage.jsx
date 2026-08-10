@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
-  ArrowLeft,
   Check,
   ChevronDown,
   Copy,
@@ -255,7 +254,7 @@ function RoleEditor({
   );
 }
 
-export default function RolesAccessPage({ token, onUnauthorized, onBack }) {
+export default function RolesAccessPage({ token, onUnauthorized }) {
   const request = useMemo(
     () => createAuthenticatedRequest({ token, onUnauthorized }),
     [onUnauthorized, token],
@@ -338,11 +337,7 @@ export default function RolesAccessPage({ token, onUnauthorized, onBack }) {
 
   return (
     <div className="roles-page">
-      <header className="roles-topbar">
-        <button type="button" className="roles-back" onClick={onBack}><ArrowLeft size={18} />Back to Hub</button>
-        <div className="roles-brand"><KeyRound size={20} /><span>Roles &amp; Access</span></div>
-      </header>
-      <main className="roles-content">
+      <div className="roles-content">
         <section className="roles-hero">
           <div>
             <span className="roles-eyebrow">Administration</span>
@@ -425,7 +420,7 @@ export default function RolesAccessPage({ token, onUnauthorized, onBack }) {
             )}
           </section>
         )}
-      </main>
+      </div>
 
       {draft && <RoleEditor catalog={catalog} draft={draft} onCancel={() => setDraft(null)} onSave={saveRole} saving={saving} />}
 

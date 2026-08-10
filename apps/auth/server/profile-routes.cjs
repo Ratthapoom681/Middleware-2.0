@@ -170,6 +170,12 @@ function registerProfileRoutes({
     await authStore.getMfaConfig(username)
   );
 
+  const getUserFromAdminRoute = req => (
+    req.params.userId
+      ? authStore.getUserByUserId(String(req.params.userId || '').trim())
+      : authStore.getUserByUsername(String(req.params.username || '').trim())
+  );
+
   const verifyTotpFactor = async (username, code) => {
     const config = await authStore.getMfaConfig(username);
     if (!config) return { ok: false, status: 400, error: 'Authenticator is not enabled' };
@@ -419,11 +425,11 @@ function registerProfileRoutes({
   app.post('/api/profile/mfa/recovery-codes/regenerate', authenticateJwt, administratorControlled);
   app.post('/api/profile/mfa/disable', authenticateJwt, administratorControlled);
 
-  app.post('/api/users/:username/password/reset', authenticateJwt, requireAdmin, async (req, res) => {
-    const username = String(req.params.username || '').trim();
+  app.post(['/api/users/id/:userId/password/reset', '/api/users/:username/password/reset'], authenticateJwt, requireAdmin, async (req, res) => {
     try {
-      const target = await authStore.getUserByUsername(username);
+      const target = await getUserFromAdminRoute(req);
       if (!target) return res.status(404).json({ error: 'User not found' });
+      const username = target.username;
       const emailAvailable = validEmail(target.email);
       if (emailAvailable) getRequestOrigin(req);
       const temporaryPassword = crypto.randomBytes(18).toString('base64url');
@@ -452,15 +458,16 @@ function registerProfileRoutes({
     }
   });
 
-  app.patch('/api/users/:username/mfa', authenticateJwt, requireAdmin, async (req, res) => {
-    const username = String(req.params.username || '').trim();
+  app.patch(['/api/users/id/:userId/mfa', '/api/users/:username/mfa'], authenticateJwt, requireAdmin, async (req, res) => {
     const provider = parseAdminMfaProvider(req.body);
     if (!provider) return res.status(400).json({ error: 'MFA provider must be disabled, google, microsoft, or other' });
     try {
-      const [target, config, policy] = await Promise.all([
-        authStore.getUserByUsername(username), authStore.getMfaConfig(username), securityStore.getMfaPolicy(username)
-      ]);
+      const target = await getUserFromAdminRoute(req);
       if (!target) return res.status(404).json({ error: 'User not found' });
+      const username = target.username;
+      const [config, policy] = await Promise.all([
+        authStore.getMfaConfig(username), securityStore.getMfaPolicy(username)
+      ]);
       const currentProvider = config?.provider || policy?.provider || '';
       let delivery = null;
       let sessionEnded = false;
@@ -516,13 +523,14 @@ function registerProfileRoutes({
     }
   });
 
-  app.post('/api/users/:username/mfa/reset', authenticateJwt, requireAdmin, async (req, res) => {
-    const username = String(req.params.username || '').trim();
+  app.post(['/api/users/id/:userId/mfa/reset', '/api/users/:username/mfa/reset'], authenticateJwt, requireAdmin, async (req, res) => {
     try {
-      const [target, config, policy] = await Promise.all([
-        authStore.getUserByUsername(username), authStore.getMfaConfig(username), securityStore.getMfaPolicy(username)
-      ]);
+      const target = await getUserFromAdminRoute(req);
       if (!target) return res.status(404).json({ error: 'User not found' });
+      const username = target.username;
+      const [config, policy] = await Promise.all([
+        authStore.getMfaConfig(username), securityStore.getMfaPolicy(username)
+      ]);
       if (!config) return res.status(400).json({ error: 'Authenticator MFA is not enabled for this user' });
       if (!validEmail(target.email)) return res.status(400).json({ error: 'A valid email address is required to reset Authenticator MFA' });
       const provider = config.provider || policy?.provider || 'other';
@@ -544,11 +552,14 @@ function registerProfileRoutes({
     }
   });
 
-  app.post('/api/users/:username/mfa/resend', authenticateJwt, requireAdmin, async (req, res) => {
-    const username = String(req.params.username || '').trim();
+  app.post(['/api/users/id/:userId/mfa/resend', '/api/users/:username/mfa/resend'], authenticateJwt, requireAdmin, async (req, res) => {
     try {
-      const [target, policy, config] = await Promise.all([authStore.getUserByUsername(username), securityStore.getMfaPolicy(username), authStore.getMfaConfig(username)]);
+      const target = await getUserFromAdminRoute(req);
       if (!target) return res.status(404).json({ error: 'User not found' });
+      const username = target.username;
+      const [policy, config] = await Promise.all([
+        securityStore.getMfaPolicy(username), authStore.getMfaConfig(username)
+      ]);
       if (String(target.status || '').toLowerCase() === 'suspended') {
         return res.status(409).json({ error: 'Reactivate this account before resending the setup email' });
       }

@@ -18,6 +18,7 @@ const DEFAULT_APP_KEY = 'defectdojo';
 const HUB_APP_KEY = 'hub';
 const ALL_APP_KEYS = [HUB_APP_KEY, DEFAULT_APP_KEY, 'wazuh'];
 const LEGACY_USERS_TABLE = 'defectdojo_viewer_users';
+const PUBLIC_USER_ID_PATTERN = /^[0-9]{6,}$/;
 
 const TABLES = {
   users: 'auth_users',
@@ -34,6 +35,13 @@ const TABLES = {
 };
 
 const normalizeText = (value) => String(value || '').trim();
+
+const normalizePublicUserId = (value) => {
+  const normalized = normalizeText(value);
+  return PUBLIC_USER_ID_PATTERN.test(normalized) ? normalized : '';
+};
+
+const formatPublicUserId = (value) => String(value).padStart(6, '0');
 
 const normalizeStatus = (status = '') => (
   normalizeText(status).toLowerCase() === 'suspended' ? 'suspended' : 'active'
@@ -91,6 +99,7 @@ const buildPoolConfig = (connectionString) => {
 
 const normalizeUserRecord = (user = {}) => ({
   id: normalizeText(user.id) || crypto.randomUUID(),
+  userId: normalizePublicUserId(user.userId || user.publicId || user.public_id),
   username: normalizeText(user.username),
   email: normalizeText(user.email),
   status: normalizeStatus(user.status || user.accountStatus),
@@ -144,6 +153,7 @@ const buildPublicUser = (user = {}) => {
   });
   return {
     id: normalized.id,
+    userId: normalized.userId,
     username: normalized.username,
     email: normalized.email,
     role: normalized.role,
@@ -193,6 +203,7 @@ const createDefaultAdminUser = (hashPassword, password = 'admin') => {
 
 function createAuthStore({ dataDir, hashPassword }) {
   const usersPath = path.join(dataDir, 'users.json');
+  const userIdSequencePath = path.join(dataDir, 'user-id-sequence.json');
   const mfaPath = path.join(dataDir, 'mfa.json');
   const rolesPath = path.join(dataDir, 'roles.json');
   const auditPath = path.join(dataDir, 'access-audit.json');
@@ -203,6 +214,85 @@ function createAuthStore({ dataDir, hashPassword }) {
   const fileSessions = new Map();
   const fileChallenges = new Map();
   const production = normalizeText(process.env.NODE_ENV).toLowerCase() === 'production';
+
+  const readFileUserIdSequence = () => {
+    if (!fs.existsSync(userIdSequencePath)) return 0;
+    try {
+      const data = JSON.parse(fs.readFileSync(userIdSequencePath, 'utf8'));
+      const value = Number.parseInt(data?.lastAllocated, 10);
+      return Number.isSafeInteger(value) && value > 0 ? value : 0;
+    } catch {
+      return 0;
+    }
+  };
+
+  const writeFileUserIdSequence = (lastAllocated) => {
+    fs.writeFileSync(
+      userIdSequencePath,
+      JSON.stringify({ lastAllocated }, null, 2),
+      { encoding: 'utf8', mode: 0o600 }
+    );
+  };
+
+  const getMaxFileUserId = (users = []) => users.reduce((maximum, user) => {
+    const userId = normalizePublicUserId(user?.userId);
+    if (!userId) return maximum;
+    const numericId = Number.parseInt(userId, 10);
+    return Number.isSafeInteger(numericId) ? Math.max(maximum, numericId) : maximum;
+  }, 0);
+
+  const allocateFileUserId = (users = []) => {
+    const next = Math.max(readFileUserIdSequence(), getMaxFileUserId(users)) + 1;
+    writeFileUserIdSequence(next);
+    return formatPublicUserId(next);
+  };
+
+  const ensureFileUserIds = () => {
+    if (!fs.existsSync(usersPath)) return;
+    let rawUsers;
+    try {
+      rawUsers = JSON.parse(fs.readFileSync(usersPath, 'utf8'));
+    } catch {
+      return;
+    }
+    if (!Array.isArray(rawUsers)) return;
+
+    const validUsers = rawUsers.filter(user => normalizeText(user?.username));
+    const normalizedUsers = [];
+    const seenPublicIds = new Set();
+    const seenInternalIds = new Set();
+    let lastAllocated = Math.max(
+      readFileUserIdSequence(),
+      ...validUsers.map(user => Number.parseInt(normalizePublicUserId(user?.userId), 10) || 0)
+    );
+    let changed = validUsers.length !== rawUsers.length;
+
+    for (const rawUser of validUsers) {
+      const user = normalizeUserRecord(rawUser);
+      const rawInternalId = normalizeText(rawUser.id);
+      if (!rawInternalId || seenInternalIds.has(rawInternalId)) {
+        user.id = crypto.randomUUID();
+        changed = true;
+      } else {
+        user.id = rawInternalId;
+      }
+      seenInternalIds.add(user.id);
+
+      const rawPublicId = normalizePublicUserId(rawUser.userId);
+      if (!rawPublicId || seenPublicIds.has(rawPublicId)) {
+        lastAllocated += 1;
+        user.userId = formatPublicUserId(lastAllocated);
+        changed = true;
+      } else {
+        user.userId = rawPublicId;
+      }
+      seenPublicIds.add(user.userId);
+      normalizedUsers.push(user);
+    }
+
+    if (changed) fs.writeFileSync(usersPath, JSON.stringify(normalizedUsers, null, 2), 'utf8');
+    if (readFileUserIdSequence() !== lastAllocated) writeFileUserIdSequence(lastAllocated);
+  };
 
   const createBootstrapAdminUser = () => {
     const configuredPassword = String(process.env.AUTH_BOOTSTRAP_ADMIN_PASSWORD || '');
@@ -410,6 +500,7 @@ function createAuthStore({ dataDir, hashPassword }) {
 
   const mapUserRows = (rows) => rows.map(row => normalizeUserRecord({
     id: row.id,
+    userId: row.public_id,
     username: row.username,
     email: row.email,
     status: row.status,
@@ -433,6 +524,7 @@ function createAuthStore({ dataDir, hashPassword }) {
     const { rows } = await pool.query(`
       SELECT
         u.id,
+        u.public_id,
         u.username,
         u.email,
         u.status,
@@ -467,10 +559,13 @@ function createAuthStore({ dataDir, hashPassword }) {
     return Promise.all(mapUserRows(rows).map(attachDbAccess));
   };
 
-  const getUserByUsernameFromDb = async (username, appKey = DEFAULT_APP_KEY) => {
+  const getUserByIdentityFromDb = async ({ username = '', userId = '' }, appKey = DEFAULT_APP_KEY) => {
+    const lookupColumn = userId ? 'u.public_id' : 'u.username';
+    const lookupValue = userId || username;
     const { rows } = await pool.query(`
       SELECT
         u.id,
+        u.public_id,
         u.username,
         u.email,
         u.status,
@@ -500,11 +595,19 @@ function createAuthStore({ dataDir, hashPassword }) {
       LEFT JOIN ${TABLES.mfaConfig} mf ON mf.user_id = u.id
       LEFT JOIN ${TABLES.memberships} m ON m.user_id = u.id AND m.app_key = $2
       LEFT JOIN ${TABLES.memberships} hub_m ON hub_m.user_id = u.id AND hub_m.app_key = $3
-      WHERE u.username = $1
+      WHERE ${lookupColumn} = $1
       LIMIT 1
-    `, [username, appKey, HUB_APP_KEY]);
+    `, [lookupValue, appKey, HUB_APP_KEY]);
     return rows[0] ? attachDbAccess(mapUserRows(rows)[0]) : null;
   };
+
+  const getUserByUsernameFromDb = (username, appKey = DEFAULT_APP_KEY) => (
+    getUserByIdentityFromDb({ username }, appKey)
+  );
+
+  const getUserByUserIdFromDb = (userId, appKey = DEFAULT_APP_KEY) => (
+    getUserByIdentityFromDb({ userId }, appKey)
+  );
 
   const getRoleFromDb = async (roleId, client = pool) => {
     const { rows } = await client.query(`
@@ -609,24 +712,28 @@ function createAuthStore({ dataDir, hashPassword }) {
     await withTransaction(async (client) => {
       const role = await getRoleFromDb(user.roleId, client);
       if (!role) throw createStoreError('Selected role was not found', 400, 'role_not_found');
-      const existing = await client.query('SELECT id FROM auth_users WHERE username = $1', [user.username]);
-      const userId = existing.rows[0]?.id || user.id || crypto.randomUUID();
-      await client.query(`
-        INSERT INTO ${TABLES.users} (id, username, email, status, last_login_at)
-        VALUES ($1, $2, $3, $4, $5)
+      const existing = await client.query('SELECT id, public_id FROM auth_users WHERE username = $1', [user.username]);
+      let internalUserId = existing.rows[0]?.id || user.id || crypto.randomUUID();
+      const existingPublicId = existing.rows[0]?.public_id || '';
+      const savedIdentity = await client.query(`
+        INSERT INTO ${TABLES.users} (id, public_id, username, email, status, last_login_at)
+        VALUES ($1, COALESCE(NULLIF($2, ''), format_auth_user_public_id(nextval('auth_user_public_id_seq'))), $3, $4, $5, $6)
         ON CONFLICT (username)
         DO UPDATE SET
           email = EXCLUDED.email,
           status = EXCLUDED.status,
           last_login_at = COALESCE(EXCLUDED.last_login_at, ${TABLES.users}.last_login_at),
           updated_at = now()
+        RETURNING id
       `, [
-        userId,
+        internalUserId,
+        existingPublicId,
         user.username,
         user.email,
         user.status,
         user.lastLoginAt ? new Date(user.lastLoginAt) : null
       ]);
+      internalUserId = savedIdentity.rows[0].id;
 
       if (user.hash && user.salt) {
         await client.query(`
@@ -638,7 +745,7 @@ function createAuthStore({ dataDir, hashPassword }) {
             password_hash = EXCLUDED.password_hash,
             password_algorithm = EXCLUDED.password_algorithm,
             updated_at = now()
-        `, [userId, user.salt, user.hash, user.passwordAlgorithm || 'pbkdf2-sha512:1000']);
+        `, [internalUserId, user.salt, user.hash, user.passwordAlgorithm || 'pbkdf2-sha512:1000']);
       }
 
       for (const appKey of apps) {
@@ -652,7 +759,7 @@ function createAuthStore({ dataDir, hashPassword }) {
             product_scope_mode = EXCLUDED.product_scope_mode,
             updated_at = now()
         `, [
-          userId,
+          internalUserId,
           appKey,
           role.system ? 'admin' : 'viewer',
           JSON.stringify(role.system || user.productScopeMode !== 'selected' ? [] : user.products),
@@ -666,7 +773,7 @@ function createAuthStore({ dataDir, hashPassword }) {
           role_id = EXCLUDED.role_id,
           assigned_by = EXCLUDED.assigned_by,
           assigned_at = now()
-      `, [userId, role.id, normalizeText(options.assignedBy)]);
+      `, [internalUserId, role.id, normalizeText(options.assignedBy)]);
     });
     return getUserByUsernameFromDb(user.username);
   };
@@ -866,7 +973,7 @@ function createAuthStore({ dataDir, hashPassword }) {
         users[index].passwordAlgorithm = storedUser.passwordAlgorithm;
       }
     } else {
-      users.push(storedUser);
+      users.push({ ...storedUser, userId: allocateFileUserId(users) });
     }
     writeFileUsers(users);
     return listFileUsers().find(item => item.username === user.username) || null;
@@ -891,6 +998,7 @@ function createAuthStore({ dataDir, hashPassword }) {
     } else {
       console.log('Auth Service: Running in file-storage mode');
       await ensureSeedUsers();
+      ensureFileUserIds();
       ensureFileRbac();
       const mfaData = readMfaFile();
       let changed = false;
@@ -919,6 +1027,13 @@ function createAuthStore({ dataDir, hashPassword }) {
     if (!normalizedUsername) return null;
     if (pool) return getUserByUsernameFromDb(normalizedUsername, appKey);
     return listFileUsers().find(user => user.username === normalizedUsername) || null;
+  };
+
+  const getUserByUserId = async (userId, appKey = DEFAULT_APP_KEY) => {
+    const normalizedUserId = normalizePublicUserId(userId);
+    if (!normalizedUserId) return null;
+    if (pool) return getUserByUserIdFromDb(normalizedUserId, appKey);
+    return listFileUsers().find(user => user.userId === normalizedUserId) || null;
   };
 
   const upsertUser = async (input = {}, options = {}) => (
@@ -1700,6 +1815,7 @@ function createAuthStore({ dataDir, hashPassword }) {
     checkHealth,
     listUsers,
     getUserByUsername,
+    getUserByUserId,
     upsertUser,
     deleteUser,
     recordLogin,

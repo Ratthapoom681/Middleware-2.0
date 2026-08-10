@@ -1,7 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
-  ArrowLeft,
   Building2,
   KeyRound,
   LoaderCircle,
@@ -42,16 +41,20 @@ import './UserDetailPage.css';
 const navigateBack = () => { window.location.hash = '#users'; };
 
 export default function UserDetailPage({
+  userId,
   username,
   token,
   currentUser,
   onUnauthorized,
   onUserUpdated,
+  onCanonicalize,
 }) {
   const { users, roles, loading, error, setError, reload } = useUsers(token, onUnauthorized);
   const user = useMemo(
-    () => users.find(candidate => candidate.username === username) || null,
-    [username, users],
+    () => users.find(candidate => (
+      userId ? candidate.userId === userId : candidate.username === username
+    )) || null,
+    [userId, username, users],
   );
   const actions = useUserActions({
     token,
@@ -65,11 +68,16 @@ export default function UserDetailPage({
   });
   const [deliveryOpen, setDeliveryOpen] = useState(false);
 
+  useEffect(() => {
+    if (!userId && username && user?.userId) {
+      onCanonicalize?.(`#users/id/${user.userId}`);
+    }
+  }, [onCanonicalize, user, userId, username]);
+
   if (loading && users.length === 0) {
     return (
       <div className="user-detail-page">
         <div className="user-detail-container">
-          <button type="button" className="btn-back" onClick={navigateBack}><ArrowLeft size={16} /><span>Back to Users</span></button>
           <div className="user-detail-loading" role="status"><LoaderCircle size={24} /><span>Loading user details…</span></div>
         </div>
       </div>
@@ -80,11 +88,10 @@ export default function UserDetailPage({
     return (
       <div className="user-detail-page">
         <div className="user-detail-container">
-          <button type="button" className="btn-back" onClick={navigateBack}><ArrowLeft size={16} /><span>Back to Users</span></button>
           <div className={`user-detail-not-found ${error ? 'error' : ''}`}>
             {error ? <AlertTriangle size={40} /> : <UserX size={40} />}
             <h2>{error ? 'Unable to load this user' : 'User not found'}</h2>
-            <p>{error || `The user "${username}" doesn't exist or you don't have access.`}</p>
+            <p>{error || `The user "${userId || username}" doesn't exist or you don't have access.`}</p>
             {error
               ? <button type="button" className="btn-primary" onClick={reload}>Try again</button>
               : <button type="button" className="btn-secondary" onClick={navigateBack}>Back to Users</button>}
@@ -110,7 +117,7 @@ export default function UserDetailPage({
     || deliveryOpen;
 
   const deleteCurrentUser = async () => {
-    if (await actions.deleteUser(user.username)) navigateBack();
+    if (await actions.deleteUser(user)) navigateBack();
   };
   const openSecurity = type => actions.openSecurityAction({
     type,
@@ -121,8 +128,6 @@ export default function UserDetailPage({
   return (
     <div className="user-detail-page">
       <div className="user-detail-container">
-        <button type="button" className="btn-back" onClick={navigateBack}><ArrowLeft size={16} /><span>Back to Users</span></button>
-
         {error && !modalOpen && <div className="user-detail-error" role="alert">{error}</div>}
 
         <section className="user-detail-header">

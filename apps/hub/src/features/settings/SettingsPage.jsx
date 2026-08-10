@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Mail, ShieldAlert } from 'lucide-react';
+import { Mail, ShieldAlert } from 'lucide-react';
 import {
   createAuthenticatedRequest,
   isSessionExpiredError,
@@ -8,7 +8,7 @@ import './SettingsPage.css';
 
 const EMPTY = { host: '', port: 25, security: 'plain', username: '', password: '', fromAddress: '', clearPassword: false };
 
-export default function SettingsPage({ token, onBack, onUnauthorized }) {
+export default function SettingsPage({ token, onUnauthorized }) {
   const [settings, setSettings] = useState(EMPTY);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -39,8 +39,7 @@ export default function SettingsPage({ token, onBack, onUnauthorized }) {
   };
 
   return <div className="settings-page">
-    <header className="settings-topbar"><strong>System Settings</strong><button type="button" onClick={onBack}><ArrowLeft size={16} />Back to Hub</button></header>
-    <main className="settings-main">
+    <div className="settings-main">
       <div className="settings-heading"><span><Mail size={24} /></span><div><p>System settings</p><h1>Email delivery</h1><small>Configure Postfix or another SMTP relay without rebuilding the application.</small></div></div>
       {error && <div className="settings-notice error" role="alert">{error}</div>}
       {message && <div className="settings-notice success" role="status">{message}</div>}
@@ -55,6 +54,6 @@ export default function SettingsPage({ token, onBack, onUnauthorized }) {
           <div className="settings-actions"><button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save settings'}</button></div>
         </form>
       </section>
-    </main>
+    </div>
   </div>;
 }

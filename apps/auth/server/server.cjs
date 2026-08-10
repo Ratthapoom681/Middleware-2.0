@@ -498,6 +498,23 @@ app.get('/api/users', authenticateJwt, requireSystemAdmin, async (req, res) => {
   }
 });
 
+const getUserFromAdminRoute = req => (
+  req.params.userId
+    ? authStore.getUserByUserId(String(req.params.userId || '').trim())
+    : authStore.getUserByUsername(String(req.params.username || '').trim())
+);
+
+app.get(['/api/users/id/:userId', '/api/users/:username'], authenticateJwt, requireSystemAdmin, async (req, res) => {
+  try {
+    const user = await getUserFromAdminRoute(req);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    return res.json(await enrichPublicUser(user));
+  } catch (error) {
+    console.error('Load user error:', error.message);
+    return res.status(500).json({ error: 'Unable to load user' });
+  }
+});
+
 const resolveUserAccessInput = async (body = {}, existingUser = null) => {
   const legacyRole = String(body.role || '').trim().toLowerCase();
   const roleId = String(
@@ -709,17 +726,16 @@ app.post('/api/users', authenticateJwt, requireSystemAdmin, async (req, res) => 
   }
 });
 
-app.patch('/api/users/:username', authenticateJwt, requireSystemAdmin, async (req, res) => {
-  const username = String(req.params.username || '').trim();
+app.patch(['/api/users/id/:userId', '/api/users/:username'], authenticateJwt, requireSystemAdmin, async (req, res) => {
   try {
-    const [target, users, mfaPolicy, mfaConfig, temporaryCredential] = await Promise.all([
-      authStore.getUserByUsername(username),
-      authStore.listUsers(),
+    const target = await getUserFromAdminRoute(req);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+    const username = target.username;
+    const [mfaPolicy, mfaConfig, temporaryCredential] = await Promise.all([
       securityStore.getMfaPolicy(username),
       authStore.getMfaConfig(username),
       securityStore.getTemporaryCredential(username)
     ]);
-    if (!target) return res.status(404).json({ error: 'User not found' });
     const { role: selectedRole, scope: productScope } = await resolveUserAccessInput(req.body, target);
     const email = String(req.body?.email ?? target.email).trim();
     const identity = {
@@ -861,14 +877,13 @@ app.patch('/api/users/:username', authenticateJwt, requireSystemAdmin, async (re
 });
 
 // Users - Delete (Admins only)
-app.delete('/api/users/:username', authenticateJwt, requireSystemAdmin, async (req, res) => {
-  const { username } = req.params;
-
+app.delete(['/api/users/id/:userId', '/api/users/:username'], authenticateJwt, requireSystemAdmin, async (req, res) => {
   try {
-    const users = await authStore.listUsers();
-    
+    const targetUser = await getUserFromAdminRoute(req);
+    if (!targetUser) return res.status(404).json({ error: 'User not found' });
+    const username = targetUser.username;
+
     // Prevent deleting the last admin
-    const targetUser = users.find(user => user.username === username);
     if (targetUser?.roleId === SYSTEM_ADMIN_ROLE_ID
       && targetUser.status !== 'suspended'
       && await authStore.countActiveSystemAdministrators() <= 1) {
@@ -884,9 +899,7 @@ app.delete('/api/users/:username', authenticateJwt, requireSystemAdmin, async (r
       await securityStore.deleteUserData(username);
       return authStore.deleteUser(username);
     });
-    if (!deleted) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    if (!deleted) return res.status(404).json({ error: 'User not found' });
 
     await authStore.saveAuditEvent({
       actorUsername: req.user.username,

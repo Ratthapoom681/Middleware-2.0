@@ -1,6 +1,4 @@
-.settings-page { min-height: 100vh; background: var(--bg-body); color: var(--text-main); }
-.settings-topbar { min-height: 56px; padding: 0 1.5rem; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-subtle); background: var(--bg-subtle); }
-.settings-topbar button { min-height: 44px; display: inline-flex; align-items: center; gap: .4rem; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; }
+.settings-page { flex: 1; background: var(--bg-body); color: var(--text-main); }
 .settings-main { width: min(820px, calc(100% - 2rem)); margin: 0 auto; padding: 2rem 0 4rem; }
 .settings-heading { margin-bottom: 1.2rem; display: flex; align-items: center; gap: .85rem; }
 .settings-heading > span { width: 52px; height: 52px; display: grid; place-items: center; border: 1px solid var(--bg-active-border); border-radius: 50%; background: var(--bg-active); color: var(--primary); }

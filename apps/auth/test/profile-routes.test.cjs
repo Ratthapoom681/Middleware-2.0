@@ -161,6 +161,17 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   assert.equal(created.data.deliveryMode, 'queued');
   assert.equal(created.data.deliveries.some(delivery => delivery.type === 'temporary_password'), true);
   assert.equal(created.response.headers.get('cache-control'), 'no-store');
+  assert.match(created.data.user.id, /^[0-9a-f]{8}-[0-9a-f-]{27}$/i);
+  assert.match(created.data.user.userId, /^[0-9]{6,}$/);
+  const analystUserId = created.data.user.userId;
+  const analystById = await request(`/api/users/id/${analystUserId}`, { token: adminToken });
+  assert.equal(analystById.response.status, 200);
+  assert.equal(analystById.data.username, 'analyst');
+  assert.equal(analystById.data.userId, analystUserId);
+  const listedUsers = await request('/api/users', { token: adminToken });
+  const listedAnalyst = listedUsers.data.find(user => user.username === 'analyst');
+  assert.equal(listedAnalyst.id, created.data.user.id);
+  assert.equal(listedAnalyst.userId, analystUserId);
 
   const copyOnly = await request('/api/users', {
     token: adminToken, method: 'POST', body: JSON.stringify({
@@ -171,6 +182,18 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   assert.equal(copyOnly.response.status, 200);
   assert.equal(copyOnly.data.deliveryMode, 'manual_only');
   assert.equal(copyOnly.data.deliveries.length, 0);
+  const numericUsername = await request('/api/users', {
+    token: adminToken, method: 'POST', body: JSON.stringify({
+      username: '000001', email: '', roleId: 'viewer', status: 'active', mfaProvider: 'disabled',
+      productScope: { mode: 'none', products: [] }
+    })
+  });
+  assert.equal(numericUsername.response.status, 200);
+  assert.equal((await request('/api/users/000001', { token: adminToken })).data.username, '000001');
+  assert.equal((await request('/api/users/id/000001', { token: adminToken })).data.username, 'admin');
+  assert.equal((await request(`/api/users/id/${numericUsername.data.user.userId}`, {
+    token: adminToken, method: 'DELETE'
+  })).response.status, 200);
   const copyOnlyEmailUpdate = await request('/api/users/copyonly', {
     token: adminToken, method: 'PATCH', body: JSON.stringify({
       email: 'copyonly@example.test', fullName: '', company: '', department: '',
@@ -218,7 +241,7 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   });
   assert.equal(nonAdminSettings.response.status, 403);
 
-  const analystGoogle = await request('/api/users/analyst/mfa', {
+  const analystGoogle = await request(`/api/users/id/${analystUserId}/mfa`, {
     token: adminToken, method: 'PATCH', body: JSON.stringify({ mfaProvider: 'google' })
   });
   assert.equal(analystGoogle.data.mfa.provider, 'google');
@@ -243,7 +266,7 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
     iv: analystDelivery.secretIv,
     tag: analystDelivery.secretTag
   });
-  const changedMailbox = await request('/api/users/analyst', {
+  const changedMailbox = await request(`/api/users/id/${analystUserId}`, {
     token: adminToken, method: 'PATCH', body: JSON.stringify({
       email: 'analyst-updated@example.test', fullName: 'Test Analyst', company: 'Beenets', department: 'SOC',
       role: 'viewer', products: ['Product A'], status: 'active'
@@ -256,7 +279,7 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   })).response.status, 410, 'changing the mailbox invalidates the link sent to the old address');
   assert.equal((await request('/api/profile', { token: analystToken })).response.status, 200, 'mailbox correction preserves a permanent-password session');
 
-  const beforeSuspensionResend = await request('/api/users/analyst/mfa/resend', { token: adminToken, method: 'POST' });
+  const beforeSuspensionResend = await request(`/api/users/id/${analystUserId}/mfa/resend`, { token: adminToken, method: 'POST' });
   const beforeSuspensionDelivery = await securityStore.getEmailDelivery(beforeSuspensionResend.data.delivery.id);
   const invitationIssuedBeforeSuspension = securityCrypto.decryptOutboxSecret({
     ciphertext: beforeSuspensionDelivery.secretCiphertext,
@@ -329,6 +352,11 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   });
   assert.equal(analystConfirm.data.mfa.status, 'enabled');
   assert.equal((await request('/api/profile', { token: analystToken })).response.status, 401);
+  const analystReset = await request(`/api/users/id/${analystUserId}/mfa/reset`, {
+    token: adminToken, method: 'POST'
+  });
+  assert.equal(analystReset.response.status, 200);
+  assert.equal(analystReset.data.mfa.status, 'pending');
   const analystOther = await request('/api/users/analyst/mfa', {
     token: adminToken, method: 'PATCH', body: JSON.stringify({ mfaProvider: 'other' })
   });
@@ -336,7 +364,7 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   assert.equal(analystOther.data.mfa.provider, 'other');
   assert.equal((await request('/api/profile', { token: analystToken })).response.status, 401, 'changing an enabled provider revokes target sessions');
 
-  const reset = await request('/api/users/analyst/password/reset', {
+  const reset = await request(`/api/users/id/${analystUserId}/password/reset`, {
     token: adminToken, method: 'POST'
   });
   assert.equal(reset.response.status, 200);

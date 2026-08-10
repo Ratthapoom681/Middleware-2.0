@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Plus, SearchX, Users } from 'lucide-react';
+import { Plus, SearchX, Users } from 'lucide-react';
 import {
   DataTable,
   DataTableCell,
@@ -22,18 +22,11 @@ import {
 } from './userHelpers.js';
 import useUserActions from './useUserActions.js';
 import useUsers from './useUsers.js';
+import { getVisibleUserSearchText, USER_TABLE_COLUMNS } from './userDirectory.js';
+import { getUserDetailHash } from './userRouting.js';
 import UserEditorModal from './components/UserEditorModal.jsx';
 import { CredentialModal } from './components/UserActionModals.jsx';
 import './UserListPage.css';
-
-const COLUMNS = [
-  { key: 'username', label: 'Username', className: 'cell-username' },
-  { key: 'fullName', label: 'Full Name', className: 'cell-full-name' },
-  { key: 'email', label: 'Email', className: 'cell-email' },
-  { key: 'company', label: 'Company', className: 'cell-company' },
-  { key: 'department', label: 'Department', className: 'cell-department' },
-  { key: 'role', label: 'Role', className: 'cell-role' },
-];
 
 export default function UserListPage({ token, currentUser, onUnauthorized, onUserUpdated }) {
   const { users, roles, loading, error, setError, reload } = useUsers(token, onUnauthorized);
@@ -57,15 +50,7 @@ export default function UserListPage({ token, currentUser, onUnauthorized, onUse
     const query = normalize(searchTerm);
     return users.filter(user => {
       const roleId = getUserRoleId(user);
-      const roleName = getUserRoleName(user);
-      const searchable = [
-        user.username,
-        user.fullName,
-        user.email,
-        user.company,
-        user.department,
-        roleName,
-      ].join(' ').toLowerCase();
+      const searchable = getVisibleUserSearchText(user);
       if (query && !searchable.includes(query)) return false;
       if (roleFilter !== 'all' && roleId !== roleFilter) return false;
       return true;
@@ -84,8 +69,8 @@ export default function UserListPage({ token, currentUser, onUnauthorized, onUse
     setSearchTerm('');
     setRoleFilter('all');
   };
-  const navigateToUser = username => {
-    window.location.hash = `#users/${encodeURIComponent(username)}`;
+  const navigateToUser = user => {
+    window.location.hash = getUserDetailHash(user);
   };
   const emptyState = users.length === 0 ? (
     <div className="user-list-empty" role="row">
@@ -106,11 +91,6 @@ export default function UserListPage({ token, currentUser, onUnauthorized, onUse
   return (
     <div className="user-list-page">
       <div className="user-list-container">
-        <button type="button" className="btn-back" onClick={() => { window.location.hash = ''; }}>
-          <ArrowLeft size={16} />
-          <span>Back to Hub</span>
-        </button>
-
         <section className="user-list-card">
           <div className="user-list-header">
             <div>
@@ -125,7 +105,7 @@ export default function UserListPage({ token, currentUser, onUnauthorized, onUse
           <div className="user-list-tools">
             <SearchOptionsPanel bodyId="users-search-options" icon={FilterIcon} open={searchOpen} onToggle={() => setSearchOpen(open => !open)} title="Search Options">
               <SearchOptionsCommandBar>
-                <SearchOptionsSearch kbd="/" label="Search users" onChange={setSearchTerm} onClear={() => setSearchTerm('')} placeholder="Search username, name, email, company, department, or role" showClear={Boolean(searchTerm)} value={searchTerm} />
+                <SearchOptionsSearch kbd="/" label="Search users" onChange={setSearchTerm} onClear={() => setSearchTerm('')} placeholder="Search ID, username, name, email, company, department, or role" showClear={Boolean(searchTerm)} value={searchTerm} />
                 <label className="user-list-filter"><span className="sr-only">Role filter</span><select value={roleFilter} onChange={event => setRoleFilter(event.target.value)} aria-label="Role filter"><option value="all">All roles</option>{roles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label>
                 <SearchOptionsResultCount icon={Users} value={filteredUsers.length} label="users" />
               </SearchOptionsCommandBar>
@@ -136,7 +116,7 @@ export default function UserListPage({ token, currentUser, onUnauthorized, onUse
             <DataTable
               ariaLabel="Hub users"
               className="user-list-data-table"
-              columns={COLUMNS}
+              columns={USER_TABLE_COLUMNS}
               empty={emptyState}
               footer={filteredUsers.length > 0 ? (
                 <DataTablePagination
@@ -153,9 +133,9 @@ export default function UserListPage({ token, currentUser, onUnauthorized, onUse
                   totalRows={filteredUsers.length}
                 />
               ) : null}
-              gridTemplate="minmax(150px, 1fr) minmax(180px, 1.2fr) minmax(210px, 1.35fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(140px, .9fr)"
+              gridTemplate="96px minmax(150px, 1fr) minmax(180px, 1.2fr) minmax(210px, 1.35fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(140px, .9fr)"
               loading={loading}
-              minWidth="980px"
+              minWidth="1076px"
             >
               {pagedUsers.map(user => {
                 const roleId = getUserRoleId(user);
@@ -163,14 +143,15 @@ export default function UserListPage({ token, currentUser, onUnauthorized, onUse
                 const email = user.email || '—';
                 const company = user.company || '—';
                 const department = user.department || '—';
-                const activate = () => navigateToUser(user.username);
+                const activate = () => navigateToUser(user);
                 return (
-                  <DataTableRow key={user.username} interactive ariaLabel={`View user ${user.username}`} onClick={activate} onKeyDown={event => {
+                  <DataTableRow key={user.userId || user.username} interactive ariaLabel={`View user ${user.username}`} onClick={activate} onKeyDown={event => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
                       activate();
                     }
                   }}>
+                    <DataTableCell className="cell-user-id user-list-id-cell" label="ID" title={user.userId || 'ID unavailable'}>{user.userId || '—'}</DataTableCell>
                     <DataTableCell className="cell-username user-list-primary-cell" label="Username" title={user.username}><strong>{user.username}</strong></DataTableCell>
                     <DataTableCell className="cell-full-name user-list-muted-cell" label="Full Name" title={fullName}>{fullName}</DataTableCell>
                     <DataTableCell className="cell-email user-list-muted-cell" label="Email" title={email}>{email}</DataTableCell>

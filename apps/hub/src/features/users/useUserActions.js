@@ -7,6 +7,7 @@ import {
   parseProducts,
   redirectAfterSelfSecurityChange,
 } from './userHelpers.js';
+import { getUserAdminPath } from './userRouting.js';
 
 export default function useUserActions({
   token,
@@ -81,7 +82,7 @@ export default function useUserActions({
     clearError();
     try {
       const data = await request(
-        editorMode === 'create' ? '/users' : `/users/${encodeURIComponent(draftUser.username)}`,
+        editorMode === 'create' ? '/users' : getUserAdminPath(originalUser),
         {
           method: editorMode === 'create' ? 'POST' : 'PATCH',
           body: JSON.stringify({
@@ -135,11 +136,11 @@ export default function useUserActions({
     }
   };
 
-  const deleteUser = async username => {
-    if (!confirm(`Delete user ${username}?`)) return false;
+  const deleteUser = async user => {
+    if (!confirm(`Delete user ${user.username}?`)) return false;
     clearError();
     try {
-      await request(`/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
+      await request(getUserAdminPath(user), { method: 'DELETE' });
       await reload();
       return true;
     } catch (err) {
@@ -154,7 +155,7 @@ export default function useUserActions({
     setSaving(true);
     clearError();
     try {
-      const data = await request(`/users/${encodeURIComponent(passwordResetUser.username)}/password/reset`, {
+      const data = await request(`${getUserAdminPath(passwordResetUser)}/password/reset`, {
         method: 'POST',
       });
       setPasswordResetUser(null);
@@ -179,12 +180,12 @@ export default function useUserActions({
     setSaving(true);
     clearError();
     try {
-      const username = encodeURIComponent(securityAction.user.username);
+      const userPath = getUserAdminPath(securityAction.user);
       const path = securityAction.type === 'reset'
-        ? `/users/${username}/mfa/reset`
+        ? `${userPath}/mfa/reset`
         : securityAction.type === 'resend'
-          ? `/users/${username}/mfa/resend`
-          : `/users/${username}/mfa`;
+          ? `${userPath}/mfa/resend`
+          : `${userPath}/mfa`;
       const method = ['reset', 'resend'].includes(securityAction.type) ? 'POST' : 'PATCH';
       const body = ['enable', 'change', 'disable'].includes(securityAction.type)
         ? { mfaProvider: securityAction.type === 'disable' ? 'disabled' : securityAction.provider }

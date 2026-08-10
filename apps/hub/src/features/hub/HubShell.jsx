@@ -3,6 +3,8 @@ import './HubShell.css';
 
 export default function HubShell({
   user,
+  onBack,
+  backLabel,
   onOpenDocs,
   onOpenProfile,
   onLogout,
@@ -12,6 +14,8 @@ export default function HubShell({
     <div className="hub-shell">
       <HubTopbar
         user={user}
+        onBack={onBack}
+        backLabel={backLabel}
         onOpenDocs={onOpenDocs}
         onOpenProfile={onOpenProfile}
         onLogout={onLogout}
