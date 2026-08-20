@@ -132,6 +132,7 @@ export default function App() {
             <UserDetailPage
               userId={detailRoute.userId}
               username={detailRoute.username}
+              canonicalHash={detailRoute.canonicalHash}
               token={token}
               currentUser={user}
               onUnauthorized={handleUnauthorized}
@@ -160,7 +161,7 @@ export default function App() {
         onOpenProfile={() => { window.location.hash = '#profile?returnTo=%2F'; }}
         onLogout={handleLogout}
       >
-        <SettingsPage token={token} onUnauthorized={handleUnauthorized} />
+        <SettingsPage token={token} user={user} onUnauthorized={handleUnauthorized} />
       </HubShell>
     );
   }

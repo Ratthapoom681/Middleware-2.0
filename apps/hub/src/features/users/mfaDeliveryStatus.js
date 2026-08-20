@@ -1,3 +1,5 @@
+import { getEmailCapability, getEmailReasonCopy } from '../../shared/emailDeliveryStatus.js';
+
 const normalize = value => String(value || '').trim().toLowerCase();
 
 export const MFA_PROVIDER_OPTIONS = [
@@ -61,7 +63,7 @@ export function getSafeMfaNotificationError(value, deliveryStatus = 'failed') {
   return 'The authenticator setup email could not be sent. Review Email Delivery settings and try again.';
 }
 
-export function getMfaDeliveryView(user = {}) {
+export function getMfaDeliveryView(user = {}, emailSettings) {
   const mfaStatus = getMfaStatus(user);
   const provider = getMfaProvider(user);
   const providerLabel = getMfaProviderLabel(provider);
@@ -79,15 +81,18 @@ export function getMfaDeliveryView(user = {}) {
   const accountSuspended = normalize(user.accountStatus || user.status) === 'suspended';
   const validEmail = hasDeliverableEmail(user.email);
   const inProgress = ['queued', 'sending'].includes(deliveryStatus);
+  const emailCapability = getEmailCapability(emailSettings, 'mfa_setup');
   const resendDisabledReason = accountSuspended
     ? 'Reactivate this account before resending the setup email.'
     : !validEmail
       ? 'Add a valid email address before resending the setup email.'
-      : deliveryStatus === 'queued'
-        ? 'A setup email is already queued.'
-        : deliveryStatus === 'sending'
-          ? 'The setup email is currently being sent.'
-          : '';
+      : !emailCapability.available
+        ? getEmailReasonCopy(emailCapability.reason)
+        : deliveryStatus === 'queued'
+          ? 'A setup email is already queued.'
+          : deliveryStatus === 'sending'
+            ? 'The setup email is currently being sent.'
+            : '';
 
   return {
     mfaStatus,
@@ -97,7 +102,8 @@ export function getMfaDeliveryView(user = {}) {
     label: state.label,
     tone: state.tone,
     pending: true,
-    canResend: !accountSuspended && validEmail && !inProgress,
+    canResend: !accountSuspended && validEmail && emailCapability.available && !inProgress,
+    emailCapability,
     resendDisabledReason,
     failureMessage: ['failed', 'none'].includes(deliveryStatus)
       ? getSafeMfaNotificationError(user.mfaNotificationError, deliveryStatus)

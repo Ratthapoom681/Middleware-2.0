@@ -41,6 +41,7 @@ test('file-mode development storage initializes a usable default administrator',
   const admin = await store.getUserByUsername('admin');
   assert.equal(admin.username, 'admin');
   assert.equal(admin.role, 'admin');
+  assert.equal(admin.userId, '1');
   await store.close();
 });
 
@@ -109,10 +110,10 @@ test('file storage repairs missing, malformed, and duplicate public user IDs onc
   const firstUsers = await firstStore.listUsers();
   const firstIds = Object.fromEntries(firstUsers.map(user => [user.username, user.userId]));
   assert.deepEqual(firstIds, {
-    alpha: '000005',
-    beta: '000006',
-    gamma: '000007',
-    delta: '000008'
+    alpha: '5',
+    beta: '6',
+    gamma: '7',
+    delta: '8'
   });
   assert.equal((await firstStore.getUserByUserId('000006')).username, 'beta');
   assert.equal(new Set(firstUsers.map(user => user.userId)).size, firstUsers.length);
@@ -141,13 +142,16 @@ test('file storage preserves public IDs on update and never reuses deleted IDs',
     products: [],
     ...hashPassword('operator-password')
   });
-  assert.equal(created.userId, '000002');
+  assert.equal(created.userId, '2');
 
   const updated = await store.upsertUser({ ...created, email: 'updated@example.test' });
   assert.equal(updated.userId, created.userId);
   assert.equal(await store.deleteUser('operator'), true);
+  await store.close();
 
-  const replacement = await store.upsertUser({
+  const restartedStore = createAuthStore({ dataDir, hashPassword });
+  await restartedStore.initialize();
+  const replacement = await restartedStore.upsertUser({
     username: 'replacement',
     email: '',
     role: 'viewer',
@@ -157,7 +161,7 @@ test('file storage preserves public IDs on update and never reuses deleted IDs',
     products: [],
     ...hashPassword('replacement-password')
   });
-  assert.equal(replacement.userId, '000003');
-  assert.equal(await store.getUserByUserId(created.userId), null);
-  await store.close();
+  assert.equal(replacement.userId, '3');
+  assert.equal(await restartedStore.getUserByUserId(created.userId), null);
+  await restartedStore.close();
 });

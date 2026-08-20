@@ -114,6 +114,24 @@
   line-height: 1.55;
 }
 
+.email-service-line {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.2rem 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--rounded-sm);
+  background: var(--bg-input);
+  font-size: 0.8rem;
+}
+
+.email-service-line > span { color: var(--text-main); font-weight: var(--font-weight-semibold); }
+.email-service-line > strong { padding: 0.15rem 0.45rem; border: 1px solid; border-radius: 999px; font-size: 0.68rem; }
+.email-service-line > strong.on { border-color: var(--connected-border); background: var(--connected-bg); color: var(--connected-text); }
+.email-service-line > strong.off { border-color: var(--danger-border); background: var(--danger-bg); color: var(--danger-text); }
+.email-service-line > small { grid-column: 1 / -1; color: var(--text-muted); font-size: 0.72rem; }
+
 .modal-error {
   padding: 0.75rem;
   border: 1px solid var(--danger-border);

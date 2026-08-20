@@ -6,7 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { createAdminSecurityStore } = require('../server/admin-security-store.cjs');
 const { createSecurityCrypto } = require('../server/security-crypto.cjs');
-const { createEmailWorker, publicEmailSettings } = require('../server/mailer.cjs');
+const { createEmailWorker, getEmailDeliveryCapability, publicEmailSettings } = require('../server/mailer.cjs');
 
 test('protected file storage persists identity, policy, temporary credentials, settings, and durable outbox state', async (t) => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'admin-security-store-'));
@@ -21,6 +21,11 @@ test('protected file storage persists identity, policy, temporary credentials, s
   await store.setMfaPolicy('analyst', { mode: 'authenticator', provider: 'microsoft', requestedAt: new Date().toISOString(), notificationStatus: 'queued' });
   await store.setTemporaryCredential('analyst', { expiresAt: new Date(Date.now() + 60_000), createdBy: 'admin' });
   await store.saveEmailSettings({ host: 'tamarind.beenets.com', port: 25, security: 'plain', username: '', fromAddress: 'security@example.test', updatedBy: 'admin' });
+  const defaultControls = publicEmailSettings(await store.getEmailSettings());
+  assert.equal(defaultControls.enabled, true);
+  assert.equal(defaultControls.mfaSetupEnabled, true);
+  assert.equal(defaultControls.temporaryPasswordEnabled, false);
+  assert.equal(getEmailDeliveryCapability(await store.getEmailSettings(), 'temporary_password').reason, 'type_disabled');
   const first = await store.enqueueEmail({ type: 'mfa_setup', targetUsername: 'analyst', recipient: 'analyst@example.test', subject: 'Setup', metadata: { setupUrl: 'http://10.0.0.5/#mfa-setup' } });
   const duplicate = await store.enqueueEmail({ type: 'mfa_setup', targetUsername: 'analyst', recipient: 'analyst@example.test', subject: 'Setup', metadata: {} });
   assert.equal(duplicate.id, first.id);
@@ -71,7 +76,7 @@ test('email worker uses encrypted runtime credentials and scrubs temporary passw
   await store.saveEmailSettings({
     host: 'tamarind.beenets.com', port: 25, security: 'plain', username: 'relay-user',
     passwordCiphertext: smtpPassword.ciphertext, passwordIv: smtpPassword.iv, passwordTag: smtpPassword.tag,
-    fromAddress: 'security@example.test', updatedBy: 'admin'
+    fromAddress: 'security@example.test', temporaryPasswordEnabled: true, updatedBy: 'admin'
   });
   const temporary = securityCrypto.encryptOutboxSecret('temporary-password-value');
   const job = await store.enqueueEmail({
@@ -97,6 +102,39 @@ test('email worker uses encrypted runtime credentials and scrubs temporary passw
   assert.equal(completed.secretCiphertext, '');
   assert.equal(JSON.stringify(publicEmailSettings(await store.getEmailSettings())).includes('smtp-password'), false);
   assert.throws(() => createSecurityCrypto({ encryptionKey: Buffer.alloc(32, 8).toString('base64') }).decryptSetting({ ciphertext: smtpPassword.ciphertext, iv: smtpPassword.iv, tag: smtpPassword.tag }));
+});
+
+test('email worker cancels a claimed job when its email type is off', async (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'email-worker-disabled-'));
+  delete process.env.AUTH_DATABASE_URL;
+  delete process.env.DATABASE_URL;
+  delete process.env.PGHOST;
+  const securityCrypto = createSecurityCrypto({ encryptionKey: Buffer.alloc(32, 7).toString('base64') });
+  const store = createAdminSecurityStore({ dataDir });
+  await store.initialize();
+  await store.saveEmailSettings({
+    host: 'tamarind.beenets.com', port: 25, security: 'plain',
+    fromAddress: 'security@example.test', updatedBy: 'admin'
+  });
+  const temporary = securityCrypto.encryptOutboxSecret('cancelled-password-value');
+  const job = await store.enqueueEmail({
+    type: 'temporary_password', targetUsername: 'analyst', recipient: 'analyst@example.test', subject: 'Temporary password',
+    metadata: { loginUrl: 'http://10.0.0.5/login/', expiresAt: new Date(Date.now() + 60_000).toISOString() },
+    secretCiphertext: temporary.ciphertext, secretIv: temporary.iv, secretTag: temporary.tag
+  });
+  let sendCount = 0;
+  const worker = createEmailWorker({
+    store, securityCrypto, pollIntervalMs: 60_000,
+    nodemailerClient: { createTransport() { return { sendMail: async () => { sendCount += 1; } }; } }
+  });
+  worker.start();
+  t.after(async () => { worker.stop(); await store.close(); fs.rmSync(dataDir, { recursive: true, force: true }); });
+
+  assert.equal(await worker.processOne(), true);
+  assert.equal(sendCount, 0);
+  const cancelled = await store.getEmailDelivery(job.id);
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(cancelled.secretCiphertext, '');
 });
 
 test('legacy protected file data cancels in-app setup mail and requires an email invitation resend', async (t) => {

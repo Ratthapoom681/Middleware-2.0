@@ -1,7 +1,8 @@
 import { Save, X } from 'lucide-react';
 import { hasDeliverableEmail, MFA_PROVIDER_OPTIONS } from '../mfaDeliveryStatus.js';
+import { getEmailCapability } from '../../../shared/emailDeliveryStatus.js';
 import { parseProducts } from '../userHelpers.js';
-import { useDialogFocus } from './UserActionModals.jsx';
+import { EmailServiceStatus, useDialogFocus } from './UserActionModals.jsx';
 import './UserEditorModal.css';
 
 const SCOPE_OPTIONS = [
@@ -16,6 +17,7 @@ export default function UserEditorModal({
   onDraftChange,
   roles,
   currentUser,
+  emailSettings,
   saving,
   error,
   onSave,
@@ -25,6 +27,9 @@ export default function UserEditorModal({
   const selectedRole = roles.find(role => role.id === draftUser.roleId);
   const editingSelf = mode === 'edit' && draftUser.username === currentUser?.username;
   const update = changes => onDraftChange({ ...draftUser, ...changes });
+  const mfaCapability = getEmailCapability(emailSettings, 'mfa_setup');
+  const temporaryPasswordCapability = getEmailCapability(emailSettings, 'temporary_password');
+  const createMfaBlocked = mode === 'create' && draftUser.mfaProvider !== 'disabled' && !mfaCapability.available;
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -116,13 +121,17 @@ export default function UserEditorModal({
 
           <div className="modal-section">
             <span className="modal-section-label">Security</span>
-            <label><span>Authenticator MFA</span><select value={draftUser.mfaProvider} onChange={event => update({ mfaProvider: event.target.value })}>{MFA_PROVIDER_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>An authenticator requires a valid email. {mode === 'edit' ? 'Changing an enabled app resets enrollment and revokes the user’s sessions.' : 'The user remains password-only while setup is pending.'}</small></label>
-            {mode === 'create' && <small>{hasDeliverableEmail(draftUser.email) ? `The temporary password will be emailed automatically to ${draftUser.email.trim()} and displayed once.` : 'The temporary password will be displayed once for manual copying. Add a valid email to send it automatically.'}</small>}
+            <EmailServiceStatus label="MFA setup email" capability={mfaCapability} />
+            <label><span>Authenticator MFA</span><select value={draftUser.mfaProvider} onChange={event => update({ mfaProvider: event.target.value })}>{MFA_PROVIDER_OPTIONS.map(option => <option key={option.value} value={option.value} disabled={!mfaCapability.available && option.value !== 'disabled' && option.value !== draftUser.mfaProvider}>{option.label}</option>)}</select><small>An authenticator requires a valid email. {mode === 'edit' ? 'Changing an enabled app resets enrollment and revokes the user’s sessions.' : 'The user remains password-only while setup is pending.'}</small></label>
+            {mode === 'create' && <>
+              <EmailServiceStatus label="Temporary-password email" capability={temporaryPasswordCapability} />
+              <small>{hasDeliverableEmail(draftUser.email) && temporaryPasswordCapability.available ? `The temporary password will be emailed to ${draftUser.email.trim()} and displayed once.` : 'The temporary password will be displayed once for manual copying.'}</small>
+            </>}
           </div>
 
           <div className="modal-actions">
             <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn-primary" disabled={saving}><Save size={16} /><span>{saving ? 'Saving...' : 'Save User'}</span></button>
+            <button type="submit" className="btn-primary" disabled={saving || createMfaBlocked}><Save size={16} /><span>{saving ? 'Saving...' : 'Save User'}</span></button>
           </div>
         </form>
       </section>

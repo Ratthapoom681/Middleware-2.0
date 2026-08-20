@@ -21,6 +21,7 @@ const normalizeDeliveryStatus = value => {
   return ['queued', 'sending', 'sent', 'failed'].includes(status) ? status : 'none';
 };
 const EMAIL_TYPES = new Set(['mfa_setup', 'temporary_password']);
+const EMAIL_STATUSES = new Set(['queued', 'sending', 'sent', 'failed', 'cancelled']);
 const MFA_INVITATION_MAX_ATTEMPTS = 5;
 const MFA_INVITATION_LIFETIME_MS = 24 * 60 * 60 * 1000;
 const initialFileData = () => ({
@@ -308,7 +309,10 @@ function createAdminSecurityStore({ dataDir }) {
     username: clean(row?.username), passwordCiphertext: clean(row?.password_ciphertext ?? row?.passwordCiphertext),
     passwordIv: clean(row?.password_iv ?? row?.passwordIv), passwordTag: clean(row?.password_tag ?? row?.passwordTag),
     fromAddress: clean(row?.from_address ?? row?.fromAddress), updatedAt: iso(row?.updated_at ?? row?.updatedAt),
-    updatedBy: clean(row?.updated_by ?? row?.updatedBy)
+    updatedBy: clean(row?.updated_by ?? row?.updatedBy),
+    enabled: (row?.enabled ?? true) !== false,
+    mfaSetupEnabled: (row?.mfa_setup_enabled ?? row?.mfaSetupEnabled ?? true) !== false,
+    temporaryPasswordEnabled: (row?.temporary_password_enabled ?? row?.temporaryPasswordEnabled ?? false) === true
   });
 
   const getEmailSettings = async () => {
@@ -326,15 +330,19 @@ function createAdminSecurityStore({ dataDir }) {
       await pool.query(`
         INSERT INTO auth_email_settings (
           singleton, host, port, security, username, password_ciphertext,
-          password_iv, password_tag, from_address, updated_at, updated_by
-        ) VALUES (true, $1, $2, $3, $4, $5, $6, $7, $8, now(), $9)
+          password_iv, password_tag, from_address, enabled, mfa_setup_enabled,
+          temporary_password_enabled, updated_at, updated_by
+        ) VALUES (true, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), $12)
         ON CONFLICT (singleton) DO UPDATE SET host = EXCLUDED.host, port = EXCLUDED.port,
           security = EXCLUDED.security, username = EXCLUDED.username,
           password_ciphertext = EXCLUDED.password_ciphertext, password_iv = EXCLUDED.password_iv,
           password_tag = EXCLUDED.password_tag, from_address = EXCLUDED.from_address,
+          enabled = EXCLUDED.enabled, mfa_setup_enabled = EXCLUDED.mfa_setup_enabled,
+          temporary_password_enabled = EXCLUDED.temporary_password_enabled,
           updated_at = now(), updated_by = EXCLUDED.updated_by
       `, [next.host, next.port, next.security, next.username, next.passwordCiphertext,
-        next.passwordIv, next.passwordTag, next.fromAddress, next.updatedBy]);
+        next.passwordIv, next.passwordTag, next.fromAddress, next.enabled,
+        next.mfaSetupEnabled, next.temporaryPasswordEnabled, next.updatedBy]);
     } else mutateFile(data => { data.emailSettings = next; });
     return next;
   };
@@ -442,6 +450,125 @@ function createAdminSecurityStore({ dataDir }) {
       return outboxFromRow(rows[0]);
     }
     return outboxFromRow(readFile().outbox[clean(id)]);
+  };
+
+  const listEmailDeliveries = async ({ page = 1, pageSize = 25, type = '', status = '', query = '' } = {}) => {
+    const requestedPage = Number(page);
+    const requestedPageSize = Number(pageSize);
+    const safePage = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const safePageSize = Number.isInteger(requestedPageSize) && requestedPageSize > 0
+      ? Math.min(100, requestedPageSize)
+      : 25;
+    const safeType = EMAIL_TYPES.has(clean(type)) ? clean(type) : '';
+    const safeStatus = EMAIL_STATUSES.has(clean(status)) ? clean(status) : '';
+    const safeQuery = clean(query).slice(0, 120);
+    const offset = (safePage - 1) * safePageSize;
+    if (pool) {
+      const clauses = [];
+      const values = [];
+      const add = value => { values.push(value); return `$${values.length}`; };
+      if (safeType) clauses.push(`type = ${add(safeType)}`);
+      if (safeStatus) clauses.push(`status = ${add(safeStatus)}`);
+      if (safeQuery) {
+        const placeholder = add(`%${safeQuery}%`);
+        clauses.push(`(id ILIKE ${placeholder} OR target_username ILIKE ${placeholder} OR recipient ILIKE ${placeholder})`);
+      }
+      const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+      const countResult = await pool.query(`SELECT count(*)::int AS total FROM auth_email_outbox ${where}`, values);
+      const activeResult = await pool.query("SELECT count(*)::int AS total FROM auth_email_outbox WHERE status IN ('queued','sending')");
+      const limitPlaceholder = add(safePageSize);
+      const offsetPlaceholder = add(offset);
+      const { rows } = await pool.query(`
+        SELECT * FROM auth_email_outbox ${where}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}
+      `, values);
+      return {
+        deliveries: rows.map(outboxFromRow),
+        page: safePage,
+        pageSize: safePageSize,
+        total: Number(countResult.rows[0]?.total || 0),
+        activeCount: Number(activeResult.rows[0]?.total || 0)
+      };
+    }
+    const normalizedQuery = safeQuery.toLowerCase();
+    const matches = Object.values(readFile().outbox)
+      .map(outboxFromRow)
+      .filter(job => !safeType || job.type === safeType)
+      .filter(job => !safeStatus || job.status === safeStatus)
+      .filter(job => !normalizedQuery || [job.id, job.targetUsername, job.recipient]
+        .some(value => clean(value).toLowerCase().includes(normalizedQuery)))
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)
+        || right.id.localeCompare(left.id));
+    return {
+      deliveries: matches.slice(offset, offset + safePageSize),
+      page: safePage,
+      pageSize: safePageSize,
+      total: matches.length,
+      activeCount: Object.values(readFile().outbox).filter(job => ['queued', 'sending'].includes(job.status)).length
+    };
+  };
+
+  const cancelEmail = async (id, { error = 'CANCELLED', allowSending = false } = {}) => {
+    const key = clean(id);
+    let cancelled = null;
+    if (pool) {
+      const statuses = allowSending ? ['queued', 'sending'] : ['queued'];
+      const { rows } = await pool.query(`
+        UPDATE auth_email_outbox SET status='cancelled', secret_ciphertext='', secret_iv='',
+          secret_tag='', lease_expires_at=NULL, last_error=$2, updated_at=now()
+        WHERE id=$1 AND status = ANY($3::text[]) RETURNING *
+      `, [key, clean(error).slice(0, 240), statuses]);
+      cancelled = outboxFromRow(rows[0]);
+    } else {
+      mutateFile(data => {
+        const job = data.outbox[key];
+        if (!job || (job.status !== 'queued' && !(allowSending && job.status === 'sending'))) return;
+        Object.assign(job, {
+          status: 'cancelled', secretCiphertext: '', secretIv: '', secretTag: '', leaseExpiresAt: '',
+          lastError: clean(error).slice(0, 240), updatedAt: new Date().toISOString()
+        });
+        cancelled = outboxFromRow(job);
+      });
+    }
+    if (cancelled) {
+      await updateMfaNotificationForJob(cancelled, {
+        notificationStatus: 'failed', notificationSentAt: '', notificationError: clean(error).slice(0, 240)
+      });
+    }
+    return cancelled;
+  };
+
+  const cancelQueuedEmailsByType = async (types, { error = 'EMAIL_DELIVERY_DISABLED' } = {}) => {
+    const safeTypes = Array.from(new Set((Array.isArray(types) ? types : []).map(clean).filter(type => EMAIL_TYPES.has(type))));
+    if (safeTypes.length === 0) return [];
+    let cancelled = [];
+    if (pool) {
+      const { rows } = await pool.query(`
+        UPDATE auth_email_outbox SET status='cancelled', secret_ciphertext='', secret_iv='',
+          secret_tag='', lease_expires_at=NULL, last_error=$2, updated_at=now()
+        WHERE status='queued' AND type = ANY($1::text[]) RETURNING *
+      `, [safeTypes, clean(error).slice(0, 240)]);
+      cancelled = rows.map(outboxFromRow);
+    } else {
+      mutateFile(data => {
+        const updatedAt = new Date().toISOString();
+        for (const job of Object.values(data.outbox)) {
+          if (job.status !== 'queued' || !safeTypes.includes(job.type)) continue;
+          Object.assign(job, {
+            status: 'cancelled', secretCiphertext: '', secretIv: '', secretTag: '', leaseExpiresAt: '',
+            lastError: clean(error).slice(0, 240), updatedAt
+          });
+          cancelled.push(outboxFromRow(job));
+        }
+      });
+    }
+    for (const job of cancelled) {
+      await updateMfaNotificationForJob(job, {
+        notificationStatus: 'failed', notificationSentAt: '', notificationError: clean(error).slice(0, 240)
+      });
+    }
+    return cancelled;
   };
 
   const claimNextEmail = async () => {
@@ -976,6 +1103,35 @@ function createAdminSecurityStore({ dataDir }) {
     return count;
   };
 
+  const cancelMfaInvitationGeneration = async (username, generation) => {
+    const key = clean(username);
+    const targetGeneration = normalizeGeneration(generation);
+    if (!key || !targetGeneration) return 0;
+    if (pool) {
+      const result = await pool.query(`
+        UPDATE auth_mfa_enrollment_invitations i
+        SET cancelled_at=now(), secret_ciphertext='', secret_iv='', secret_tag='', updated_at=now()
+        FROM auth_users u
+        WHERE i.user_id=u.id AND u.username=$1 AND i.generation=$2
+          AND i.consumed_at IS NULL AND i.cancelled_at IS NULL
+      `, [key, targetGeneration]);
+      return result.rowCount;
+    }
+    let count = 0;
+    mutateFile(data => {
+      const cancelledAt = new Date().toISOString();
+      for (const invitation of Object.values(data.mfaInvitations)) {
+        if (invitation.username !== key || invitation.generation !== targetGeneration
+          || invitation.consumedAt || invitation.cancelledAt) continue;
+        Object.assign(invitation, {
+          cancelledAt, secretCiphertext: '', secretIv: '', secretTag: '', updatedAt: cancelledAt
+        });
+        count += 1;
+      }
+    });
+    return count;
+  };
+
   const deleteUserData = async username => {
     const key = clean(username);
     await cancelEmails(key);
@@ -995,10 +1151,11 @@ function createAdminSecurityStore({ dataDir }) {
   return {
     initialize, close, withMfaMutationLock, getIdentity, setIdentity, getMfaPolicy, setMfaPolicy,
     getTemporaryCredential, setTemporaryCredential, clearTemporaryCredential,
-    getEmailSettings, saveEmailSettings, enqueueEmail, findActiveEmail, getEmailDelivery,
-    claimNextEmail, finishEmail, cancelEmails,
+    getEmailSettings, saveEmailSettings, enqueueEmail, findActiveEmail, getEmailDelivery, listEmailDeliveries,
+    claimNextEmail, finishEmail, cancelEmail, cancelQueuedEmailsByType, cancelEmails,
     createMfaInvitation, getMfaInvitation, getActiveMfaInvitation, scrubExpiredMfaInvitations,
     recordMfaInvitationFailure, consumeMfaInvitation, completeMfaInvitation, invalidateMfaInvitations,
+    cancelMfaInvitationGeneration,
     deleteUserData, isDbEnabled: () => Boolean(pool)
   };
 }

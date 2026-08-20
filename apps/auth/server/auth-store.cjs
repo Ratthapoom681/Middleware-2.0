@@ -18,7 +18,7 @@ const DEFAULT_APP_KEY = 'defectdojo';
 const HUB_APP_KEY = 'hub';
 const ALL_APP_KEYS = [HUB_APP_KEY, DEFAULT_APP_KEY, 'wazuh'];
 const LEGACY_USERS_TABLE = 'defectdojo_viewer_users';
-const PUBLIC_USER_ID_PATTERN = /^[0-9]{6,}$/;
+const PUBLIC_USER_ID_PATTERN = /^[0-9]+$/;
 
 const TABLES = {
   users: 'auth_users',
@@ -38,10 +38,16 @@ const normalizeText = (value) => String(value || '').trim();
 
 const normalizePublicUserId = (value) => {
   const normalized = normalizeText(value);
-  return PUBLIC_USER_ID_PATTERN.test(normalized) ? normalized : '';
+  if (!PUBLIC_USER_ID_PATTERN.test(normalized)) return '';
+  try {
+    const numericId = BigInt(normalized);
+    return numericId > 0n ? numericId.toString() : '';
+  } catch {
+    return '';
+  }
 };
 
-const formatPublicUserId = (value) => String(value).padStart(6, '0');
+const formatPublicUserId = value => BigInt(value).toString();
 
 const normalizeStatus = (status = '') => (
   normalizeText(status).toLowerCase() === 'suspended' ? 'suspended' : 'active'
@@ -216,33 +222,37 @@ function createAuthStore({ dataDir, hashPassword }) {
   const production = normalizeText(process.env.NODE_ENV).toLowerCase() === 'production';
 
   const readFileUserIdSequence = () => {
-    if (!fs.existsSync(userIdSequencePath)) return 0;
+    if (!fs.existsSync(userIdSequencePath)) return 0n;
     try {
       const data = JSON.parse(fs.readFileSync(userIdSequencePath, 'utf8'));
-      const value = Number.parseInt(data?.lastAllocated, 10);
-      return Number.isSafeInteger(value) && value > 0 ? value : 0;
+      const value = normalizeText(data?.lastAllocated);
+      if (!PUBLIC_USER_ID_PATTERN.test(value)) return 0n;
+      const numericValue = BigInt(value);
+      return numericValue > 0n ? numericValue : 0n;
     } catch {
-      return 0;
+      return 0n;
     }
   };
 
   const writeFileUserIdSequence = (lastAllocated) => {
     fs.writeFileSync(
       userIdSequencePath,
-      JSON.stringify({ lastAllocated }, null, 2),
+      JSON.stringify({ lastAllocated: BigInt(lastAllocated).toString() }, null, 2),
       { encoding: 'utf8', mode: 0o600 }
     );
   };
 
   const getMaxFileUserId = (users = []) => users.reduce((maximum, user) => {
-    const userId = normalizePublicUserId(user?.userId);
+    const userId = normalizePublicUserId(user?.userId ?? user?.publicId ?? user?.public_id);
     if (!userId) return maximum;
-    const numericId = Number.parseInt(userId, 10);
-    return Number.isSafeInteger(numericId) ? Math.max(maximum, numericId) : maximum;
-  }, 0);
+    const numericId = BigInt(userId);
+    return numericId > maximum ? numericId : maximum;
+  }, 0n);
 
   const allocateFileUserId = (users = []) => {
-    const next = Math.max(readFileUserIdSequence(), getMaxFileUserId(users)) + 1;
+    const storedMaximum = readFileUserIdSequence();
+    const userMaximum = getMaxFileUserId(users);
+    const next = (storedMaximum > userMaximum ? storedMaximum : userMaximum) + 1n;
     writeFileUserIdSequence(next);
     return formatPublicUserId(next);
   };
@@ -261,10 +271,9 @@ function createAuthStore({ dataDir, hashPassword }) {
     const normalizedUsers = [];
     const seenPublicIds = new Set();
     const seenInternalIds = new Set();
-    let lastAllocated = Math.max(
-      readFileUserIdSequence(),
-      ...validUsers.map(user => Number.parseInt(normalizePublicUserId(user?.userId), 10) || 0)
-    );
+    const storedMaximum = readFileUserIdSequence();
+    const userMaximum = getMaxFileUserId(validUsers);
+    let lastAllocated = storedMaximum > userMaximum ? storedMaximum : userMaximum;
     let changed = validUsers.length !== rawUsers.length;
 
     for (const rawUser of validUsers) {
@@ -278,13 +287,15 @@ function createAuthStore({ dataDir, hashPassword }) {
       }
       seenInternalIds.add(user.id);
 
-      const rawPublicId = normalizePublicUserId(rawUser.userId);
+      const rawPublicIdValue = rawUser.userId ?? rawUser.publicId ?? rawUser.public_id;
+      const rawPublicId = normalizePublicUserId(rawPublicIdValue);
       if (!rawPublicId || seenPublicIds.has(rawPublicId)) {
-        lastAllocated += 1;
+        lastAllocated += 1n;
         user.userId = formatPublicUserId(lastAllocated);
         changed = true;
       } else {
         user.userId = rawPublicId;
+        if (normalizeText(rawPublicIdValue) !== rawPublicId) changed = true;
       }
       seenPublicIds.add(user.userId);
       normalizedUsers.push(user);

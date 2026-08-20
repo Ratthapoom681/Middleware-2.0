@@ -14,6 +14,13 @@ const pendingUser = overrides => ({
   ...overrides,
 });
 
+const EMAIL_ON = {
+  configured: true,
+  enabled: true,
+  mfaSetupEnabled: true,
+  temporaryPasswordEnabled: false,
+};
+
 test('disabled and enabled MFA hide setup-email history', () => {
   assert.deepEqual(getMfaDeliveryView({ mfaStatus: 'disabled', mfaProvider: 'disabled' }).label, 'Disabled');
   const enabled = getMfaDeliveryView({
@@ -32,16 +39,19 @@ test('pending MFA shows the current setup-email state until enrollment', () => {
     unknown: 'Email not sent',
   };
   for (const [status, label] of Object.entries(expected)) {
-    assert.equal(getMfaDeliveryView(pendingUser({ mfaNotificationStatus: status })).label, label);
+    assert.equal(getMfaDeliveryView(pendingUser({ mfaNotificationStatus: status }), EMAIL_ON).label, label);
   }
 });
 
 test('resend is unavailable in progress, without email, and while suspended', () => {
-  assert.equal(getMfaDeliveryView(pendingUser({ mfaNotificationStatus: 'queued' })).canResend, false);
-  assert.equal(getMfaDeliveryView(pendingUser({ mfaNotificationStatus: 'sending' })).canResend, false);
-  assert.match(getMfaDeliveryView(pendingUser({ email: '', mfaNotificationStatus: 'failed' })).resendDisabledReason, /valid email/i);
-  assert.match(getMfaDeliveryView(pendingUser({ status: 'suspended', mfaNotificationStatus: 'failed' })).resendDisabledReason, /reactivate/i);
-  assert.equal(getMfaDeliveryView(pendingUser({ mfaNotificationStatus: 'sent' })).canResend, true);
+  assert.equal(getMfaDeliveryView(pendingUser({ mfaNotificationStatus: 'queued' }), EMAIL_ON).canResend, false);
+  assert.equal(getMfaDeliveryView(pendingUser({ mfaNotificationStatus: 'sending' }), EMAIL_ON).canResend, false);
+  assert.match(getMfaDeliveryView(pendingUser({ email: '', mfaNotificationStatus: 'failed' }), EMAIL_ON).resendDisabledReason, /valid email/i);
+  assert.match(getMfaDeliveryView(pendingUser({ status: 'suspended', mfaNotificationStatus: 'failed' }), EMAIL_ON).resendDisabledReason, /reactivate/i);
+  assert.equal(getMfaDeliveryView(pendingUser({ mfaNotificationStatus: 'sent' }), EMAIL_ON).canResend, true);
+  const serviceOff = getMfaDeliveryView(pendingUser({ mfaNotificationStatus: 'failed' }), { ...EMAIL_ON, enabled: false });
+  assert.equal(serviceOff.canResend, false);
+  assert.match(serviceOff.resendDisabledReason, /off/i);
 });
 
 test('technical mail failures are converted to safe administrator guidance', () => {

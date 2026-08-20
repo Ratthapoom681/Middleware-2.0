@@ -10,19 +10,10 @@ const providerLabel = provider => clean(provider).toLowerCase() === 'google'
   ? 'Google Authenticator'
   : clean(provider).toLowerCase() === 'microsoft' ? 'Microsoft Authenticator' : 'Other authenticator';
 
-const publicEmailSettings = settings => ({
-  host: clean(settings?.host),
-  port: Number(settings?.port || 25),
-  security: clean(settings?.security) || 'plain',
-  username: clean(settings?.username),
-  hasPassword: Boolean(settings?.passwordCiphertext),
-  fromAddress: clean(settings?.fromAddress),
-  configured: Boolean(clean(settings?.host) && validEmail(settings?.fromAddress)),
-  updatedAt: settings?.updatedAt || '',
-  updatedBy: clean(settings?.updatedBy),
-  warning: clean(settings?.security) === 'plain'
-    ? 'Email is sent without transport encryption. Temporary passwords can be exposed in transit.'
-    : ''
+const getEmailControls = settings => ({
+  enabled: settings?.enabled !== false,
+  mfaSetupEnabled: settings?.mfaSetupEnabled !== false,
+  temporaryPasswordEnabled: settings?.temporaryPasswordEnabled === true
 });
 
 const validateEmailSettings = values => {
@@ -38,6 +29,63 @@ const validateEmailSettings = values => {
   const hasPassword = Boolean(values?.hasPassword || values?.passwordCiphertext);
   if (Boolean(username) !== hasPassword) return 'SMTP username and password must be configured together';
   return '';
+};
+
+const getEmailDeliveryCapability = (settings, type) => {
+  const controls = getEmailControls(settings);
+  const typeEnabled = type === 'mfa_setup'
+    ? controls.mfaSetupEnabled
+    : type === 'temporary_password' && controls.temporaryPasswordEnabled;
+  const configured = !validateEmailSettings({
+    ...settings,
+    hasPassword: Boolean(settings?.passwordCiphertext)
+  });
+  let reason = 'ready';
+  if (!controls.enabled) reason = 'service_disabled';
+  else if (!typeEnabled) reason = 'type_disabled';
+  else if (!configured) reason = 'not_configured';
+  return { available: reason === 'ready', reason };
+};
+
+const getEmailCapabilities = settings => {
+  const controls = getEmailControls(settings);
+  const configured = !validateEmailSettings({
+    ...settings,
+    hasPassword: Boolean(settings?.passwordCiphertext)
+  });
+  return {
+    service: {
+      available: controls.enabled && configured,
+      reason: !controls.enabled ? 'service_disabled' : configured ? 'ready' : 'not_configured'
+    },
+    mfaSetup: getEmailDeliveryCapability(settings, 'mfa_setup'),
+    temporaryPassword: getEmailDeliveryCapability(settings, 'temporary_password')
+  };
+};
+
+const publicEmailSettings = settings => {
+  const controls = getEmailControls(settings);
+  const capabilities = getEmailCapabilities(settings);
+  const configured = !validateEmailSettings({
+    ...settings,
+    hasPassword: Boolean(settings?.passwordCiphertext)
+  });
+  return {
+    host: clean(settings?.host),
+    port: Number(settings?.port || 25),
+    security: clean(settings?.security) || 'plain',
+    username: clean(settings?.username),
+    hasPassword: Boolean(settings?.passwordCiphertext),
+    fromAddress: clean(settings?.fromAddress),
+    configured,
+    ...controls,
+    capabilities,
+    updatedAt: settings?.updatedAt || '',
+    updatedBy: clean(settings?.updatedBy),
+    warning: clean(settings?.security) === 'plain'
+      ? 'Email is sent without transport encryption. Temporary passwords can be exposed in transit.'
+      : ''
+  };
 };
 
 const buildMessage = (job, secret = '') => {
@@ -96,6 +144,21 @@ function createEmailWorker({ store, securityCrypto, saveAuditEvent, nodemailerCl
         });
       }
       const settings = await store.getEmailSettings();
+      const capability = getEmailDeliveryCapability(settings, job.type);
+      if (!capability.available && capability.reason !== 'not_configured') {
+        const cancelled = await store.cancelEmail(job.id, { error: capability.reason.toUpperCase(), allowSending: true });
+        if (cancelled) {
+          try {
+            await saveAuditEvent?.({
+              actorUsername: 'email-worker',
+              targetUsername: job.targetUsername,
+              action: 'email.delivery_cancelled',
+              metadata: { deliveryId: job.id, type: job.type, reason: capability.reason }
+            });
+          } catch (auditError) { console.error('Email cancellation audit failed:', auditError.message); }
+        }
+        return true;
+      }
       const validationError = validateEmailSettings(settings);
       if (validationError) throw Object.assign(new Error('Email delivery is not configured'), { code: 'MAIL_NOT_CONFIGURED', permanent: true });
       if (!nodemailerClient) throw new Error('Email transport is unavailable');
@@ -158,4 +221,12 @@ function createEmailWorker({ store, securityCrypto, saveAuditEvent, nodemailerCl
   return { start, stop, processOne };
 }
 
-module.exports = { createEmailWorker, publicEmailSettings, validateEmailSettings, validEmail };
+module.exports = {
+  createEmailWorker,
+  getEmailCapabilities,
+  getEmailControls,
+  getEmailDeliveryCapability,
+  publicEmailSettings,
+  validateEmailSettings,
+  validEmail
+};

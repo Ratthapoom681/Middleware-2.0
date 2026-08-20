@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createAuthenticatedRequest, isSessionExpiredError } from '../../shared/authenticatedRequest.js';
 import { requireApiCollection } from '../../shared/apiCollections.js';
+import { EMPTY_EMAIL_SETTINGS } from '../../shared/emailDeliveryStatus.js';
 import { getMfaStatus } from './mfaDeliveryStatus.js';
 import { normalize } from './userHelpers.js';
 
@@ -9,6 +10,7 @@ export default function useUsers(token, onUnauthorized) {
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [emailSettings, setEmailSettings] = useState(EMPTY_EMAIL_SETTINGS);
 
   const request = useMemo(
     () => createAuthenticatedRequest({ token, onUnauthorized }),
@@ -19,12 +21,14 @@ export default function useUsers(token, onUnauthorized) {
     setLoading(true);
     setError('');
     try {
-      const [userPayload, rolePayload] = await Promise.all([
+      const [userPayload, rolePayload, emailPayload] = await Promise.all([
         request('/users'),
         request('/roles'),
+        request('/settings/email'),
       ]);
       setUsers(requireApiCollection(userPayload, { property: 'users', label: 'Users' }));
       setRoles(requireApiCollection(rolePayload, { property: 'roles', label: 'Roles' }));
+      setEmailSettings(emailPayload);
     } catch (err) {
       if (!isSessionExpiredError(err)) setError(err.message || 'Unable to load users');
     } finally {
@@ -32,9 +36,26 @@ export default function useUsers(token, onUnauthorized) {
     }
   }, [request]);
 
+  const refreshEmailSettings = useCallback(async () => {
+    try {
+      const payload = await request('/settings/email');
+      setEmailSettings(payload);
+      return payload;
+    } catch (err) {
+      if (!isSessionExpiredError(err)) setError(err.message || 'Unable to load email status');
+      return null;
+    }
+  }, [request]);
+
   useEffect(() => {
     if (token) reload();
   }, [reload, token]);
+
+  useEffect(() => {
+    const onFocus = () => { if (token) refreshEmailSettings(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refreshEmailSettings, token]);
 
   const hasActiveMfaDelivery = useMemo(
     () => users.some(user => getMfaStatus(user) === 'pending'
@@ -52,5 +73,5 @@ export default function useUsers(token, onUnauthorized) {
     return () => window.clearInterval(timer);
   }, [hasActiveMfaDelivery, request]);
 
-  return { users, roles, loading, error, setError, reload };
+  return { users, roles, emailSettings, refreshEmailSettings, loading, error, setError, reload };
 }

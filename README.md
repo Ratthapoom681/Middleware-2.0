@@ -89,14 +89,16 @@ expires after 24 hours and does not require an existing Middleware session or
 the user's current password. Successful enrollment revokes all existing
 sessions and sends the user to sign in with TOTP. Lost devices require an
 administrator reset because recovery codes are not supported. Administrators
-can resend a pending invitation. Temporary passwords are always shown once and
-are also queued for email automatically when the account has a valid address.
+can resend a pending invitation. Temporary passwords are always shown once.
+Email delivery for temporary passwords is off by default and can be enabled
+independently from MFA setup email.
 
 SMTP is configured at runtime from **Administration → System Settings**, not
 from `.env`. Email is written to a durable outbox and delivered asynchronously,
 so a slow or unavailable Postfix relay cannot hold User Management requests
 open or cause a gateway timeout. Plain unauthenticated port 25 is supported with
-an in-product transport-security warning.
+an in-product transport-security warning. System Administrators can monitor,
+cancel, and retry deliveries from the Email Queue.
 
 ---
 

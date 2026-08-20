@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { KeyRound, MailWarning, Radar, Settings, ShieldAlert, Users } from 'lucide-react';
 import { hasPermission, hasWorkspaceAccess, isSystemAdmin } from '../../../../../packages/access-control/index.js';
 import HubTopbar from './HubTopbar/HubTopbar';
+import { getDefectDojoPath } from './hubRouting.js';
 import './HubPage.css';
 
 const APPS = [
@@ -24,17 +25,6 @@ const APPS = [
     workspace: 'Wazuh',
   },
 ];
-
-const getDefectDojoPath = user => {
-  if (hasPermission(user, 'defectdojo.data.manage')) return '/defectdojo/#data-management';
-  if (hasPermission(user, 'defectdojo.sync.run')) return '/defectdojo/#data-management?tab=sync';
-  if (hasPermission(user, 'defectdojo.sync_history.view')) return '/defectdojo/#sync-history';
-  if (hasPermission(user, 'defectdojo.logs.view')) return '/defectdojo/#log-monitor';
-  if (hasPermission(user, 'defectdojo.mitigations.review')) return '/defectdojo/#mitigation-review';
-  if (hasPermission(user, 'defectdojo.settings.manage')) return '/defectdojo/#settings';
-  if (hasPermission(user, 'defectdojo.vulnerabilities.view')) return '/defectdojo/#dashboard';
-  return '/defectdojo/';
-};
 
 export default function HubPage({ user, onOpenDocs, onLogout, onOpenProfile, onOpenSettings, onOpenRoles }) {
   const isAdmin = isSystemAdmin(user);

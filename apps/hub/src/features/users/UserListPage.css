@@ -143,16 +143,6 @@
   white-space: nowrap;
 }
 
-.user-list-id-cell {
-  overflow: hidden;
-  color: var(--text-soft);
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .user-list-muted-cell {
   overflow: hidden;
   color: var(--text-muted);

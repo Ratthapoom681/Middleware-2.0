@@ -16,6 +16,7 @@ export default function useUserActions({
   currentUser,
   onUserUpdated,
   reload,
+  refreshEmailSettings,
   error,
   setError,
 }) {
@@ -33,15 +34,17 @@ export default function useUserActions({
 
   const clearError = () => setError('');
 
-  const openCreate = () => {
+  const openCreate = async () => {
     clearError();
+    await refreshEmailSettings?.();
     setDraftUser({ ...EMPTY_USER });
     setEditorMode('create');
     setEditorOpen(true);
   };
 
-  const openEdit = user => {
+  const openEdit = async user => {
     clearError();
+    await refreshEmailSettings?.();
     setDraftUser(createUserDraft(user));
     setEditorMode('edit');
     setEditorOpen(true);
@@ -52,8 +55,9 @@ export default function useUserActions({
     clearError();
   };
 
-  const openPasswordReset = user => {
+  const openPasswordReset = async user => {
     clearError();
+    await refreshEmailSettings?.();
     setPasswordResetUser(user);
   };
 
@@ -62,8 +66,9 @@ export default function useUserActions({
     clearError();
   };
 
-  const openSecurityAction = action => {
+  const openSecurityAction = async action => {
     clearError();
+    await refreshEmailSettings?.();
     setSecurityAction(action);
   };
 
@@ -120,6 +125,7 @@ export default function useUserActions({
           password: data.temporaryPassword,
           expiresAt: data.expiresAt,
           deliveryMode: data.deliveryMode || 'manual_only',
+          deliveryReason: data.deliveryReason || (data.deliveryMode === 'queued' ? 'queued' : 'missing_email'),
           afterSecurityAction: followUpSecurityAction,
         });
       } else if (followUpSecurityAction) {
@@ -164,6 +170,7 @@ export default function useUserActions({
         password: data.temporaryPassword,
         expiresAt: data.expiresAt,
         deliveryMode: data.deliveryMode || 'manual_only',
+        deliveryReason: data.deliveryReason || (data.deliveryMode === 'queued' ? 'queued' : 'missing_email'),
         sessionEnded: Boolean(data.sessionEnded),
       });
       if (!data.sessionEnded) await reload();

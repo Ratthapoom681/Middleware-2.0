@@ -1,5 +1,10 @@
 const crypto = require('crypto');
-const { publicEmailSettings, validateEmailSettings, validEmail } = require('./mailer.cjs');
+const {
+  getEmailDeliveryCapability,
+  publicEmailSettings,
+  validateEmailSettings,
+  validEmail
+} = require('./mailer.cjs');
 const { MFA_ISSUER } = require('./mfa-service.cjs');
 
 const PASSWORD_MIN_LENGTH = 12;
@@ -35,6 +40,34 @@ const isValidEmail = email => {
   return !value || validEmail(value);
 };
 
+const createEmailDeliveryUnavailableError = (emailType, capability) => {
+  const deliveryReason = capability?.reason || 'service_disabled';
+  const error = new Error(deliveryReason === 'not_configured'
+    ? 'SMTP is not configured'
+    : deliveryReason === 'service_disabled'
+      ? 'Email service is off'
+      : emailType === 'mfa_setup'
+        ? 'MFA setup email is off'
+        : 'Temporary-password email is off');
+  error.status = 409;
+  error.code = 'EMAIL_DELIVERY_UNAVAILABLE';
+  error.emailType = emailType;
+  error.deliveryReason = deliveryReason;
+  error.details = { emailType: error.emailType, reason: error.deliveryReason };
+  return error;
+};
+
+const sendEmailDeliveryUnavailable = (res, error) => {
+  if (error?.code !== 'EMAIL_DELIVERY_UNAVAILABLE') return false;
+  res.status(409).json({
+    error: error.message,
+    code: error.code,
+    emailType: error.emailType,
+    reason: error.deliveryReason
+  });
+  return true;
+};
+
 const buildMfaSummary = (policy, config) => {
   const mode = policy?.mode === 'authenticator' || config ? 'authenticator' : 'disabled';
   const status = mode === 'disabled' ? 'disabled' : (config ? 'enabled' : 'pending');
@@ -66,6 +99,13 @@ const publicDelivery = job => job ? ({
   deduplicated: Boolean(job.deduplicated)
 }) : null;
 
+const publicQueueDelivery = job => job ? ({
+  ...publicDelivery(job),
+  recipient: job.recipient,
+  subject: job.subject,
+  retryOfDeliveryId: String(job.metadata?.retryOfDeliveryId || '')
+}) : null;
+
 async function queueMfaEnrollmentInvitation({
   user,
   provider,
@@ -77,9 +117,12 @@ async function queueMfaEnrollmentInvitation({
   mfaService,
   getRequestOrigin,
   beforeInvitation,
-  lockHeld = false
+  lockHeld = false,
+  retryOfDeliveryId = ''
 }) {
   const perform = async () => {
+    const capability = getEmailDeliveryCapability(await securityStore.getEmailSettings(), 'mfa_setup');
+    if (!capability.available) throw createEmailDeliveryUnavailableError('mfa_setup', capability);
     const origin = getRequestOrigin(request);
     const generation = crypto.randomUUID();
     const invitationToken = mfaService.createOpaqueToken();
@@ -122,7 +165,8 @@ async function queueMfaEnrollmentInvitation({
           provider,
           setupBaseUrl: `${origin}/login/mfa-setup`,
           enrollmentGeneration: generation,
-          invitationExpiresAt: expiresAt
+          invitationExpiresAt: expiresAt,
+          ...(retryOfDeliveryId ? { retryOfDeliveryId } : {})
         },
         secretCiphertext: encryptedToken.ciphertext,
         secretIv: encryptedToken.iv,
@@ -213,7 +257,14 @@ function registerProfileRoutes({
     getRequestOrigin
   });
 
-  const enqueueTemporaryPasswordEmail = async ({ user, temporaryPassword, expiresAt, actorUsername, request }) => {
+  const enqueueTemporaryPasswordEmail = async ({
+    user,
+    temporaryPassword,
+    expiresAt,
+    actorUsername,
+    request,
+    retryOfDeliveryId = ''
+  }) => {
     const encrypted = securityCrypto.encryptOutboxSecret(temporaryPassword);
     const origin = getRequestOrigin(request);
     const job = await securityStore.enqueueEmail({
@@ -224,7 +275,8 @@ function registerProfileRoutes({
       metadata: {
         fullName: (await securityStore.getIdentity(user.username))?.fullName || '',
         loginUrl: `${origin}/login/`,
-        expiresAt
+        expiresAt,
+        ...(retryOfDeliveryId ? { retryOfDeliveryId } : {})
       },
       secretCiphertext: encrypted.ciphertext,
       secretIv: encrypted.iv,
@@ -237,6 +289,41 @@ function registerProfileRoutes({
       metadata: { deliveryId: job.id }
     });
     return publicDelivery(job);
+  };
+
+  const generateTemporaryPassword = async ({ target, actorUsername, request, retryOfDeliveryId = '' }) => {
+    const username = target.username;
+    const emailAvailable = validEmail(target.email);
+    const capability = getEmailDeliveryCapability(await securityStore.getEmailSettings(), 'temporary_password');
+    const temporaryPassword = crypto.randomBytes(18).toString('base64url');
+    const next = hashPassword(temporaryPassword);
+    const expiresAt = new Date(Date.now() + TEMPORARY_PASSWORD_TTL_MS).toISOString();
+    await authStore.updatePassword(username, {
+      salt: next.salt,
+      hash: next.hash,
+      passwordAlgorithm: next.algorithm
+    });
+    await securityStore.setTemporaryCredential(username, { expiresAt, createdBy: actorUsername });
+    await authStore.revokeUserSessions(username);
+    await securityStore.cancelEmails(username, 'temporary_password');
+    const delivery = emailAvailable && capability.available
+      ? await enqueueTemporaryPasswordEmail({
+        user: target,
+        temporaryPassword,
+        expiresAt,
+        actorUsername,
+        request,
+        retryOfDeliveryId
+      })
+      : null;
+    return {
+      temporaryPassword,
+      expiresAt,
+      delivery,
+      deliveryMode: delivery ? 'queued' : 'manual_only',
+      deliveryReason: delivery ? 'queued' : emailAvailable ? capability.reason : 'missing_email',
+      sessionEnded: username === actorUsername
+    };
   };
 
   app.post('/api/login/mfa', async (req, res) => {
@@ -430,27 +517,21 @@ function registerProfileRoutes({
       const target = await getUserFromAdminRoute(req);
       if (!target) return res.status(404).json({ error: 'User not found' });
       const username = target.username;
-      const emailAvailable = validEmail(target.email);
-      if (emailAvailable) getRequestOrigin(req);
-      const temporaryPassword = crypto.randomBytes(18).toString('base64url');
-      const next = hashPassword(temporaryPassword);
-      await authStore.updatePassword(username, { salt: next.salt, hash: next.hash, passwordAlgorithm: next.algorithm });
-      const expiresAt = new Date(Date.now() + TEMPORARY_PASSWORD_TTL_MS).toISOString();
-      await securityStore.setTemporaryCredential(username, { expiresAt, createdBy: req.user.username });
-      await authStore.revokeUserSessions(username);
-      await securityStore.cancelEmails(username, 'temporary_password');
-      const delivery = emailAvailable
-        ? await enqueueTemporaryPasswordEmail({ user: target, temporaryPassword, expiresAt, actorUsername: req.user.username, request: req })
-        : null;
-      await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: username, action: 'user.password_reset', metadata: { expiresAt, emailQueued: Boolean(delivery) } });
+      const result = await generateTemporaryPassword({ target, actorUsername: req.user.username, request: req });
+      await authStore.saveAuditEvent({
+        actorUsername: req.user.username,
+        targetUsername: username,
+        action: 'user.password_reset',
+        metadata: {
+          expiresAt: result.expiresAt,
+          emailQueued: Boolean(result.delivery),
+          deliveryReason: result.deliveryReason
+        }
+      });
       res.set('Cache-Control', 'no-store');
       res.json({
         message: `Temporary password generated for ${username}`,
-        temporaryPassword,
-        expiresAt,
-        delivery,
-        deliveryMode: delivery ? 'queued' : 'manual_only',
-        sessionEnded: username === req.user.username
+        ...result
       });
     } catch (error) {
       console.error('Password reset error:', error.message);
@@ -518,6 +599,7 @@ function registerProfileRoutes({
         sessionEnded
       });
     } catch (error) {
+      if (sendEmailDeliveryUnavailable(res, error)) return;
       console.error('Administrator MFA update error:', error.message);
       res.status(500).json({ error: 'Unable to update Authenticator MFA' });
     }
@@ -547,6 +629,7 @@ function registerProfileRoutes({
       await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: username, action: 'mfa.admin_reset', metadata: { provider } });
       res.json({ message: `${providerLabel(provider)} enrollment reset for ${username}`, mfa: await loadMfaSummary(username), delivery, sessionEnded: username === req.user.username });
     } catch (error) {
+      if (sendEmailDeliveryUnavailable(res, error)) return;
       console.error('Administrator MFA reset error:', error.message);
       res.status(500).json({ error: 'Unable to reset Authenticator MFA' });
     }
@@ -565,6 +648,8 @@ function registerProfileRoutes({
       }
       if (policy?.mode !== 'authenticator' || config) return res.status(409).json({ error: 'Authenticator enrollment is not pending' });
       if (!validEmail(target.email)) return res.status(400).json({ error: 'A valid email address is required to resend the setup email' });
+      const capability = getEmailDeliveryCapability(await securityStore.getEmailSettings(), 'mfa_setup');
+      if (!capability.available) throw createEmailDeliveryUnavailableError('mfa_setup', capability);
       const provider = policy.provider || 'other';
       const delivery = await securityStore.withMfaMutationLock(username, async () => {
         const [currentPolicy, currentConfig, activeDelivery, activeInvitation] = await Promise.all([
@@ -591,6 +676,7 @@ function registerProfileRoutes({
       await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: username, action: 'mfa.notification_resent', metadata: { deliveryId: delivery.id, provider } });
       res.json({ message: delivery.deduplicated ? 'Setup email is already queued' : 'Setup email queued', delivery, mfa: await loadMfaSummary(username) });
     } catch (error) {
+      if (sendEmailDeliveryUnavailable(res, error)) return;
       console.error('MFA notification resend error:', error.message);
       res.status(500).json({ error: 'Unable to queue setup email' });
     }
@@ -604,6 +690,7 @@ function registerProfileRoutes({
   app.patch('/api/settings/email', authenticateJwt, requirePermission('hub.settings.manage'), async (req, res) => {
     try {
       const current = await securityStore.getEmailSettings();
+      const readBoolean = (key, fallback) => typeof req.body?.[key] === 'boolean' ? req.body[key] : fallback;
       const clearPassword = Boolean(req.body?.clearPassword);
       let passwordFields = { passwordCiphertext: current.passwordCiphertext, passwordIv: current.passwordIv, passwordTag: current.passwordTag };
       if (clearPassword) passwordFields = { passwordCiphertext: '', passwordIv: '', passwordTag: '' };
@@ -614,16 +701,164 @@ function registerProfileRoutes({
       const candidate = {
         host: String(req.body?.host || '').trim(), port: Number(req.body?.port),
         security: String(req.body?.security || '').trim().toLowerCase(), username: String(req.body?.username || '').trim(),
-        fromAddress: String(req.body?.fromAddress || '').trim(), updatedBy: req.user.username, ...passwordFields
+        fromAddress: String(req.body?.fromAddress || '').trim(),
+        enabled: readBoolean('enabled', current.enabled),
+        mfaSetupEnabled: readBoolean('mfaSetupEnabled', current.mfaSetupEnabled),
+        temporaryPasswordEnabled: readBoolean('temporaryPasswordEnabled', current.temporaryPasswordEnabled),
+        updatedBy: req.user.username,
+        ...passwordFields
       };
       const validationError = validateEmailSettings({ ...candidate, hasPassword: Boolean(candidate.passwordCiphertext) });
-      if (validationError) return res.status(400).json({ error: validationError });
+      const needsSmtp = candidate.enabled && (candidate.mfaSetupEnabled || candidate.temporaryPasswordEnabled);
+      const hasSmtpValues = Boolean(candidate.host || candidate.fromAddress || candidate.username || candidate.passwordCiphertext);
+      if (validationError && (needsSmtp || hasSmtpValues)) return res.status(400).json({ error: validationError });
       const saved = await securityStore.saveEmailSettings(candidate);
-      await authStore.saveAuditEvent({ actorUsername: req.user.username, targetUsername: '', action: 'email.settings_updated', metadata: { host: saved.host, port: saved.port, security: saved.security, usernameConfigured: Boolean(saved.username) } });
+      const disabledTypes = new Set();
+      if (current.enabled && !saved.enabled) {
+        disabledTypes.add('mfa_setup');
+        disabledTypes.add('temporary_password');
+      }
+      if (current.mfaSetupEnabled && !saved.mfaSetupEnabled) disabledTypes.add('mfa_setup');
+      if (current.temporaryPasswordEnabled && !saved.temporaryPasswordEnabled) disabledTypes.add('temporary_password');
+      const cancelled = await securityStore.cancelQueuedEmailsByType([...disabledTypes]);
+      for (const job of cancelled) {
+        if (job.type === 'mfa_setup') {
+          await securityStore.cancelMfaInvitationGeneration(job.targetUsername, job.metadata?.enrollmentGeneration);
+        }
+        await authStore.saveAuditEvent({
+          actorUsername: req.user.username,
+          targetUsername: job.targetUsername,
+          action: 'email.delivery_cancelled',
+          metadata: { deliveryId: job.id, type: job.type, reason: 'control_disabled' }
+        });
+      }
+      await authStore.saveAuditEvent({
+        actorUsername: req.user.username,
+        targetUsername: '',
+        action: 'email.settings_updated',
+        metadata: {
+          host: saved.host,
+          port: saved.port,
+          security: saved.security,
+          usernameConfigured: Boolean(saved.username),
+          enabled: saved.enabled,
+          mfaSetupEnabled: saved.mfaSetupEnabled,
+          temporaryPasswordEnabled: saved.temporaryPasswordEnabled,
+          cancelledDeliveries: cancelled.length
+        }
+      });
       res.json({ message: 'Email settings saved', settings: publicEmailSettings(saved) });
     } catch (error) {
       console.error('Email settings update error:', error.message);
       res.status(500).json({ error: 'Unable to save email settings' });
+    }
+  });
+
+  app.get('/api/settings/email/queue', authenticateJwt, requireAdmin, async (req, res) => {
+    try {
+      const result = await securityStore.listEmailDeliveries({
+        page: req.query.page,
+        pageSize: req.query.pageSize,
+        type: String(req.query.type || '').trim(),
+        status: String(req.query.status || '').trim(),
+        query: String(req.query.q || '').trim()
+      });
+      res.json({ ...result, deliveries: result.deliveries.map(publicQueueDelivery) });
+    } catch (error) {
+      console.error('Email queue load error:', error.message);
+      res.status(500).json({ error: 'Unable to load email queue' });
+    }
+  });
+
+  app.post('/api/settings/email/queue/:id/cancel', authenticateJwt, requireAdmin, async (req, res) => {
+    try {
+      const existing = await securityStore.getEmailDelivery(req.params.id);
+      if (!existing) return res.status(404).json({ error: 'Email delivery not found' });
+      const cancelled = await securityStore.cancelEmail(existing.id, { error: 'Cancelled by administrator' });
+      if (!cancelled) return res.status(409).json({ error: 'Only queued email can be cancelled' });
+      if (cancelled.type === 'mfa_setup') {
+        await securityStore.cancelMfaInvitationGeneration(
+          cancelled.targetUsername,
+          cancelled.metadata?.enrollmentGeneration
+        );
+      }
+      await authStore.saveAuditEvent({
+        actorUsername: req.user.username,
+        targetUsername: cancelled.targetUsername,
+        action: 'email.delivery_cancelled',
+        metadata: { deliveryId: cancelled.id, type: cancelled.type }
+      });
+      res.json({ message: 'Email cancelled', delivery: publicQueueDelivery(cancelled) });
+    } catch (error) {
+      console.error('Email cancellation error:', error.message);
+      res.status(500).json({ error: 'Unable to cancel email' });
+    }
+  });
+
+  app.post('/api/settings/email/queue/:id/retry', authenticateJwt, requireAdmin, async (req, res) => {
+    try {
+      const existing = await securityStore.getEmailDelivery(req.params.id);
+      if (!existing) return res.status(404).json({ error: 'Email delivery not found' });
+      if (!['failed', 'cancelled'].includes(existing.status)) {
+        return res.status(409).json({ error: 'Only failed or cancelled email can be retried' });
+      }
+      const target = await authStore.getUserByUsername(existing.targetUsername);
+      if (!target) return res.status(404).json({ error: 'Target user not found' });
+      let delivery;
+      let credential = null;
+      if (existing.type === 'mfa_setup') {
+        const [policy, config] = await Promise.all([
+          securityStore.getMfaPolicy(target.username),
+          authStore.getMfaConfig(target.username)
+        ]);
+        if (String(target.status || '').toLowerCase() === 'suspended') {
+          return res.status(409).json({ error: 'Reactivate this account before retrying the setup email' });
+        }
+        if (policy?.mode !== 'authenticator' || config) {
+          return res.status(409).json({ error: 'Authenticator enrollment is not pending' });
+        }
+        if (!validEmail(target.email)) return res.status(400).json({ error: 'A valid email address is required' });
+        delivery = await enqueueSetupEmail({
+          user: target,
+          provider: policy.provider || 'other',
+          actorUsername: req.user.username,
+          request: req,
+          retryOfDeliveryId: existing.id
+        });
+      } else {
+        const capability = getEmailDeliveryCapability(await securityStore.getEmailSettings(), 'temporary_password');
+        if (!capability.available) throw createEmailDeliveryUnavailableError('temporary_password', capability);
+        if (!validEmail(target.email)) return res.status(400).json({ error: 'A valid email address is required' });
+        credential = await generateTemporaryPassword({
+          target,
+          actorUsername: req.user.username,
+          request: req,
+          retryOfDeliveryId: existing.id
+        });
+        delivery = credential.delivery;
+        res.set('Cache-Control', 'no-store');
+      }
+      await authStore.saveAuditEvent({
+        actorUsername: req.user.username,
+        targetUsername: target.username,
+        action: 'email.delivery_retried',
+        metadata: { deliveryId: existing.id, newDeliveryId: delivery.id, type: existing.type }
+      });
+      res.json({
+        message: 'Email queued',
+        delivery,
+        ...(credential ? {
+          temporaryPassword: credential.temporaryPassword,
+          expiresAt: credential.expiresAt,
+          deliveryMode: credential.deliveryMode,
+          deliveryReason: credential.deliveryReason,
+          sessionEnded: credential.sessionEnded
+        } : {})
+      });
+    } catch (error) {
+      if (sendEmailDeliveryUnavailable(res, error)) return;
+      console.error('Email retry error:', error.message);
+      res.status(500).json({ error: 'Unable to retry email' });
     }
   });
 

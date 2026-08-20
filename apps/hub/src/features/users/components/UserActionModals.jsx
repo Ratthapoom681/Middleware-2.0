@@ -18,6 +18,7 @@ import {
   hasDeliverableEmail,
   MFA_PROVIDER_OPTIONS,
 } from '../mfaDeliveryStatus.js';
+import { getEmailCapability, getEmailReasonCopy } from '../../../shared/emailDeliveryStatus.js';
 import { formatDate, formatLabel } from '../userHelpers.js';
 import './UserActionModals.css';
 
@@ -76,6 +77,14 @@ export function MfaDeliveryIcon({ view }) {
   return <MailX size={13} aria-hidden="true" />;
 }
 
+export function EmailServiceStatus({ label, capability }) {
+  return <div className="email-service-line" role="status">
+    <span>{label}</span>
+    <strong className={capability.available ? 'on' : 'off'}>{capability.available ? 'On' : 'Off'}</strong>
+    <small>{getEmailReasonCopy(capability.reason)}</small>
+  </div>;
+}
+
 function ModalHeader({ icon: Icon, id, title, description, onClose }) {
   return (
     <div className="modal-header">
@@ -92,18 +101,22 @@ function ModalHeader({ icon: Icon, id, title, description, onClose }) {
   );
 }
 
-export function PasswordResetModal({ user, saving, error, onClose, onSubmit }) {
+export function PasswordResetModal({ user, emailSettings, saving, error, onClose, onSubmit }) {
   const ref = useDialogFocus(Boolean(user), onClose);
   if (!user) return null;
-  const deliveryCopy = hasDeliverableEmail(user.email)
+  const capability = getEmailCapability(emailSettings, 'temporary_password');
+  const deliveryCopy = hasDeliverableEmail(user.email) && capability.available
     ? `The new password will be emailed to ${user.email} and displayed once for copying.`
-    : 'No deliverable email is saved. The new password will only be displayed once for manual copying.';
+    : hasDeliverableEmail(user.email)
+      ? 'Email is off. The new password will only be displayed once for manual copying.'
+      : 'No valid email is saved. The new password will only be displayed once for manual copying.';
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section ref={ref} className="user-modal password-reset-modal modal-accent-danger" role="dialog" aria-modal="true" aria-labelledby="password-reset-title" onMouseDown={event => event.stopPropagation()}>
         <ModalHeader icon={ShieldAlert} id="password-reset-title" title={`Generate temporary password: ${user.username}`} description="This replaces the current password, expires in 24 hours, and revokes every active session." onClose={onClose} />
         <form className="user-form" onSubmit={onSubmit}>
           {error && <div className="modal-error" role="alert">{error}</div>}
+          <EmailServiceStatus label="Temporary-password email" capability={capability} />
           <p className="modal-copy">{deliveryCopy}</p>
           <div className="modal-actions">
             <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
@@ -119,6 +132,7 @@ export function PasswordResetModal({ user, saving, error, onClose, onSubmit }) {
 
 export function SecurityActionModal({
   securityAction,
+  emailSettings,
   saving,
   error,
   onClose,
@@ -128,6 +142,8 @@ export function SecurityActionModal({
   const ref = useDialogFocus(Boolean(securityAction), onClose);
   if (!securityAction) return null;
   const { type, user } = securityAction;
+  const capability = getEmailCapability(emailSettings, 'mfa_setup');
+  const requiresEmail = type !== 'disable';
   const descriptions = {
     enable: 'Select an authenticator app, mark setup as pending, and queue the setup email.',
     change: 'Assign a different app. Existing enrollment is cleared and active sessions may be revoked.',
@@ -142,6 +158,7 @@ export function SecurityActionModal({
         <ModalHeader icon={dangerous ? AlertTriangle : ShieldCheck} id="security-action-title" title={`${formatLabel(type)} Authenticator MFA: ${user.username}`} description={descriptions[type]} onClose={onClose} />
         <form className="user-form" onSubmit={onSubmit}>
           {error && <div className="modal-error" role="alert">{error}</div>}
+          {requiresEmail && <EmailServiceStatus label="MFA setup email" capability={capability} />}
           {['enable', 'change'].includes(type) && (
             <div className="modal-section">
               <span className="modal-section-label">Authenticator assignment</span>
@@ -157,7 +174,7 @@ export function SecurityActionModal({
           )}
           <div className="modal-actions">
             <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className={dangerous ? 'btn-danger' : 'btn-primary'} disabled={saving} autoFocus={!['enable', 'change'].includes(type)}>
+            <button type="submit" className={dangerous ? 'btn-danger' : 'btn-primary'} disabled={saving || (requiresEmail && !capability.available)} autoFocus={!['enable', 'change'].includes(type)}>
               {saving ? 'Saving…' : 'Confirm'}
             </button>
           </div>
@@ -170,17 +187,22 @@ export function SecurityActionModal({
 export function CredentialModal({ credential, onClose }) {
   const ref = useDialogFocus(Boolean(credential), () => {});
   if (!credential) return null;
+  const capability = {
+    available: credential.deliveryMode === 'queued',
+    reason: credential.deliveryReason || (credential.deliveryMode === 'queued' ? 'queued' : 'missing_email'),
+  };
   return (
     <div className="modal-backdrop" role="presentation">
       <section ref={ref} className="user-modal credential-modal modal-accent-warning" role="dialog" aria-modal="true" aria-labelledby="temporary-password-title">
         <ModalHeader icon={KeyRound} id="temporary-password-title" title={`Temporary password for ${credential.username}`} description="This credential is displayed once and expires in 24 hours." />
         <div className="user-form">
           <div className="credential-warning"><AlertTriangle size={17} aria-hidden="true" /><span>Save this password now. It cannot be shown again after you close this dialog.</span></div>
+          <EmailServiceStatus label="Temporary-password email" capability={capability} />
           <div className="credential-display">
             <code>{credential.password}</code>
             <button type="button" className="btn-secondary" onClick={() => navigator.clipboard.writeText(credential.password)}><Clipboard size={15} />Copy</button>
           </div>
-          <small>{credential.deliveryMode === 'queued' ? 'The email was queued automatically. Plain SMTP may expose this password in transit.' : 'No deliverable email was available. Provide this password to the user manually.'}</small>
+          <small>{credential.deliveryMode === 'queued' ? 'Email queued. Plain SMTP may expose this password in transit.' : `${getEmailReasonCopy(capability.reason)} Provide the password manually.`}</small>
           <div className="modal-actions"><button type="button" className="btn-primary" onClick={onClose}>I saved it</button></div>
         </div>
       </section>
@@ -188,10 +210,11 @@ export function CredentialModal({ credential, onClose }) {
   );
 }
 
-export function MfaDeliveryModal({ deliveryUser, deliveryView, onClose, onResend }) {
+export function MfaDeliveryModal({ deliveryUser, deliveryView, emailSettings, onClose, onResend }) {
   const open = Boolean(deliveryUser && deliveryView?.pending);
   const ref = useDialogFocus(open, onClose);
   if (!open) return null;
+  const capability = getEmailCapability(emailSettings, 'mfa_setup');
   const statusCopy = deliveryView.deliveryStatus === 'sent'
     ? 'SMTP accepted the message. The user must still complete enrollment.'
     : deliveryView.deliveryStatus === 'sending'
@@ -204,6 +227,7 @@ export function MfaDeliveryModal({ deliveryUser, deliveryView, onClose, onResend
       <section ref={ref} className={`user-modal mfa-delivery-modal modal-accent-${deliveryView.tone === 'failed' ? 'danger' : deliveryView.tone === 'queued' ? 'warning' : 'info'}`} role="dialog" aria-modal="true" aria-labelledby="mfa-delivery-title" onMouseDown={event => event.stopPropagation()}>
         <ModalHeader icon={MailCheck} id="mfa-delivery-title" title={`Authenticator email: ${deliveryUser.username}`} description={`Current setup-email status for ${deliveryView.providerLabel}.`} onClose={onClose} />
         <div className="user-form">
+          <EmailServiceStatus label="MFA setup email" capability={capability} />
           <div className={`mfa-delivery-summary ${deliveryView.tone}`} role="status" aria-live="polite"><MfaDeliveryIcon view={deliveryView} /><div><strong>{deliveryView.label}</strong><span>{statusCopy}</span></div></div>
           <dl className="mfa-delivery-details">
             <div><dt>Recipient</dt><dd>{deliveryUser.email || 'No valid email saved'}</dd></div>

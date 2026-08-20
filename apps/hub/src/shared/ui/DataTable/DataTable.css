@@ -29,6 +29,7 @@
   --tbl-muted: #9BA3B8;
   --tbl-subtle: #5C6378;
   --tbl-accent: #22D3EE;
+  --primary: #0f92f7;
 
   /* Severity colors mapped into table-scoped CSS vars */
   --critical: #FF2E63;

@@ -17,7 +17,7 @@ const { loadRuntimeSecrets } = require('./runtime-config.cjs');
 const { createMfaService } = require('./mfa-service.cjs');
 const { createAdminSecurityStore } = require('./admin-security-store.cjs');
 const { createSecurityCrypto } = require('./security-crypto.cjs');
-const { createEmailWorker } = require('./mailer.cjs');
+const { createEmailWorker, getEmailDeliveryCapability } = require('./mailer.cjs');
 const {
   isValidEmail,
   parseAdminMfaProvider,
@@ -620,6 +620,22 @@ app.post('/api/users', authenticateJwt, requireSystemAdmin, async (req, res) => 
       return res.status(400).json({ error: 'Email is required for Authenticator MFA' });
     }
 
+    const emailSettings = !existingUser ? await securityStore.getEmailSettings() : null;
+    const temporaryPasswordCapability = emailSettings
+      ? getEmailDeliveryCapability(emailSettings, 'temporary_password')
+      : null;
+    const mfaSetupCapability = emailSettings
+      ? getEmailDeliveryCapability(emailSettings, 'mfa_setup')
+      : null;
+    if (!existingUser && requestedMfaMode === 'authenticator' && !mfaSetupCapability.available) {
+      return res.status(409).json({
+        error: 'MFA setup email is off',
+        code: 'EMAIL_DELIVERY_UNAVAILABLE',
+        emailType: 'mfa_setup',
+        reason: mfaSetupCapability.reason
+      });
+    }
+
     if (existingUser?.roleId === SYSTEM_ADMIN_ROLE_ID
       && existingUser.status !== 'suspended'
       && (selectedRole.id !== SYSTEM_ADMIN_ROLE_ID || nextStatus === 'suspended')
@@ -627,7 +643,8 @@ app.post('/api/users', authenticateJwt, requireSystemAdmin, async (req, res) => 
       return res.status(400).json({ error: 'Cannot demote or suspend the last System Administrator' });
     }
 
-    const notificationOrigin = !existingUser && (nextEmail || requestedMfaMode === 'authenticator')
+    const notificationOrigin = !existingUser
+      && ((nextEmail && temporaryPasswordCapability.available) || requestedMfaMode === 'authenticator')
       ? getRequestOrigin(req)
       : '';
     const temporaryPassword = existingUser ? '' : crypto.randomBytes(18).toString('base64url');
@@ -659,6 +676,7 @@ app.post('/api/users', authenticateJwt, requireSystemAdmin, async (req, res) => 
     await securityStore.setIdentity(normalizedUsername, identity);
     let expiresAt = '';
     const deliveries = [];
+    let temporaryPasswordDelivery = null;
     if (!existingUser) {
       expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
       await securityStore.setTemporaryCredential(normalizedUsername, { expiresAt, createdBy: req.user.username });
@@ -667,14 +685,15 @@ app.post('/api/users', authenticateJwt, requireSystemAdmin, async (req, res) => 
           mode: 'disabled', provider: '', enrollmentGeneration: '', requestedAt: '', requestedBy: '', notificationStatus: 'none'
         });
       }
-      if (nextEmail) {
+      if (nextEmail && temporaryPasswordCapability.available) {
         const encrypted = securityCrypto.encryptOutboxSecret(temporaryPassword);
-        deliveries.push(await securityStore.enqueueEmail({
+        temporaryPasswordDelivery = await securityStore.enqueueEmail({
           type: 'temporary_password', targetUsername: normalizedUsername, recipient: nextEmail,
           subject: 'Your temporary password',
           metadata: { fullName: identity.fullName, loginUrl: `${notificationOrigin}/login/`, expiresAt },
           secretCiphertext: encrypted.ciphertext, secretIv: encrypted.iv, secretTag: encrypted.tag
-        }));
+        });
+        deliveries.push(temporaryPasswordDelivery);
       }
       if (requestedMfaMode === 'authenticator') {
         deliveries.push(await queueMfaEnrollmentInvitation({
@@ -705,7 +724,14 @@ app.post('/api/users', authenticateJwt, requireSystemAdmin, async (req, res) => 
           roleName: existingUser.roleName,
           productScope: existingUser.access?.productScope
         } : null,
-        ...(existingUser ? {} : { mfaMode: requestedMfaMode, mfaProvider: requestedMfaProvider, emailQueued: Boolean(nextEmail) })
+        ...(existingUser ? {} : {
+          mfaMode: requestedMfaMode,
+          mfaProvider: requestedMfaProvider,
+          emailQueued: Boolean(temporaryPasswordDelivery),
+          temporaryPasswordDeliveryReason: temporaryPasswordDelivery
+            ? 'queued'
+            : nextEmail ? temporaryPasswordCapability.reason : 'missing_email'
+        })
       }
     });
     if (!existingUser) res.set('Cache-Control', 'no-store');
@@ -715,7 +741,10 @@ app.post('/api/users', authenticateJwt, requireSystemAdmin, async (req, res) => 
       ...(existingUser ? {} : {
         temporaryPassword,
         expiresAt,
-        deliveryMode: nextEmail ? 'queued' : 'manual_only',
+        deliveryMode: temporaryPasswordDelivery ? 'queued' : 'manual_only',
+        deliveryReason: temporaryPasswordDelivery
+          ? 'queued'
+          : nextEmail ? temporaryPasswordCapability.reason : 'missing_email',
         deliveries: deliveries.map(job => ({ id: job.id, type: job.type, status: job.status }))
       })
     });
@@ -762,7 +791,12 @@ app.patch(['/api/users/id/:userId', '/api/users/:username'], authenticateJwt, re
     const suspending = target.status !== 'suspended' && status === 'suspended';
     const invalidatePendingEnrollment = pendingEnrollment && (emailChanged || suspending);
     const rotateTemporaryCredential = emailChanged && Boolean(temporaryCredential);
-    const temporaryNotificationOrigin = rotateTemporaryCredential && email ? getRequestOrigin(req) : '';
+    const temporaryPasswordCapability = rotateTemporaryCredential
+      ? getEmailDeliveryCapability(await securityStore.getEmailSettings(), 'temporary_password')
+      : null;
+    const temporaryNotificationOrigin = rotateTemporaryCredential && email && temporaryPasswordCapability.available
+      ? getRequestOrigin(req)
+      : '';
     let replacementTemporaryPassword = '';
     let replacementTemporaryExpiresAt = '';
     let replacementTemporaryPasswordHash = null;
@@ -813,7 +847,7 @@ app.patch(['/api/users/id/:userId', '/api/users/:username'], authenticateJwt, re
               : 'Authenticator setup email must be resent after the email address changed'
           });
         }
-        if (rotateTemporaryCredential && email) {
+        if (rotateTemporaryCredential && email && temporaryPasswordCapability.available) {
           try {
             const encrypted = securityCrypto.encryptOutboxSecret(replacementTemporaryPassword);
             replacementTemporaryDelivery = await securityStore.enqueueEmail({
@@ -856,7 +890,12 @@ app.patch(['/api/users/id/:userId', '/api/users/:username'], authenticateJwt, re
         emailChanged,
         pendingInvitationInvalidated: invalidatePendingEnrollment,
         temporaryCredentialRotated: rotateTemporaryCredential,
-        temporaryPasswordEmailQueued: Boolean(replacementTemporaryDelivery)
+        temporaryPasswordEmailQueued: Boolean(replacementTemporaryDelivery),
+        ...(rotateTemporaryCredential ? {
+          temporaryPasswordDeliveryReason: replacementTemporaryDelivery
+            ? 'queued'
+            : email ? temporaryPasswordCapability.reason : 'missing_email'
+        } : {})
       }
     });
     if (replacementTemporaryPassword) res.set('Cache-Control', 'no-store');
@@ -866,7 +905,10 @@ app.patch(['/api/users/id/:userId', '/api/users/:username'], authenticateJwt, re
       ...(replacementTemporaryPassword ? {
         temporaryPassword: replacementTemporaryPassword,
         expiresAt: replacementTemporaryExpiresAt,
-        deliveryMode: replacementTemporaryDelivery ? 'queued' : 'manual_only'
+        deliveryMode: replacementTemporaryDelivery ? 'queued' : 'manual_only',
+        deliveryReason: replacementTemporaryDelivery
+          ? 'queued'
+          : email ? temporaryPasswordCapability.reason : 'missing_email'
       } : {})
     });
   } catch (error) {

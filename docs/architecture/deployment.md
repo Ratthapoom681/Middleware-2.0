@@ -34,7 +34,11 @@ SMTP is configured by an administrator at **Hub → System Settings → Email
 Delivery** and is stored encrypted in Auth storage. Updating SMTP does not
 require rebuilding or recreating containers. Unauthenticated Postfix on port 25
 is supported; Plain mode is allowed with an in-product warning because messages,
-including automatically queued temporary-password mail, are not encrypted in transit.
+including temporary-password mail when enabled, are not encrypted in transit.
+
+The Email Control Hub has a master switch and per-type switches. MFA setup email
+is enabled by default; temporary-password email is disabled by default. Turning
+a switch off cancels matching queued jobs. A job already sending may finish.
 
 Auth writes MFA setup and temporary-password messages to a durable outbox.
 The worker retries transient failures after 1, 5, 15, and 60 minutes, recovers
@@ -46,7 +50,8 @@ keeps it out of gateway request logs. Each invitation is single-use, expires
 after 24 hours, and can bootstrap enrollment without a Middleware session or
 the user's current password. Administrators can resend pending setup mail.
 Successful confirmation revokes all of the user's sessions and directs them to
-sign in again with TOTP.
+sign in again with TOTP. System Administrators can filter the delivery queue,
+cancel queued jobs, and retry failed or cancelled jobs.
 
 ## Stable Names and Storage
 

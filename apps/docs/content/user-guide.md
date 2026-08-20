@@ -184,11 +184,11 @@ System Administrators can manage identities from the Hub.
 2. **Add a User**: Enter identity details, choose one Role and an explicit
    product scope, and choose Disabled, Google Authenticator, Microsoft
    Authenticator, or Other authenticator. The system generates and displays a
-   one-time temporary password. When a valid email is saved, delivery is queued
-   automatically; otherwise copy it manually.
+   one-time temporary password. Copy it manually unless temporary-password
+   email is enabled and the account has a valid email address.
 3. **Edit/Delete/Reset**: Use table actions to update identity, generate a new temporary password, or delete an account.
 4. **Manage MFA**: Assign the user’s authenticator app, resend a pending 24-hour email invitation, reset a lost authenticator, change providers, or disable MFA. Users cannot enroll from Hub or Profile and do not enter their current password; the single-use email link is the enrollment bootstrap factor. Changing an enabled provider, resetting, and disabling revoke target sessions, and successful enrollment revokes all remaining sessions. These actions rely on the active administrator session and do not request the administrator password again.
-5. **Configure Email**: Open **System Settings → Email Delivery**. SMTP settings are saved at runtime, so no image rebuild is required. Plain port 25 relays are supported but do not protect temporary passwords in transit.
+5. **Configure Email**: Open **System Settings → Email Delivery**. Use the master and per-type switches, configure SMTP, and review the Email Queue. Temporary-password email is off by default. System Administrators can cancel queued jobs and retry failed or cancelled jobs.
 
 ---
 

@@ -57,8 +57,14 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   assert.equal(identity.response.status, 200);
   assert.equal(identity.data.user.fullName, 'Security Admin');
 
+  const defaultSettings = await request('/api/settings/email', { token: adminToken });
+  assert.equal(defaultSettings.data.enabled, true);
+  assert.equal(defaultSettings.data.mfaSetupEnabled, true);
+  assert.equal(defaultSettings.data.temporaryPasswordEnabled, false);
+  assert.equal(defaultSettings.data.capabilities.temporaryPassword.reason, 'type_disabled');
+
   const savedSettings = await request('/api/settings/email', {
-    token: adminToken, method: 'PATCH', body: JSON.stringify({ host: 'tamarind.beenets.com', port: 25, security: 'plain', username: '', fromAddress: 'security@example.test' })
+    token: adminToken, method: 'PATCH', body: JSON.stringify({ host: 'tamarind.beenets.com', port: 25, security: 'plain', username: '', fromAddress: 'security@example.test', temporaryPasswordEnabled: true })
   });
   assert.equal(savedSettings.response.status, 200);
   assert.equal(savedSettings.data.settings.warning.includes('without transport encryption'), true);
@@ -162,7 +168,7 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   assert.equal(created.data.deliveries.some(delivery => delivery.type === 'temporary_password'), true);
   assert.equal(created.response.headers.get('cache-control'), 'no-store');
   assert.match(created.data.user.id, /^[0-9a-f]{8}-[0-9a-f-]{27}$/i);
-  assert.match(created.data.user.userId, /^[0-9]{6,}$/);
+  assert.match(created.data.user.userId, /^[1-9][0-9]*$/);
   const analystUserId = created.data.user.userId;
   const analystById = await request(`/api/users/id/${analystUserId}`, { token: adminToken });
   assert.equal(analystById.response.status, 200);
@@ -190,7 +196,9 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   });
   assert.equal(numericUsername.response.status, 200);
   assert.equal((await request('/api/users/000001', { token: adminToken })).data.username, '000001');
-  assert.equal((await request('/api/users/id/000001', { token: adminToken })).data.username, 'admin');
+  const legacyPaddedAdmin = await request('/api/users/id/000001', { token: adminToken });
+  assert.equal(legacyPaddedAdmin.data.username, 'admin');
+  assert.equal(legacyPaddedAdmin.data.userId, '1');
   assert.equal((await request(`/api/users/id/${numericUsername.data.user.userId}`, {
     token: adminToken, method: 'DELETE'
   })).response.status, 200);
@@ -240,6 +248,7 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
     token: analystToken, method: 'PATCH', body: JSON.stringify({ host: 'relay.example.test', port: 25, security: 'plain', fromAddress: 'security@example.test' })
   });
   assert.equal(nonAdminSettings.response.status, 403);
+  assert.equal((await request('/api/settings/email/queue', { token: analystToken })).response.status, 403);
 
   const analystGoogle = await request(`/api/users/id/${analystUserId}/mfa`, {
     token: adminToken, method: 'PATCH', body: JSON.stringify({ mfaProvider: 'google' })
@@ -363,6 +372,13 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   assert.equal(analystOther.data.mfa.status, 'pending');
   assert.equal(analystOther.data.mfa.provider, 'other');
   assert.equal((await request('/api/profile', { token: analystToken })).response.status, 401, 'changing an enabled provider revokes target sessions');
+  const cancelledMfa = await request(`/api/settings/email/queue/${analystOther.data.delivery.id}/cancel`, { token: adminToken, method: 'POST' });
+  assert.equal(cancelledMfa.response.status, 200);
+  assert.equal(cancelledMfa.data.delivery.status, 'cancelled');
+  const retriedMfa = await request(`/api/settings/email/queue/${analystOther.data.delivery.id}/retry`, { token: adminToken, method: 'POST' });
+  assert.equal(retriedMfa.response.status, 200);
+  assert.equal(retriedMfa.data.delivery.type, 'mfa_setup');
+  assert.notEqual(retriedMfa.data.delivery.id, analystOther.data.delivery.id);
 
   const reset = await request(`/api/users/id/${analystUserId}/password/reset`, {
     token: adminToken, method: 'POST'
@@ -371,9 +387,44 @@ test('admin-controlled identity, pending enrollment, TOTP-only login, and tempor
   assert.equal(reset.data.deliveryMode, 'queued');
   assert.notEqual(reset.data.temporaryPassword, created.data.temporaryPassword);
   assert.equal((await request('/api/profile', { token: analystToken })).response.status, 401);
+  const cancelledPassword = await request(`/api/settings/email/queue/${reset.data.delivery.id}/cancel`, { token: adminToken, method: 'POST' });
+  assert.equal(cancelledPassword.data.delivery.status, 'cancelled');
+  const retriedPassword = await request(`/api/settings/email/queue/${reset.data.delivery.id}/retry`, { token: adminToken, method: 'POST' });
+  assert.equal(retriedPassword.response.status, 200);
+  assert.equal(retriedPassword.data.deliveryMode, 'queued');
+  assert.match(retriedPassword.data.temporaryPassword, /^[A-Za-z0-9_-]{24}$/);
+  const queue = await request('/api/settings/email/queue?page=1&pageSize=100&type=temporary_password', { token: adminToken });
+  assert.equal(queue.response.status, 200);
+  assert.equal(queue.data.deliveries.length > 0, true);
+  assert.equal(JSON.stringify(queue.data).includes('secretCiphertext'), false);
+  assert.equal(JSON.stringify(queue.data).includes(retriedPassword.data.temporaryPassword), false);
   await securityStore.setTemporaryCredential('analyst', { expiresAt: new Date(Date.now() - 1000), createdBy: 'admin' });
-  const expiredOnce = await request('/api/login', { method: 'POST', body: JSON.stringify({ username: 'analyst', password: reset.data.temporaryPassword }) });
-  const expiredTwice = await request('/api/login', { method: 'POST', body: JSON.stringify({ username: 'analyst', password: reset.data.temporaryPassword }) });
+  const expiredOnce = await request('/api/login', { method: 'POST', body: JSON.stringify({ username: 'analyst', password: retriedPassword.data.temporaryPassword }) });
+  const expiredTwice = await request('/api/login', { method: 'POST', body: JSON.stringify({ username: 'analyst', password: retriedPassword.data.temporaryPassword }) });
   assert.equal(expiredOnce.response.status, 401);
   assert.equal(expiredTwice.response.status, 401, 'expired temporary credentials must never become permanent');
+  const disabledTemporary = await request('/api/settings/email', {
+    token: adminToken,
+    method: 'PATCH',
+    body: JSON.stringify({
+      host: 'tamarind.beenets.com', port: 25, security: 'plain', username: '', fromAddress: 'security@example.test',
+      enabled: true, mfaSetupEnabled: true, temporaryPasswordEnabled: false
+    })
+  });
+  assert.equal(disabledTemporary.response.status, 200);
+  const manualReset = await request(`/api/users/id/${analystUserId}/password/reset`, { token: adminToken, method: 'POST' });
+  assert.equal(manualReset.data.deliveryMode, 'manual_only');
+  assert.equal(manualReset.data.deliveryReason, 'type_disabled');
+  const disabledMfa = await request('/api/settings/email', {
+    token: adminToken,
+    method: 'PATCH',
+    body: JSON.stringify({
+      host: 'tamarind.beenets.com', port: 25, security: 'plain', username: '', fromAddress: 'security@example.test',
+      enabled: true, mfaSetupEnabled: false, temporaryPasswordEnabled: false
+    })
+  });
+  assert.equal(disabledMfa.response.status, 200);
+  const blockedResend = await request('/api/users/analyst/mfa/resend', { token: adminToken, method: 'POST' });
+  assert.equal(blockedResend.response.status, 409);
+  assert.equal(blockedResend.data.code, 'EMAIL_DELIVERY_UNAVAILABLE');
 });

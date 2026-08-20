@@ -1,7 +1,6 @@
 import { getUserRoleName } from './userHelpers.js';
 
 export const USER_TABLE_COLUMNS = [
-  { key: 'userId', label: 'ID', className: 'cell-user-id' },
   { key: 'username', label: 'Username', className: 'cell-username' },
   { key: 'fullName', label: 'Full Name', className: 'cell-full-name' },
   { key: 'email', label: 'Email', className: 'cell-email' },
@@ -11,7 +10,6 @@ export const USER_TABLE_COLUMNS = [
 ];
 
 export const getVisibleUserSearchText = user => [
-  user.userId,
   user.username,
   user.fullName,
   user.email,

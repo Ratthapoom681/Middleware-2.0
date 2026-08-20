@@ -1,5 +1,5 @@
 .settings-page { flex: 1; background: var(--bg-body); color: var(--text-main); }
-.settings-main { width: min(820px, calc(100% - 2rem)); margin: 0 auto; padding: 2rem 0 4rem; }
+.settings-main { width: min(1180px, calc(100% - 2rem)); margin: 0 auto; padding: 2rem 0 4rem; }
 .settings-heading { margin-bottom: 1.2rem; display: flex; align-items: center; gap: .85rem; }
 .settings-heading > span { width: 52px; height: 52px; display: grid; place-items: center; border: 1px solid var(--bg-active-border); border-radius: 50%; background: var(--bg-active); color: var(--primary); }
 .settings-heading p { margin: 0; color: var(--primary); font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; }
@@ -8,6 +8,8 @@
 .settings-panel { margin-top: 1rem; padding: 1.25rem; border: 1px solid var(--border-subtle); border-radius: var(--rounded-md); background: var(--bg-card); }
 .settings-panel h2 { margin: 0; font-size: 1rem; }
 .settings-panel > p { margin: .25rem 0 1rem; font-size: .76rem; line-height: 1.5; }
+.settings-section-heading { margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.settings-section-heading p { margin: .25rem 0 0; color: var(--text-muted); font-size: .76rem; }
 .settings-form { display: grid; gap: .85rem; }
 .settings-grid { display: grid; grid-template-columns: 1fr 150px; gap: .85rem; }
 .settings-grid:has(label:nth-child(2) input[type="password"]) { grid-template-columns: 1fr 1fr; }
@@ -17,11 +19,28 @@
 .settings-form input:focus, .settings-form select:focus { outline: 0; border-color: var(--border-focus); box-shadow: 0 0 0 3px var(--bg-active); }
 .settings-form .settings-check { grid-template-columns: auto 1fr; align-items: center; }
 .settings-form .settings-check input { width: 18px; min-height: 18px; }
+.settings-form .settings-toggle-row { min-height: 58px; padding: .65rem .75rem; grid-template-columns: 1fr auto; align-items: center; border: 1px solid var(--border-subtle); border-radius: var(--rounded-sm); background: var(--bg-input); }
+.settings-toggle-row > span:first-child { display: grid; gap: .2rem; }
+.settings-toggle-row input[role="switch"] { width: 40px; min-height: 22px; accent-color: var(--primary); cursor: pointer; }
+.settings-toggle-control { display: inline-flex; align-items: center; gap: .65rem; }
+.email-service-state, .email-status-chip { width: fit-content; padding: .18rem .48rem; border: 1px solid var(--border); border-radius: 999px; font-size: .68rem; font-weight: 700; text-transform: capitalize; }
+.email-service-state.on, .email-status-chip.sent { border-color: var(--connected-border); background: var(--connected-bg); color: var(--connected-text); }
+.email-service-state.off, .email-status-chip.failed, .email-status-chip.cancelled { border-color: var(--danger-border); background: var(--danger-bg); color: var(--danger-text); }
+.email-status-chip.queued { border-color: var(--warning-border); background: var(--warning-bg); color: var(--warning-text); }
+.email-status-chip.sending { border-color: var(--bg-active-border); background: var(--bg-active); color: var(--primary); }
 .settings-actions { display: flex; justify-content: flex-end; }
 .settings-actions button { min-height: 44px; padding: .5rem .85rem; display: inline-flex; align-items: center; gap: .4rem; border: 1px solid var(--primary); border-radius: var(--rounded-sm); background: var(--primary); color: var(--primary-text); cursor: pointer; }
 .settings-notice, .settings-warning { margin: .8rem 0; padding: .75rem; border: 1px solid var(--border); border-radius: var(--rounded-sm); font-size: .78rem; }
 .settings-notice.error { border-color: var(--danger-border); background: var(--danger-bg); color: var(--danger-text); }
 .settings-notice.success { border-color: var(--connected-border); background: var(--connected-bg); color: var(--connected-text); }
 .settings-warning { display: flex; gap: .6rem; border-color: var(--warning-border); background: var(--warning-bg); color: var(--warning-text); }
+.email-queue-filters { margin-bottom: 1rem; display: grid; grid-template-columns: minmax(220px, 1fr) 180px 180px; gap: .75rem; }
+.email-queue-filters label { display: grid; gap: .35rem; color: var(--text-muted); font-size: .72rem; }
+.email-queue-filters input, .email-queue-filters select { min-height: 40px; padding: .5rem .65rem; border: 1px solid var(--border); border-radius: var(--rounded-sm); background: var(--bg-input); color: var(--text-main); }
+.email-queue-actions { display: flex; align-items: center; gap: .4rem; }
+.email-queue-actions button, .settings-section-heading button { min-height: 34px; padding: .35rem .55rem; display: inline-flex; align-items: center; gap: .35rem; }
+.email-queue-empty { padding: 2rem; color: var(--text-muted); text-align: center; }
+.email-queue-table-panel { overflow: hidden; }
 @media (max-width: 620px) { .settings-main { width: calc(100% - 1.2rem); padding-top: 1rem; } .settings-grid { grid-template-columns: 1fr; } .settings-panel { padding: 1rem; } }
+@media (max-width: 760px) { .email-queue-filters { grid-template-columns: 1fr; } .settings-section-heading { align-items: flex-start; } }
 @media (prefers-reduced-motion: reduce) { .settings-page * { transition: none !important; } }

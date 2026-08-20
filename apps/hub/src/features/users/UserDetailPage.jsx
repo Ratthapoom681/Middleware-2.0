@@ -14,6 +14,7 @@ import {
   UserX,
 } from 'lucide-react';
 import { getMfaDeliveryView, getMfaProvider, hasDeliverableEmail } from './mfaDeliveryStatus.js';
+import { getEmailCapability, getEmailReasonCopy } from '../../shared/emailDeliveryStatus.js';
 import {
   formatDate,
   formatLabel,
@@ -43,13 +44,14 @@ const navigateBack = () => { window.location.hash = '#users'; };
 export default function UserDetailPage({
   userId,
   username,
+  canonicalHash,
   token,
   currentUser,
   onUnauthorized,
   onUserUpdated,
   onCanonicalize,
 }) {
-  const { users, roles, loading, error, setError, reload } = useUsers(token, onUnauthorized);
+  const { users, roles, emailSettings, refreshEmailSettings, loading, error, setError, reload } = useUsers(token, onUnauthorized);
   const user = useMemo(
     () => users.find(candidate => (
       userId ? candidate.userId === userId : candidate.username === username
@@ -63,16 +65,21 @@ export default function UserDetailPage({
     currentUser,
     onUserUpdated,
     reload,
+    refreshEmailSettings,
     error,
     setError,
   });
   const [deliveryOpen, setDeliveryOpen] = useState(false);
 
   useEffect(() => {
+    if (user && canonicalHash) {
+      onCanonicalize?.(canonicalHash);
+      return;
+    }
     if (!userId && username && user?.userId) {
       onCanonicalize?.(`#users/id/${user.userId}`);
     }
-  }, [onCanonicalize, user, userId, username]);
+  }, [canonicalHash, onCanonicalize, user, userId, username]);
 
   if (loading && users.length === 0) {
     return (
@@ -109,7 +116,8 @@ export default function UserDetailPage({
   const products = getUserProducts(user);
   const permissions = Array.isArray(user?.access?.permissions) ? user.access.permissions : [];
   const role = roles.find(candidate => candidate.id === getUserRoleId(user));
-  const mfaView = getMfaDeliveryView(user);
+  const mfaView = getMfaDeliveryView(user, emailSettings);
+  const mfaCapability = getEmailCapability(emailSettings, 'mfa_setup');
   const modalOpen = actions.editorOpen
     || actions.passwordResetUser
     || actions.securityAction
@@ -124,6 +132,10 @@ export default function UserDetailPage({
     provider: getMfaProvider(user) === 'disabled' ? 'google' : getMfaProvider(user),
     user,
   });
+  const openDelivery = async () => {
+    await refreshEmailSettings();
+    setDeliveryOpen(true);
+  };
 
   return (
     <div className="user-detail-page">
@@ -168,11 +180,11 @@ export default function UserDetailPage({
               </dl>
               <div className="detail-card-actions">
                 <button type="button" className="btn-secondary" onClick={() => actions.openPasswordReset(user)}><KeyRound size={15} />Reset password</button>
-                {mfaView.mfaStatus === 'disabled' && <button type="button" className="btn-primary" disabled={!hasDeliverableEmail(user.email)} title={hasDeliverableEmail(user.email) ? 'Enable Authenticator MFA' : 'Add a valid email first'} onClick={() => openSecurity('enable')}><ShieldCheck size={15} />Enable MFA</button>}
-                {mfaView.pending && <button type="button" className="btn-secondary" onClick={() => setDeliveryOpen(true)}><MailCheck size={15} />Email details</button>}
+                {mfaView.mfaStatus === 'disabled' && <button type="button" className="btn-primary" disabled={!hasDeliverableEmail(user.email) || !mfaCapability.available} title={!hasDeliverableEmail(user.email) ? 'Add a valid email first' : mfaCapability.available ? 'Enable Authenticator MFA' : getEmailReasonCopy(mfaCapability.reason)} onClick={() => openSecurity('enable')}><ShieldCheck size={15} />Enable MFA</button>}
+                {mfaView.pending && <button type="button" className="btn-secondary" onClick={openDelivery}><MailCheck size={15} />Email details</button>}
                 {mfaView.pending && <button type="button" className="btn-primary" disabled={!mfaView.canResend} title={mfaView.canResend ? 'Resend setup email' : mfaView.resendDisabledReason} onClick={() => openSecurity('resend')}><MailCheck size={15} />Resend setup</button>}
-                {mfaView.mfaStatus === 'enabled' && <button type="button" className="btn-secondary" onClick={() => openSecurity('change')}><RefreshCw size={15} />Change app</button>}
-                {mfaView.mfaStatus === 'enabled' && <button type="button" className="btn-secondary" onClick={() => openSecurity('reset')}><RefreshCw size={15} />Reset MFA</button>}
+                {mfaView.mfaStatus === 'enabled' && <button type="button" className="btn-secondary" disabled={!mfaCapability.available} title={mfaCapability.available ? 'Change authenticator app' : getEmailReasonCopy(mfaCapability.reason)} onClick={() => openSecurity('change')}><RefreshCw size={15} />Change app</button>}
+                {mfaView.mfaStatus === 'enabled' && <button type="button" className="btn-secondary" disabled={!mfaCapability.available} title={mfaCapability.available ? 'Reset Authenticator MFA' : getEmailReasonCopy(mfaCapability.reason)} onClick={() => openSecurity('reset')}><RefreshCw size={15} />Reset MFA</button>}
                 {mfaView.mfaStatus !== 'disabled' && <button type="button" className="btn-danger" onClick={() => openSecurity('disable')}><ShieldOff size={15} />Disable MFA</button>}
               </div>
             </div>
@@ -202,11 +214,11 @@ export default function UserDetailPage({
         </section>
       </div>
 
-      {actions.editorOpen && <UserEditorModal mode={actions.editorMode} draftUser={actions.draftUser} onDraftChange={actions.setDraftUser} roles={roles} currentUser={currentUser} saving={actions.saving} error={error} onSave={actions.saveUser} onClose={actions.closeEditor} />}
-      <PasswordResetModal user={actions.passwordResetUser} saving={actions.saving} error={error} onClose={actions.closePasswordReset} onSubmit={actions.resetPassword} />
-      <SecurityActionModal securityAction={actions.securityAction} saving={actions.saving} error={error} onClose={actions.closeSecurityAction} onProviderChange={provider => actions.setSecurityAction(value => ({ ...value, provider }))} onSubmit={actions.submitSecurityAction} />
+      {actions.editorOpen && <UserEditorModal mode={actions.editorMode} draftUser={actions.draftUser} onDraftChange={actions.setDraftUser} roles={roles} currentUser={currentUser} emailSettings={emailSettings} saving={actions.saving} error={error} onSave={actions.saveUser} onClose={actions.closeEditor} />}
+      <PasswordResetModal user={actions.passwordResetUser} emailSettings={emailSettings} saving={actions.saving} error={error} onClose={actions.closePasswordReset} onSubmit={actions.resetPassword} />
+      <SecurityActionModal securityAction={actions.securityAction} emailSettings={emailSettings} saving={actions.saving} error={error} onClose={actions.closeSecurityAction} onProviderChange={provider => actions.setSecurityAction(value => ({ ...value, provider }))} onSubmit={actions.submitSecurityAction} />
       <CredentialModal credential={actions.oneTimeCredential} onClose={actions.closeCredential} />
-      <MfaDeliveryModal deliveryUser={deliveryOpen ? user : null} deliveryView={mfaView} onClose={() => setDeliveryOpen(false)} onResend={() => {
+      <MfaDeliveryModal deliveryUser={deliveryOpen ? user : null} deliveryView={mfaView} emailSettings={emailSettings} onClose={() => setDeliveryOpen(false)} onResend={() => {
         setDeliveryOpen(false);
         openSecurity('resend');
       }} />
