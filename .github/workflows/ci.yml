@@ -49,6 +49,7 @@ jobs:
       JWT_SECRET: ci-jwt-signing-value
       AUTH_SERVICE_TOKEN: ci-internal-service-token
       AUTH_BOOTSTRAP_ADMIN_PASSWORD: ci-bootstrap-password
+      MFA_ENCRYPTION_KEY: ci-mock-mfa-encryption-key-value-32-chars-long
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
